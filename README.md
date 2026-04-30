@@ -11,7 +11,7 @@ A productivity add-in for Autodesk Revit that automates common family management
 3. The installer will automatically detect your Revit version and install the plugin
 4. Restart Revit — the **AVES** tab will appear in the ribbon
 
-**Supported Revit versions:** 2022 · 2023 · 2024 · 2025
+**Supported Revit versions:** 2025
 
 ---
 
@@ -21,8 +21,6 @@ A productivity add-in for Autodesk Revit that automates common family management
 
 | Button | Description |
 |---|---|
-| **Check GUID** | Verifies the GUID of selected family elements |
-| **Replace GUID** | Replaces the GUID on selected family elements |
 | **Add Shared Parameter** | Adds a shared parameter to selected families |
 | **Remove Shared Parameters** | Removes shared parameters from selected families |
 | **Fill Family Parameters** | Populates parameter values on selected family instances |
