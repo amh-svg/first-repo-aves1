@@ -6,7 +6,7 @@ A productivity add-in for Autodesk Revit that automates common family management
 
 ## Installation
 
-1. Download the latest installer from the [Releases](https://github.com/amh-svg/first-repo-aves1/releases/tag/v1.0.0) page
+1. Download the latest installer from the [Releases](https://github.com/amh-svg/first-repo-aves1/releases) page
 2. Run `AVES_Setup_vX.X.X.exe`
 3. The installer will automatically detect your Revit version and install the plugin
 4. Restart Revit — the **AVES** tab will appear in the ribbon
