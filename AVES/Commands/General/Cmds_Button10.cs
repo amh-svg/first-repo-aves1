@@ -355,6 +355,7 @@ namespace AVES.Cmds_Button10
     internal class TbParamField
     {
         public string ParamName = "";
+        public bool IsTypeParam;
         public bool Agreed;
         public string? AgreedValue;
         public WpfTextBox Input = null!;
@@ -634,39 +635,69 @@ namespace AVES.Cmds_Button10
             // The title block's label parameters are shared parameters (no
             // shared parameter file is available in this project to cross-check
             // against doc.ParameterBindings), so qualification is judged directly
-            // off each Parameter's own IsShared flag instead.
+            // off each Parameter's own IsShared flag instead. Title block labels
+            // are sometimes bound as instance parameters and sometimes as type
+            // parameters, so both the instance (FamilyInstance.Parameters) and
+            // the type (FamilyInstance.Symbol.Parameters) sets are scanned.
             var representative = instances[0];
-            var qualifying = new List<Definition>();
+            var symbol = representative.Symbol;
+
+            var instanceQualifying = new List<Definition>();
             foreach (Parameter p in representative.Parameters)
             {
-                if (p.StorageType != StorageType.String) continue;
-                if (p.IsReadOnly) continue;
-                if (!(p.Definition is InternalDefinition pDef)) continue;
-                if (pDef.BuiltInParameter != BuiltInParameter.INVALID) continue;
-                if (!p.IsShared) continue;
-                qualifying.Add(p.Definition);
+                if (IsQualifyingTbParam(p)) instanceQualifying.Add(p.Definition);
             }
 
-            if (qualifying.Count == 0)
+            var typeQualifying = new List<Definition>();
+            foreach (Parameter p in symbol.Parameters)
+            {
+                if (IsQualifyingTbParam(p)) typeQualifying.Add(p.Definition);
+            }
+
+            if (instanceQualifying.Count == 0 && typeQualifying.Count == 0)
             {
                 errors.Add("No matching title block parameters found (string, editable, shared parameter).");
                 return (errors, new List<TbParamField>(), instances);
             }
 
             var fields = new List<TbParamField>();
-            foreach (var def in qualifying)
+            foreach (var def in instanceQualifying)
             {
                 var values = instances.Select(tb => tb.get_Parameter(def)?.AsString() ?? "").ToList();
                 bool agreed = values.Distinct().Count() == 1;
                 fields.Add(new TbParamField
                 {
                     ParamName = def.Name,
+                    IsTypeParam = false,
                     Agreed = agreed,
                     AgreedValue = agreed ? values[0] : null
                 });
             }
+            foreach (var def in typeQualifying)
+            {
+                // Type parameters live on the shared FamilySymbol (already
+                // validated identical across every selected sheet above), so
+                // there is exactly one underlying value -- never mixed.
+                fields.Add(new TbParamField
+                {
+                    ParamName = def.Name,
+                    IsTypeParam = true,
+                    Agreed = true,
+                    AgreedValue = symbol.get_Parameter(def)?.AsString() ?? ""
+                });
+            }
 
             return (errors, fields, instances);
+        }
+
+        private static bool IsQualifyingTbParam(Parameter p)
+        {
+            if (p.StorageType != StorageType.String) return false;
+            if (p.IsReadOnly) return false;
+            if (!(p.Definition is InternalDefinition pDef)) return false;
+            if (pDef.BuiltInParameter != BuiltInParameter.INVALID) return false;
+            if (!p.IsShared) return false;
+            return true;
         }
 
         private void RenderTbSection(List<string> errors, List<TbParamField> fields)
@@ -1020,7 +1051,7 @@ namespace AVES.Cmds_Button10
                 // Only apply title block fields the user actually resolved (agreed
                 // value or explicitly typed a replacement for a mixed field).
                 var fieldsToApply = main.TitleBlockFields
-                    .Select(f => new { f.ParamName, Value = f.ResolveValueToApply() })
+                    .Select(f => new { f.ParamName, f.IsTypeParam, Value = f.ResolveValueToApply() })
                     .Where(f => f.Value != null)
                     .ToList();
                 var tbByOwnerSheet = new Dictionary<ElementId, FamilyInstance>();
@@ -1047,7 +1078,11 @@ namespace AVES.Cmds_Button10
                             {
                                 foreach (var f in fieldsToApply)
                                 {
-                                    var param = tb.LookupParameter(f.ParamName);
+                                    // Type parameters live on the shared FamilySymbol, not the
+                                    // instance; writing it once per sheet is harmless/idempotent
+                                    // since every selected sheet shares the same title block type.
+                                    Element target = f.IsTypeParam ? tb.Symbol : tb;
+                                    var param = target.LookupParameter(f.ParamName);
                                     if (param != null && !param.IsReadOnly && param.StorageType == StorageType.String)
                                         param.Set(f.Value);
                                 }
