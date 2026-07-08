@@ -26,9 +26,14 @@ namespace AVES.Cmds_Button11
         public string TypeName = "";
         public int MemberCountInAssembly;
         public bool Passed;
-        /// <summary>True if at least one of THIS assembly's own members of this type is tagged (as opposed to only some other, unrelated element of the same type elsewhere in the project).</summary>
-        public bool PassedWithinAssembly;
-        public ElementId ExampleElementId = ElementId.InvalidElementId;
+        /// <summary>
+        /// The actual member elements of this type, IN THIS ASSEMBLY, that are
+        /// themselves directly tagged (i.e. their own Id was returned by some
+        /// tag's GetTaggedLocalElementIds()) -- empty if none, even when Passed
+        /// is true via a same-type element tagged elsewhere in the project.
+        /// </summary>
+        public List<ElementId> TaggedMembersWithinAssembly = new List<ElementId>();
+        public ElementId ExampleUntaggedMemberId = ElementId.InvalidElementId;
     }
 
     /// <summary>Diagnostic result of the project-wide tag scan.</summary>
@@ -36,6 +41,8 @@ namespace AVES.Cmds_Button11
     {
         public HashSet<ElementId> TaggedElementIds = new HashSet<ElementId>();
         public HashSet<ElementId> TaggedTypeIds = new HashSet<ElementId>();
+        /// <summary>Reverse lookup: tagged element id -> ids of every tag that tags it.</summary>
+        public Dictionary<ElementId, List<ElementId>> TaggingTagsByElement = new Dictionary<ElementId, List<ElementId>>();
         public int TotalTagsScanned;
         public int OrphanedTagsSkipped;
         public List<(ElementId TagId, string Error)> Exceptions = new List<(ElementId, string)>();
@@ -124,6 +131,13 @@ namespace AVES.Cmds_Button11
                     var el = doc.GetElement(id);
                     if (el == null) continue;
                     result.TaggedElementIds.Add(id);
+                    if (!result.TaggingTagsByElement.TryGetValue(id, out var tagIds))
+                    {
+                        tagIds = new List<ElementId>();
+                        result.TaggingTagsByElement[id] = tagIds;
+                    }
+                    tagIds.Add(tag.Id);
+
                     var typeId = el.GetTypeId();
                     if (typeId != ElementId.InvalidElementId)
                         result.TaggedTypeIds.Add(typeId);
@@ -163,7 +177,8 @@ namespace AVES.Cmds_Button11
             foreach (var kv in membersByType)
             {
                 bool passed = tagScan.TaggedTypeIds.Contains(kv.Key);
-                bool passedWithinAssembly = kv.Value.Any(el => tagScan.TaggedElementIds.Contains(el.Id));
+                var taggedMembers = kv.Value.Where(el => tagScan.TaggedElementIds.Contains(el.Id)).Select(el => el.Id).ToList();
+                var untaggedMember = kv.Value.FirstOrDefault(el => !tagScan.TaggedElementIds.Contains(el.Id));
                 var typeElem = doc.GetElement(kv.Key);
                 result.Types.Add(new FamilyTypeScanRow
                 {
@@ -171,8 +186,8 @@ namespace AVES.Cmds_Button11
                     TypeName = typeElem?.Name ?? "(unknown type)",
                     MemberCountInAssembly = kv.Value.Count,
                     Passed = passed,
-                    PassedWithinAssembly = passedWithinAssembly,
-                    ExampleElementId = kv.Value[0].Id
+                    TaggedMembersWithinAssembly = taggedMembers,
+                    ExampleUntaggedMemberId = untaggedMember?.Id ?? ElementId.InvalidElementId
                 });
             }
 
@@ -239,10 +254,26 @@ namespace AVES.Cmds_Button11
                     sb.AppendLine($"  Distinct member family types: {scan.DistinctFamilyTypeCount}  |  Failing: {scan.Failing.Count}");
                     foreach (var t in scan.Types.OrderBy(t => t.TypeName))
                     {
-                        string status = t.Passed
-                            ? (t.PassedWithinAssembly ? "PASS (tagged within this assembly)" : "PASS (tagged elsewhere in project only)")
-                            : "FAIL (untagged anywhere)";
-                        sb.AppendLine($"    [{status}] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly}, example element Id: {t.ExampleElementId.IntegerValue})");
+                        if (t.TaggedMembersWithinAssembly.Count > 0)
+                        {
+                            sb.AppendLine($"    [PASS - tagged within this assembly] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly})");
+                            foreach (var memberId in t.TaggedMembersWithinAssembly)
+                            {
+                                var tagIds = tagScan.TaggingTagsByElement.TryGetValue(memberId, out var ids)
+                                    ? string.Join(", ", ids.Select(i => i.IntegerValue))
+                                    : "(none found)";
+                                sb.AppendLine($"        - member Id {memberId.IntegerValue} is tagged by Tag Id(s): {tagIds}");
+                            }
+                        }
+                        else if (t.Passed)
+                        {
+                            sb.AppendLine($"    [PASS - tagged elsewhere in project only] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly}, " +
+                                $"none of this assembly's own members of this type are tagged; example untagged member Id: {t.ExampleUntaggedMemberId.IntegerValue})");
+                        }
+                        else
+                        {
+                            sb.AppendLine($"    [FAIL - untagged anywhere] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly}, example untagged member Id: {t.ExampleUntaggedMemberId.IntegerValue})");
+                        }
                     }
                     sb.AppendLine();
                 }
