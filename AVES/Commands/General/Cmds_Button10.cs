@@ -170,6 +170,7 @@ namespace AVES.Cmds_Button10
                 box.IsChecked = selectedIds.Contains(sheet.Id);
                 box.Checked += (s, e) => UpdateCount();
                 box.Unchecked += (s, e) => UpdateCount();
+                visual.MouseLeftButtonUp += (s, e) => { box.IsChecked = !box.IsChecked; };
                 list.Children.Add(visual);
                 _rows.Add((sheet, visual, box));
             }
@@ -301,6 +302,7 @@ namespace AVES.Cmds_Button10
                 string label = $"Rev {rev.SequenceNumber} — {rev.RevisionDate} — {rev.Description}";
                 var (visual, box) = AvControls.CheckRow(label, false);
                 box.IsChecked = selectedIds.Contains(rev.Id);
+                visual.MouseLeftButtonUp += (s, e) => { box.IsChecked = !box.IsChecked; };
                 list.Children.Add(visual);
                 _rows.Add((rev, box));
             }
@@ -629,19 +631,27 @@ namespace AVES.Cmds_Button10
                 return (errors, new List<TbParamField>(), instances);
 
             // Single shared title block type across every selected sheet.
-            var boundDefs = new HashSet<Definition>();
+            //
+            // Keyed by InternalDefinition.Id (ElementId), not by the Definition
+            // object itself: neither Definition nor InternalDefinition overrides
+            // Equals/GetHashCode, and the Revit API hands back a fresh wrapper
+            // object each time .Definition is accessed through a different path
+            // (doc.ParameterBindings iteration vs. element.Parameters iteration).
+            // A HashSet<Definition> would therefore never match, even for a
+            // correctly-bound parameter.
+            var boundIds = new HashSet<ElementId>();
             var it = _doc.ParameterBindings.ForwardIterator();
             it.Reset();
             while (it.MoveNext())
             {
                 var def = it.Key;
-                if (it.Current is InstanceBinding ib)
+                if (it.Current is InstanceBinding ib && def is InternalDefinition idDef)
                 {
                     foreach (Category cat in ib.Categories)
                     {
                         if (cat.Id.IntegerValue == (int)BuiltInCategory.OST_TitleBlocks)
                         {
-                            boundDefs.Add(def);
+                            boundIds.Add(idDef.Id);
                             break;
                         }
                     }
@@ -654,8 +664,9 @@ namespace AVES.Cmds_Button10
             {
                 if (p.StorageType != StorageType.String) continue;
                 if (p.IsReadOnly) continue;
-                if (p.Definition is InternalDefinition internalDef && internalDef.BuiltInParameter != BuiltInParameter.INVALID) continue;
-                if (!boundDefs.Contains(p.Definition)) continue;
+                if (!(p.Definition is InternalDefinition pDef)) continue;
+                if (pDef.BuiltInParameter != BuiltInParameter.INVALID) continue;
+                if (!boundIds.Contains(pDef.Id)) continue;
                 qualifying.Add(p.Definition);
             }
 
