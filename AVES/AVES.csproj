@@ -7,8 +7,9 @@
 		<PlatformTarget>x64</PlatformTarget>
 		<ImplicitUsings>true</ImplicitUsings>
 		<EnableDynamicLoading>true</EnableDynamicLoading>
-		<Configurations>Debug R21;Debug R22;Debug R23;Debug R24;Debug R25;Debug R26</Configurations>
-		<Configurations>$(Configurations);Release R21;Release R22;Release R23;Release R24;Release R25;Release R26</Configurations>
+		<Configurations>Debug R25;Debug R26</Configurations>
+		<Configurations>$(Configurations);Release R25;Release R26</Configurations>
+		<Platforms>AnyCPU;x64</Platforms>
 	</PropertyGroup>
 
 	<!-- Revit configuration -->
@@ -60,6 +61,12 @@
 		<EmbeddedResource Include="Resources\Icons16\*" />
 		<EmbeddedResource Include="Resources\Icons32\*" />
 	</ItemGroup>
+	<ItemGroup>
+	  <None Remove="Resources\Hilti Logo\company_logo.png" />
+	</ItemGroup>
+	<ItemGroup>
+	  <EmbeddedResource Include="Resources\Hilti Logo\company_logo.png" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<!-- Revit References -->
@@ -91,8 +98,7 @@
 	</ItemGroup>
 
 	<!-- ✅ Only runs file copy to AppData when building in Debug mode -->
-	<Target Name="PostBuild" AfterTargets="PostBuildEvent"
-            Condition="$(Configuration.Contains('Debug'))">
+	<Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="$(Configuration.Contains('Debug'))">
 		<Exec Command="if not exist &quot;%25AppData%25\Autodesk\Revit\Addins\2025\AVES&quot; mkdir &quot;%25AppData%25\Autodesk\Revit\Addins\2025\AVES&quot;&#xD;&#xA;xcopy &quot;$(TargetPath)&quot; &quot;%25AppData%25\Autodesk\Revit\Addins\2025\AVES\&quot; /Y /R /I&#xD;&#xA;" />
 	</Target>
 
