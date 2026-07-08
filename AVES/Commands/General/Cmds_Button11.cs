@@ -137,7 +137,15 @@ namespace AVES.Cmds_Button11
             return new FilteredElementCollector(doc)
                 .OfClass(typeof(View))
                 .Cast<View>()
-                .Where(v => !v.IsTemplate && v.IsAssemblyView && v.AssociatedAssemblyInstanceId != ElementId.InvalidElementId)
+                .Where(v => !v.IsTemplate
+                    && v.IsAssemblyView
+                    && v.AssociatedAssemblyInstanceId != ElementId.InvalidElementId
+                    // Part List views (AssemblyViewUtils.CreatePartList -- a
+                    // ViewSchedule, same underlying type as Material Takeoff/
+                    // Single Category Schedule views, so distinguishing by
+                    // name rather than type) don't carry taggable geometry and
+                    // aren't a meaningful scope for this tool.
+                    && v.Name.IndexOf("Part List", StringComparison.OrdinalIgnoreCase) < 0)
                 .ToList();
         }
 
