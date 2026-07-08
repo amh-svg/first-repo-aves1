@@ -596,7 +596,7 @@ namespace AVES.Cmds_Button10
                 {
                     foreach (Category cat in ib.Categories)
                     {
-                        if (cat.Id.IntegerValue == (int)BuiltInCategory.OST_Sheets)
+                        if (cat.Id.Value == (int)BuiltInCategory.OST_Sheets)
                         {
                             boundDefs.Add(def);
                             break;

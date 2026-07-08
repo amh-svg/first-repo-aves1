@@ -733,7 +733,7 @@ namespace AVES.Cmds_Button11
                 }
                 catch (Exception ex)
                 {
-                    TaskDialog.Show("Select in View", $"Could not select element {row.ExampleElementId.IntegerValue}:\n{ex.Message}");
+                    TaskDialog.Show("Select in View", $"Could not select element {row.ExampleElementId.Value}:\n{ex.Message}");
                 }
             }
         }
@@ -816,7 +816,7 @@ namespace AVES.Cmds_Button11
                                 ViewName = view.Name,
                                 AssemblyName = assembly.AssemblyTypeName,
                                 FamilyTypeName = failing.TypeName,
-                                ElementIdDisplay = failing.ExampleUntaggedMemberId.IntegerValue.ToString(),
+                                ElementIdDisplay = failing.ExampleUntaggedMemberId.Value.ToString(),
                                 ExampleElementId = failing.ExampleUntaggedMemberId
                             });
                         }
