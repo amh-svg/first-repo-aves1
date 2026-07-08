@@ -248,6 +248,15 @@ namespace AVES.Cmds_Button11
                     return Result.Cancelled;
                 }
 
+                if (!view.IsAssemblyView || view.AssociatedAssemblyInstanceId == ElementId.InvalidElementId)
+                {
+                    TaskDialog.Show("Tag Completeness — Diagnostic",
+                        $"\"{view.Name}\" is not an assembly view.\n\n" +
+                        "This tool must be run from one of an assembly's own generated views " +
+                        "(3D, front/section, plan, etc.) -- open that view and run the command again.");
+                    return Result.Cancelled;
+                }
+
                 var assemblies = TagCompletenessScanner.GetAssembliesInView(doc, view);
                 if (assemblies.Count == 0)
                 {
@@ -259,45 +268,38 @@ namespace AVES.Cmds_Button11
 
                 var allTags = TagCompletenessScanner.GetAllIndependentTags(doc);
 
+                // Scope is the active view only -- tags from every other view,
+                // including other views of the same assembly, are ignored. One
+                // scan covers every assembly detected, since they're all being
+                // viewed from this same active view.
+                var tagScan = TagCompletenessScanner.BuildTaggedTypeIdsForViews(
+                    doc, allTags, new HashSet<ElementId> { view.Id });
+
                 var sb = new StringBuilder();
-                sb.AppendLine($"View: {view.Name}");
+                sb.AppendLine($"Active view: {view.Name}  [Id {view.Id.IntegerValue}]");
                 sb.AppendLine($"Assemblies detected: {assemblies.Count}");
                 sb.AppendLine($"IndependentTag elements in document (unscoped): {allTags.Count}");
+                sb.AppendLine($"Tags scoped to this view only: {tagScan.TotalTagsScanned}" +
+                    $"  |  Orphaned skipped: {tagScan.OrphanedTagsSkipped}" +
+                    $"  |  Exceptions: {tagScan.Exceptions.Count}" +
+                    $"  |  Distinct tagged types (in-scope): {tagScan.TaggedTypeIds.Count}");
+                foreach (var (tagId, err) in tagScan.Exceptions)
+                    sb.AppendLine($"    - Tag Id {tagId.IntegerValue}: {err}");
                 sb.AppendLine();
 
                 int totalFailing = 0;
                 foreach (var assembly in assemblies.OrderBy(a => a.AssemblyTypeName).ThenBy(a => a.Id.IntegerValue))
                 {
-                    var assemblyViews = TagCompletenessScanner.GetAssemblyOwnViews(doc, assembly);
-                    var assemblyViewIds = new HashSet<ElementId>(assemblyViews.Select(v => v.Id));
-
-                    sb.AppendLine($"Assembly: {assembly.AssemblyTypeName}  [Id {assembly.Id.IntegerValue}]");
-                    sb.AppendLine($"  Own views ({assemblyViews.Count}): {string.Join(", ", assemblyViews.Select(v => $"{v.Name} [{v.Id.IntegerValue}]"))}");
-
-                    if (assemblyViews.Count == 0)
-                    {
-                        sb.AppendLine("  No assembly views found -- cannot determine tag completeness for this assembly (every member type will report FAIL).");
-                        sb.AppendLine();
-                        continue;
-                    }
-
-                    var tagScan = TagCompletenessScanner.BuildTaggedTypeIdsForViews(doc, allTags, assemblyViewIds);
-                    sb.AppendLine($"  Tags scoped to these views: {tagScan.TotalTagsScanned}" +
-                        $"  |  Orphaned skipped: {tagScan.OrphanedTagsSkipped}" +
-                        $"  |  Exceptions: {tagScan.Exceptions.Count}" +
-                        $"  |  Distinct tagged types (in-scope): {tagScan.TaggedTypeIds.Count}");
-                    foreach (var (tagId, err) in tagScan.Exceptions)
-                        sb.AppendLine($"      - Tag Id {tagId.IntegerValue}: {err}");
-
                     var scan = TagCompletenessScanner.ScanAssembly(doc, assembly, tagScan);
                     totalFailing += scan.Failing.Count;
 
+                    sb.AppendLine($"Assembly: {assembly.AssemblyTypeName}  [Id {assembly.Id.IntegerValue}]");
                     sb.AppendLine($"  Distinct member family types: {scan.DistinctFamilyTypeCount}  |  Failing: {scan.Failing.Count}");
                     foreach (var t in scan.Types.OrderBy(t => t.TypeName))
                     {
                         if (t.TaggedMembersWithinAssembly.Count > 0)
                         {
-                            sb.AppendLine($"    [PASS - tagged on this assembly's own member] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly})");
+                            sb.AppendLine($"    [PASS - tagged on this assembly's own member, in THIS view] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly})");
                             foreach (var memberId in t.TaggedMembersWithinAssembly)
                             {
                                 var tagIds = tagScan.TaggingTagsByElement.TryGetValue(memberId, out var ids)
@@ -308,12 +310,12 @@ namespace AVES.Cmds_Button11
                         }
                         else if (t.Passed)
                         {
-                            sb.AppendLine($"    [PASS - tagged in an assembly view, but not on this assembly's own member] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly}, " +
+                            sb.AppendLine($"    [PASS - tagged in this view, but not on this assembly's own member] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly}, " +
                                 $"example untagged member Id: {t.ExampleUntaggedMemberId.IntegerValue})");
                         }
                         else
                         {
-                            sb.AppendLine($"    [FAIL - untagged in this assembly's own views] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly}, example untagged member Id: {t.ExampleUntaggedMemberId.IntegerValue})");
+                            sb.AppendLine($"    [FAIL - untagged in this view] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly}, example untagged member Id: {t.ExampleUntaggedMemberId.IntegerValue})");
                         }
                     }
                     sb.AppendLine();
