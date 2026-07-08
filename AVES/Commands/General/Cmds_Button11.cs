@@ -18,6 +18,7 @@ using WpfBorder = System.Windows.Controls.Border;
 using WpfBrushes = System.Windows.Media.Brushes;
 using WpfButton = System.Windows.Controls.Button;
 using WpfCheckBox = System.Windows.Controls.CheckBox;
+using WpfClipboard = System.Windows.Clipboard;
 using WpfDataGrid = System.Windows.Controls.DataGrid;
 using WpfDataGridCell = System.Windows.Controls.DataGridCell;
 using WpfDataGridColumnHeader = System.Windows.Controls.Primitives.DataGridColumnHeader;
@@ -490,6 +491,7 @@ namespace AVES.Cmds_Button11
     internal class TagReportWindow : Window
     {
         private readonly UIDocument _uiDoc;
+        private readonly List<TagReportRow> _rows;
 
         public TagReportWindow(
             UIDocument uiDoc,
@@ -500,6 +502,7 @@ namespace AVES.Cmds_Button11
             string docTitle)
         {
             _uiDoc = uiDoc;
+            _rows = failingRows;
 
             Title = "Assembly Tag Completeness — Report";
             Width = 900;
@@ -583,6 +586,10 @@ namespace AVES.Cmds_Button11
                 Padding = new WpfThickness(20, 14, 20, 14)
             };
             var footerRow = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, HorizontalAlignment = WpfHAlign.Right };
+            var copyBtn = AvControls.SecondaryBtn("⧉  Copy to clipboard", () => { });
+            copyBtn.Margin = new WpfThickness(0, 0, 10, 0);
+            copyBtn.Click += (s, e) => OnCopyToClipboard(copyBtn);
+            footerRow.Children.Add(copyBtn);
             var closeBtn = AvControls.PrimaryBtn("Close", () => Close());
             footerRow.Children.Add(closeBtn);
             footer.Child = footerRow;
@@ -669,11 +676,11 @@ namespace AVES.Cmds_Button11
             factory.SetValue(WpfButton.FontSizeProperty, 11.5);
             factory.SetValue(WpfButton.FontWeightProperty, WpfFontWeights.SemiBold);
             factory.SetValue(WpfButton.ForegroundProperty, AvTokens.B(AvTokens.TextDim));
-            factory.SetValue(WpfButton.BackgroundProperty, AvTokens.B(AvTokens.Surface));
-            factory.SetValue(WpfButton.BorderBrushProperty, AvTokens.B(AvTokens.BorderStrong));
-            factory.SetValue(WpfButton.BorderThicknessProperty, new WpfThickness(1));
-            // Matches AvControls.StatusPill's own Padding/CornerRadius exactly,
-            // so the pill and the button read as the same chip-like size/shape.
+            factory.SetValue(WpfButton.BackgroundProperty, AvTokens.B(AvTokens.Surface2));
+            // No border: StatusPill's own Border has none either (measured:
+            // adding even a 1px border here made the button 27.297px tall vs.
+            // the pill's 25.297px -- a 2px mismatch from the border alone).
+            // Padding/CornerRadius below match StatusPill's exactly.
             factory.SetValue(WpfButton.PaddingProperty, new WpfThickness(8, 5, 10, 5));
             factory.SetValue(WpfButton.CursorProperty, System.Windows.Input.Cursors.Hand);
             factory.SetValue(WpfButton.TemplateProperty, BuildChipButtonTemplate());
@@ -683,10 +690,13 @@ namespace AVES.Cmds_Button11
         }
 
         /// <summary>
-        /// Same shape as AvControls' FieldButtonTemplate (Border + hover-tint
-        /// ControlTemplate), but with CornerRadius 6 instead of 5 to exactly
-        /// match AvControls.StatusPill's corner radius for this one chip-sized
-        /// button -- kept local rather than changing the shared Core template.
+        /// Pixel-matched to AvControls.StatusPill's own Border: same
+        /// CornerRadius (6), same Padding (8,5,10,5), and -- measured via
+        /// FormattedText -- no BorderThickness at all, since even a 1px
+        /// border adds 2px to the auto-sized height (27.297px vs. the pill's
+        /// 25.297px for identical 11.5pt SemiBold Segoe UI content). Kept
+        /// local rather than changing the shared Core FieldButtonTemplate,
+        /// which does have a border and is used elsewhere for that look.
         /// </summary>
         private static System.Windows.Controls.ControlTemplate BuildChipButtonTemplate()
         {
@@ -694,9 +704,7 @@ namespace AVES.Cmds_Button11
             var bd = new FrameworkElementFactory(typeof(WpfBorder));
             bd.Name = "bd";
             bd.SetValue(WpfBorder.CornerRadiusProperty, new CornerRadius(6));
-            bd.SetValue(WpfBorder.BackgroundProperty, AvTokens.B(AvTokens.Surface));
-            bd.SetValue(WpfBorder.BorderBrushProperty, AvTokens.B(AvTokens.BorderStrong));
-            bd.SetValue(WpfBorder.BorderThicknessProperty, new WpfThickness(1));
+            bd.SetValue(WpfBorder.BackgroundProperty, AvTokens.B(AvTokens.Surface2));
             var cp = new FrameworkElementFactory(typeof(ContentPresenter));
             cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, WpfHAlign.Center);
             cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
@@ -709,7 +717,7 @@ namespace AVES.Cmds_Button11
             bd.AppendChild(cp);
             tpl.VisualTree = bd;
             var trigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            trigger.Setters.Add(new Setter(WpfBorder.BackgroundProperty, AvTokens.B(AvTokens.Surface2), "bd"));
+            trigger.Setters.Add(new Setter(WpfBorder.BackgroundProperty, AvTokens.B(AvTokens.AccentTint), "bd"));
             tpl.Triggers.Add(trigger);
             return tpl;
         }
@@ -728,6 +736,27 @@ namespace AVES.Cmds_Button11
                     TaskDialog.Show("Select in View", $"Could not select element {row.ExampleElementId.IntegerValue}:\n{ex.Message}");
                 }
             }
+        }
+
+        private void OnCopyToClipboard(WpfButton sourceBtn)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("View\tAssembly\tFamily Type\tElement ID\tStatus");
+            foreach (var r in _rows)
+                sb.AppendLine(string.Join("\t", r.ViewName, r.AssemblyName, r.FamilyTypeName, r.ElementIdDisplay, "Failed"));
+            try
+            {
+                WpfClipboard.SetText(sb.ToString());
+                if (sourceBtn != null)
+                {
+                    var original = sourceBtn.Content;
+                    sourceBtn.Content = "✓  Copied!";
+                    var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1.4) };
+                    timer.Tick += (s, e) => { sourceBtn.Content = original; timer.Stop(); };
+                    timer.Start();
+                }
+            }
+            catch { }
         }
     }
 
