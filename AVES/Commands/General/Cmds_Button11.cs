@@ -19,21 +19,35 @@ using Autodesk.Revit.UI;
 
 namespace AVES.Cmds_Button11
 {
-    /// <summary>One failing family type within one assembly.</summary>
-    internal class FailingFamilyType
+    /// <summary>One distinct member family type within one assembly, pass or fail.</summary>
+    internal class FamilyTypeScanRow
     {
         public ElementId TypeId = ElementId.InvalidElementId;
         public string TypeName = "";
-        public int MemberCount;
-        public ElementId ExampleUntaggedElementId = ElementId.InvalidElementId;
+        public int MemberCountInAssembly;
+        public bool Passed;
+        /// <summary>True if at least one of THIS assembly's own members of this type is tagged (as opposed to only some other, unrelated element of the same type elsewhere in the project).</summary>
+        public bool PassedWithinAssembly;
+        public ElementId ExampleElementId = ElementId.InvalidElementId;
+    }
+
+    /// <summary>Diagnostic result of the project-wide tag scan.</summary>
+    internal class TaggedTypeScanResult
+    {
+        public HashSet<ElementId> TaggedElementIds = new HashSet<ElementId>();
+        public HashSet<ElementId> TaggedTypeIds = new HashSet<ElementId>();
+        public int TotalTagsScanned;
+        public int OrphanedTagsSkipped;
+        public List<(ElementId TagId, string Error)> Exceptions = new List<(ElementId, string)>();
     }
 
     /// <summary>One assembly's scan result within one view.</summary>
     internal class AssemblyScanResult
     {
         public AssemblyInstance Assembly = null!;
-        public int DistinctFamilyTypeCount;
-        public List<FailingFamilyType> Failing = new List<FailingFamilyType>();
+        public List<FamilyTypeScanRow> Types = new List<FamilyTypeScanRow>();
+        public int DistinctFamilyTypeCount => Types.Count;
+        public List<FamilyTypeScanRow> Failing => Types.Where(t => !t.Passed).ToList();
     }
 
     internal static class TagCompletenessScanner
@@ -69,39 +83,64 @@ namespace AVES.Cmds_Button11
         /// anywhere in the document, built from a single pass over every
         /// IndependentTag (scope is project-wide, not limited to a view or an
         /// assembly, per the confirmed spec).
+        ///
+        /// Orphaned tags (IsOrphaned == true, host/reference lost) are skipped
+        /// deterministically up front rather than relying on GetTaggedLocalElementIds
+        /// throwing — a caught-and-swallowed exception here was previously the
+        /// only signal, which hid exactly how many tags were being dropped and
+        /// why, making the resulting set look flaky run to run.
         /// </summary>
-        public static HashSet<ElementId> BuildProjectWideTaggedTypeIds(Document doc)
+        public static TaggedTypeScanResult BuildProjectWideTaggedTypeIds(Document doc)
         {
-            var taggedTypeIds = new HashSet<ElementId>();
+            var result = new TaggedTypeScanResult();
             var tags = new FilteredElementCollector(doc)
                 .OfClass(typeof(IndependentTag))
-                .Cast<IndependentTag>();
+                .Cast<IndependentTag>()
+                .ToList();
+
+            result.TotalTagsScanned = tags.Count;
 
             foreach (var tag in tags)
             {
+                if (tag.IsOrphaned)
+                {
+                    result.OrphanedTagsSkipped++;
+                    continue;
+                }
+
                 ICollection<ElementId> taggedIds;
-                try { taggedIds = tag.GetTaggedLocalElementIds(); }
-                catch { continue; }
+                try
+                {
+                    taggedIds = tag.GetTaggedLocalElementIds();
+                }
+                catch (Exception ex)
+                {
+                    result.Exceptions.Add((tag.Id, ex.Message));
+                    continue;
+                }
 
                 foreach (var id in taggedIds)
                 {
                     var el = doc.GetElement(id);
                     if (el == null) continue;
+                    result.TaggedElementIds.Add(id);
                     var typeId = el.GetTypeId();
                     if (typeId != ElementId.InvalidElementId)
-                        taggedTypeIds.Add(typeId);
+                        result.TaggedTypeIds.Add(typeId);
                 }
             }
 
-            return taggedTypeIds;
+            return result;
         }
 
         /// <summary>
         /// Scans one assembly: groups its members by family type (dedup level
-        /// per the confirmed spec), and reports which distinct family types have
-        /// zero tagged instances anywhere in the project.
+        /// per the confirmed spec), and reports every distinct family type with
+        /// its pass/fail status, distinguishing "tagged within this assembly"
+        /// from "passed only because some other element of the same type is
+        /// tagged elsewhere in the project" (both count as passing per spec).
         /// </summary>
-        public static AssemblyScanResult ScanAssembly(Document doc, AssemblyInstance assembly, HashSet<ElementId> taggedTypeIds)
+        public static AssemblyScanResult ScanAssembly(Document doc, AssemblyInstance assembly, TaggedTypeScanResult tagScan)
         {
             var membersByType = new Dictionary<ElementId, List<Element>>();
             foreach (var id in assembly.GetMemberIds())
@@ -119,23 +158,21 @@ namespace AVES.Cmds_Button11
                 list.Add(el);
             }
 
-            var result = new AssemblyScanResult
-            {
-                Assembly = assembly,
-                DistinctFamilyTypeCount = membersByType.Count
-            };
+            var result = new AssemblyScanResult { Assembly = assembly };
 
             foreach (var kv in membersByType)
             {
-                if (taggedTypeIds.Contains(kv.Key)) continue; // passes: tagged somewhere
-
+                bool passed = tagScan.TaggedTypeIds.Contains(kv.Key);
+                bool passedWithinAssembly = kv.Value.Any(el => tagScan.TaggedElementIds.Contains(el.Id));
                 var typeElem = doc.GetElement(kv.Key);
-                result.Failing.Add(new FailingFamilyType
+                result.Types.Add(new FamilyTypeScanRow
                 {
                     TypeId = kv.Key,
                     TypeName = typeElem?.Name ?? "(unknown type)",
-                    MemberCount = kv.Value.Count,
-                    ExampleUntaggedElementId = kv.Value[0].Id
+                    MemberCountInAssembly = kv.Value.Count,
+                    Passed = passed,
+                    PassedWithinAssembly = passedWithinAssembly,
+                    ExampleElementId = kv.Value[0].Id
                 });
             }
 
@@ -177,26 +214,35 @@ namespace AVES.Cmds_Button11
                     return Result.Succeeded;
                 }
 
-                var taggedTypeIds = TagCompletenessScanner.BuildProjectWideTaggedTypeIds(doc);
+                var tagScan = TagCompletenessScanner.BuildProjectWideTaggedTypeIds(doc);
 
                 var sb = new StringBuilder();
                 sb.AppendLine($"View: {view.Name}");
                 sb.AppendLine($"Assemblies detected: {assemblies.Count}");
-                sb.AppendLine($"Project-wide tagged type count: {taggedTypeIds.Count}");
+                sb.AppendLine();
+                sb.AppendLine("--- Project-wide tag scan ---");
+                sb.AppendLine($"IndependentTag elements found: {tagScan.TotalTagsScanned}");
+                sb.AppendLine($"Orphaned tags skipped (IsOrphaned): {tagScan.OrphanedTagsSkipped}");
+                sb.AppendLine($"Tags that threw resolving GetTaggedLocalElementIds: {tagScan.Exceptions.Count}");
+                foreach (var (tagId, err) in tagScan.Exceptions)
+                    sb.AppendLine($"    - Tag Id {tagId.IntegerValue}: {err}");
+                sb.AppendLine($"Distinct tagged type count: {tagScan.TaggedTypeIds.Count}");
                 sb.AppendLine();
 
                 int totalFailing = 0;
                 foreach (var assembly in assemblies.OrderBy(a => a.AssemblyTypeName).ThenBy(a => a.Id.IntegerValue))
                 {
-                    var scan = TagCompletenessScanner.ScanAssembly(doc, assembly, taggedTypeIds);
+                    var scan = TagCompletenessScanner.ScanAssembly(doc, assembly, tagScan);
                     totalFailing += scan.Failing.Count;
 
                     sb.AppendLine($"Assembly: {assembly.AssemblyTypeName}  [Id {assembly.Id.IntegerValue}]");
-                    sb.AppendLine($"  Distinct member family types: {scan.DistinctFamilyTypeCount}");
-                    sb.AppendLine($"  Failing (untagged anywhere): {scan.Failing.Count}");
-                    foreach (var f in scan.Failing)
+                    sb.AppendLine($"  Distinct member family types: {scan.DistinctFamilyTypeCount}  |  Failing: {scan.Failing.Count}");
+                    foreach (var t in scan.Types.OrderBy(t => t.TypeName))
                     {
-                        sb.AppendLine($"    - {f.TypeName}  (members in assembly: {f.MemberCount}, example untagged Id: {f.ExampleUntaggedElementId.IntegerValue})");
+                        string status = t.Passed
+                            ? (t.PassedWithinAssembly ? "PASS (tagged within this assembly)" : "PASS (tagged elsewhere in project only)")
+                            : "FAIL (untagged anywhere)";
+                        sb.AppendLine($"    [{status}] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly}, example element Id: {t.ExampleElementId.IntegerValue})");
                     }
                     sb.AppendLine();
                 }
