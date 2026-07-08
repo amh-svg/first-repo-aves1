@@ -1,24 +1,47 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //  Cmds_Button11.cs
 //  Assembly Tag Completeness Checker.
-//
-//  DIAGNOSTIC STAGE (not yet the final tool): this file currently contains
-//  only the core detection algorithm plus a temporary trace-dump Execute(),
-//  so it can be run once in Revit against a known assembly (with known
-//  tagged/untagged members) to confirm the detection + dedup-by-family-type
-//  logic before the view picker and WPF report window are built around it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using AVES.Core;
+using WpfBorder = System.Windows.Controls.Border;
+using WpfBrushes = System.Windows.Media.Brushes;
+using WpfButton = System.Windows.Controls.Button;
+using WpfCheckBox = System.Windows.Controls.CheckBox;
+using WpfDataGrid = System.Windows.Controls.DataGrid;
+using WpfDataGridCell = System.Windows.Controls.DataGridCell;
+using WpfDataGridColumnHeader = System.Windows.Controls.Primitives.DataGridColumnHeader;
+using WpfDataGridTemplateColumn = System.Windows.Controls.DataGridTemplateColumn;
+using WpfDataGridTextColumn = System.Windows.Controls.DataGridTextColumn;
+using WpfFontWeights = System.Windows.FontWeights;
+using WpfGrid = System.Windows.Controls.Grid;
+using WpfHAlign = System.Windows.HorizontalAlignment;
+using WpfOrientation = System.Windows.Controls.Orientation;
+using WpfRowDef = System.Windows.Controls.RowDefinition;
+using WpfScrollBarVis = System.Windows.Controls.ScrollBarVisibility;
+using WpfScrollViewer = System.Windows.Controls.ScrollViewer;
+using WpfStackPanel = System.Windows.Controls.StackPanel;
+using WpfTextBlock = System.Windows.Controls.TextBlock;
+using WpfTextBox = System.Windows.Controls.TextBox;
+using WpfThickness = System.Windows.Thickness;
+using WpfVisibility = System.Windows.Visibility;
 
 namespace AVES.Cmds_Button11
 {
+    // ─────────────────────────────────────────────────────────────────────────
+    //  SCAN DATA MODEL
+    // ─────────────────────────────────────────────────────────────────────────
+
     /// <summary>One distinct member family type within one assembly, pass or fail.</summary>
     internal class FamilyTypeScanRow
     {
@@ -28,20 +51,19 @@ namespace AVES.Cmds_Button11
         public bool Passed;
         /// <summary>
         /// The actual member elements of this type, IN THIS ASSEMBLY, that are
-        /// themselves directly tagged (i.e. their own Id was returned by some
-        /// tag's GetTaggedLocalElementIds()) -- empty if none, even when Passed
-        /// is true via a same-type element tagged elsewhere in the project.
+        /// themselves directly tagged in the scanned view -- empty if none,
+        /// even when Passed is true via a same-type element tagged elsewhere
+        /// in the same view.
         /// </summary>
         public List<ElementId> TaggedMembersWithinAssembly = new List<ElementId>();
         public ElementId ExampleUntaggedMemberId = ElementId.InvalidElementId;
     }
 
-    /// <summary>Diagnostic result of a tag scan scoped to a specific set of views.</summary>
+    /// <summary>Result of a tag scan scoped to a specific view (or set of views).</summary>
     internal class TaggedTypeScanResult
     {
         public HashSet<ElementId> TaggedElementIds = new HashSet<ElementId>();
         public HashSet<ElementId> TaggedTypeIds = new HashSet<ElementId>();
-        /// <summary>Reverse lookup: tagged element id -> ids of every tag that tags it.</summary>
         public Dictionary<ElementId, List<ElementId>> TaggingTagsByElement = new Dictionary<ElementId, List<ElementId>>();
         public int TotalTagsScanned;
         public int OrphanedTagsSkipped;
@@ -87,8 +109,8 @@ namespace AVES.Cmds_Button11
 
         /// <summary>
         /// Every IndependentTag in the document, fetched once and reused across
-        /// assemblies (each assembly then filters this down to its own views by
-        /// OwnerViewId, rather than re-querying the whole document per assembly).
+        /// every selected view (each view then filters this down by OwnerViewId,
+        /// rather than re-querying the whole document per view).
         /// </summary>
         public static List<IndependentTag> GetAllIndependentTags(Document doc)
         {
@@ -99,32 +121,31 @@ namespace AVES.Cmds_Button11
         }
 
         /// <summary>
-        /// The views generated specifically to document this assembly (3D,
-        /// front/section, plan, sheet, etc.) — there is no direct "get all
-        /// views for this assembly" API (AssemblyViewUtils only exposes
-        /// creation methods), so this scans every View and filters by
-        /// IsAssemblyView + AssociatedAssemblyInstanceId == assembly.Id. Note
-        /// this is a View-specific property, distinct from the base
-        /// Element.AssemblyInstanceId (which means "this element is a member
-        /// of assembly X", not "this view documents assembly X").
+        /// Every view generated to document an assembly (3D, front/section,
+        /// plan, sheet, etc.) across the whole project, used to populate the
+        /// view picker. There is no direct "get all assembly views" API
+        /// (AssemblyViewUtils only exposes creation methods), so this scans
+        /// every View and filters by IsAssemblyView + a valid
+        /// AssociatedAssemblyInstanceId -- a View-specific property pair,
+        /// distinct from the base Element.AssemblyInstanceId (which means
+        /// "this element is a member of assembly X", not "this view documents
+        /// assembly X").
         /// </summary>
-        public static List<View> GetAssemblyOwnViews(Document doc, AssemblyInstance assembly)
+        public static List<View> GetAllAssemblyViews(Document doc)
         {
             return new FilteredElementCollector(doc)
                 .OfClass(typeof(View))
                 .Cast<View>()
-                .Where(v => !v.IsTemplate && v.IsAssemblyView && v.AssociatedAssemblyInstanceId == assembly.Id)
+                .Where(v => !v.IsTemplate && v.IsAssemblyView && v.AssociatedAssemblyInstanceId != ElementId.InvalidElementId)
                 .ToList();
         }
 
         /// <summary>
         /// Tagged-element/tagged-type sets built only from tags whose
-        /// OwnerViewId falls within the given scope (an assembly's own views),
-        /// not project-wide. Orphaned tags (IsOrphaned == true, host/reference
-        /// lost) are skipped deterministically up front rather than relying on
-        /// GetTaggedLocalElementIds throwing — a caught-and-swallowed exception
-        /// was previously the only signal, hiding exactly how many tags were
-        /// being dropped and why.
+        /// OwnerViewId falls within the given scope. Orphaned tags
+        /// (IsOrphaned == true, host/reference lost) are skipped
+        /// deterministically up front rather than relying on
+        /// GetTaggedLocalElementIds throwing.
         /// </summary>
         public static TaggedTypeScanResult BuildTaggedTypeIdsForViews(
             Document doc, List<IndependentTag> allTags, HashSet<ElementId> scopeViewIds)
@@ -176,11 +197,8 @@ namespace AVES.Cmds_Button11
         /// <summary>
         /// Scans one assembly: groups its members by family type (dedup level
         /// per the confirmed spec), and reports every distinct family type's
-        /// pass/fail status against a tag scan already scoped to that same
-        /// assembly's own views. Distinguishes "tagged on this assembly's own
-        /// member" from "passed only because some other element of the same
-        /// type is tagged in one of the assembly's own views" (both count as
-        /// passing, but the latter is worth a second look).
+        /// pass/fail status against a tag scan already scoped to the view
+        /// being checked.
         /// </summary>
         public static AssemblyScanResult ScanAssembly(Document doc, AssemblyInstance assembly, TaggedTypeScanResult tagScan)
         {
@@ -224,10 +242,426 @@ namespace AVES.Cmds_Button11
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  TEMPORARY DIAGNOSTIC COMMAND
-    //  Runs the scan against the active view only and dumps a full trace via
-    //  TaskDialog, so the algorithm can be manually verified against a known
-    //  assembly before the real view-picker + report-window UI is built.
+    //  VIEW PICKER (assembly views only, grouped/labeled by owning assembly)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    internal class AssemblyViewPickerWindow : Window
+    {
+        public List<View> SelectedViews { get; private set; } = new List<View>();
+
+        private readonly List<(View View, string Label, WpfBorder Row, WpfCheckBox Box)> _rows
+            = new List<(View, string, WpfBorder, WpfCheckBox)>();
+        private readonly WpfTextBox _searchBox;
+        private readonly WpfTextBlock _countLabel;
+        private bool _confirmed;
+
+        public AssemblyViewPickerWindow(Document doc, List<View> allAssemblyViews)
+        {
+            var ordered = allAssemblyViews
+                .Select(v => new
+                {
+                    View = v,
+                    Assembly = doc.GetElement(v.AssociatedAssemblyInstanceId) as AssemblyInstance
+                })
+                .OrderBy(x => x.Assembly?.AssemblyTypeName ?? "", StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.View.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            Title = "Select Assembly Views";
+            Width = 520;
+            Height = 640;
+            MinWidth = 420;
+            MinHeight = 400;
+            ResizeMode = ResizeMode.CanResize;
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            Background = AvTokens.B(AvTokens.Surface);
+            FontFamily = AvTokens.Ui;
+            UseLayoutRounding = true;
+            SnapsToDevicePixels = true;
+
+            var shell = new WpfGrid();
+            shell.RowDefinitions.Add(new WpfRowDef { Height = new GridLength(44) });
+            shell.RowDefinitions.Add(new WpfRowDef { Height = GridLength.Auto });
+            shell.RowDefinitions.Add(new WpfRowDef { Height = GridLength.Auto });
+            shell.RowDefinitions.Add(new WpfRowDef { Height = new GridLength(1, GridUnitType.Star) });
+            shell.RowDefinitions.Add(new WpfRowDef { Height = GridLength.Auto });
+            Content = shell;
+
+            var titleBar = AvControls.TitleBar("Select Assembly Views");
+            WpfGrid.SetRow(titleBar, 0);
+            shell.Children.Add(titleBar);
+
+            // Search box
+            var searchWrap = new WpfBorder
+            {
+                Background = AvTokens.B(AvTokens.Surface2),
+                BorderBrush = AvTokens.B(AvTokens.BorderStrong),
+                BorderThickness = new WpfThickness(1),
+                CornerRadius = new CornerRadius(5),
+                Margin = new WpfThickness(20, 14, 20, 10),
+                Padding = new WpfThickness(10, 0, 10, 0),
+                Height = 34
+            };
+            var searchRow = new WpfStackPanel { Orientation = WpfOrientation.Horizontal };
+            searchRow.Children.Add(new WpfTextBlock
+            {
+                Text = "⌕",
+                FontSize = 15,
+                Foreground = AvTokens.B(AvTokens.TextFaint),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new WpfThickness(0, 0, 7, 0)
+            });
+            _searchBox = new WpfTextBox
+            {
+                FontFamily = AvTokens.Ui,
+                FontSize = 13,
+                Foreground = AvTokens.B(AvTokens.Text),
+                Background = WpfBrushes.Transparent,
+                BorderThickness = new WpfThickness(0),
+                VerticalAlignment = VerticalAlignment.Center,
+                MinWidth = 200,
+                ToolTip = "Filter by assembly or view name"
+            };
+            _searchBox.TextChanged += (s, e) => ApplyFilter();
+            searchRow.Children.Add(_searchBox);
+            searchWrap.Child = searchRow;
+            WpfGrid.SetRow(searchWrap, 1);
+            shell.Children.Add(searchWrap);
+
+            // Select all / none row
+            var selRow = new WpfGrid { Margin = new WpfThickness(20, 0, 20, 8) };
+            selRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            selRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            selRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var btnAll = AvControls.SecondaryBtn("Select All", () => SetAllChecked(true));
+            btnAll.FontSize = 12.5;
+            btnAll.Padding = new WpfThickness(10, 5, 10, 5);
+            btnAll.Margin = new WpfThickness(0, 0, 6, 0);
+            var btnNone = AvControls.SecondaryBtn("Deselect All", () => SetAllChecked(false));
+            btnNone.FontSize = 12.5;
+            btnNone.Padding = new WpfThickness(10, 5, 10, 5);
+            _countLabel = new WpfTextBlock
+            {
+                FontFamily = AvTokens.Ui,
+                FontSize = 11,
+                Foreground = AvTokens.B(AvTokens.TextFaint),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = WpfHAlign.Right
+            };
+            WpfGrid.SetColumn(btnAll, 0);
+            WpfGrid.SetColumn(btnNone, 1);
+            WpfGrid.SetColumn(_countLabel, 2);
+            selRow.Children.Add(btnAll);
+            selRow.Children.Add(btnNone);
+            selRow.Children.Add(_countLabel);
+            WpfGrid.SetRow(selRow, 2);
+            shell.Children.Add(selRow);
+
+            // List
+            var list = new WpfStackPanel { Margin = new WpfThickness(20, 0, 20, 10) };
+            if (ordered.Count == 0)
+            {
+                list.Children.Add(new WpfTextBlock
+                {
+                    Text = "No assembly views were found in this project.",
+                    FontFamily = AvTokens.Ui,
+                    FontSize = 13,
+                    Foreground = AvTokens.B(AvTokens.TextFaint)
+                });
+            }
+            foreach (var entry in ordered)
+            {
+                string assemblyName = entry.Assembly?.AssemblyTypeName ?? "(unknown assembly)";
+                string label = $"{assemblyName} — {entry.View.Name}";
+                var (visual, box) = AvControls.CheckRow(label, false);
+                visual.MouseLeftButtonUp += (s, e) => { box.IsChecked = !box.IsChecked; };
+                box.Checked += (s, e) => UpdateCount();
+                box.Unchecked += (s, e) => UpdateCount();
+                list.Children.Add(visual);
+                _rows.Add((entry.View, label, visual, box));
+            }
+            var scroll = new WpfScrollViewer
+            {
+                VerticalScrollBarVisibility = WpfScrollBarVis.Auto,
+                HorizontalScrollBarVisibility = WpfScrollBarVis.Disabled,
+                Content = list
+            };
+            WpfGrid.SetRow(scroll, 3);
+            shell.Children.Add(scroll);
+
+            // Footer
+            var footer = new WpfBorder
+            {
+                Background = AvTokens.B(AvTokens.Surface2),
+                BorderBrush = AvTokens.B(AvTokens.Border),
+                BorderThickness = new WpfThickness(0, 1, 0, 0),
+                Padding = new WpfThickness(20, 14, 20, 14)
+            };
+            var footerRow = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, HorizontalAlignment = WpfHAlign.Right };
+            var btnCancel = AvControls.GhostBtn("Cancel", OnCancel);
+            var btnOk = AvControls.PrimaryBtn("▶  Run Check", OnOk);
+            btnCancel.Margin = new WpfThickness(0, 0, 8, 0);
+            footerRow.Children.Add(btnCancel);
+            footerRow.Children.Add(btnOk);
+            footer.Child = footerRow;
+            WpfGrid.SetRow(footer, 4);
+            shell.Children.Add(footer);
+
+            UpdateCount();
+        }
+
+        private void ApplyFilter()
+        {
+            var filter = _searchBox.Text?.Trim() ?? "";
+            foreach (var (_, label, row, _) in _rows)
+            {
+                bool match = filter.Length == 0 || label.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+                row.Visibility = match ? WpfVisibility.Visible : WpfVisibility.Collapsed;
+            }
+        }
+
+        private void SetAllChecked(bool value)
+        {
+            foreach (var (_, _, row, box) in _rows)
+            {
+                if (row.Visibility == WpfVisibility.Visible)
+                    box.IsChecked = value;
+            }
+            UpdateCount();
+        }
+
+        private void UpdateCount()
+        {
+            int checkedCount = _rows.Count(r => r.Box.IsChecked == true);
+            _countLabel.Text = $"{checkedCount} of {_rows.Count} selected";
+        }
+
+        private void OnOk()
+        {
+            SelectedViews = _rows.Where(r => r.Box.IsChecked == true).Select(r => r.View).ToList();
+            _confirmed = true;
+            Close();
+        }
+
+        private void OnCancel() => Close();
+
+        protected override void OnClosed(EventArgs e)
+        {
+            if (!_confirmed) SelectedViews = new List<View>();
+            base.OnClosed(e);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  REPORT ROW + WINDOW
+    // ─────────────────────────────────────────────────────────────────────────
+
+    internal class TagReportRow
+    {
+        public string ViewName { get; set; } = "";
+        public string AssemblyName { get; set; } = "";
+        public string FamilyTypeName { get; set; } = "";
+        public string ElementIdDisplay { get; set; } = "";
+        public ElementId ExampleElementId { get; set; } = ElementId.InvalidElementId;
+    }
+
+    /// <summary>
+    /// Shown non-modally (Show(), not ShowDialog()) so its "Select" action can
+    /// change Revit's live selection/active view while the report stays open.
+    /// </summary>
+    internal class TagReportWindow : Window
+    {
+        private readonly UIDocument _uiDoc;
+
+        public TagReportWindow(
+            UIDocument uiDoc,
+            List<TagReportRow> failingRows,
+            int viewsScanned,
+            int assembliesScanned,
+            int familyTypesChecked,
+            string docTitle)
+        {
+            _uiDoc = uiDoc;
+
+            Title = "Assembly Tag Completeness — Report";
+            Width = 900;
+            Height = 620;
+            MinWidth = 680;
+            MinHeight = 420;
+            ResizeMode = ResizeMode.CanResize;
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            Background = AvTokens.B(AvTokens.Surface2);
+            FontFamily = AvTokens.Ui;
+            UseLayoutRounding = true;
+            SnapsToDevicePixels = true;
+
+            var root = new WpfGrid();
+            root.RowDefinitions.Add(new WpfRowDef { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new WpfRowDef { Height = new GridLength(1, GridUnitType.Star) });
+            root.RowDefinitions.Add(new WpfRowDef { Height = GridLength.Auto });
+            Content = root;
+
+            var titleBar = AvControls.TitleBarWithSubtitle("Assembly Tag Completeness", $"Source · {docTitle}");
+            WpfGrid.SetRow(titleBar, 0);
+            root.Children.Add(titleBar);
+
+            var bodyScroll = new WpfScrollViewer
+            {
+                VerticalScrollBarVisibility = WpfScrollBarVis.Auto,
+                HorizontalScrollBarVisibility = WpfScrollBarVis.Disabled
+            };
+            var body = new WpfStackPanel { Margin = new WpfThickness(20) };
+            bodyScroll.Content = body;
+            WpfGrid.SetRow(bodyScroll, 1);
+            root.Children.Add(bodyScroll);
+
+            var statGrid = new WpfGrid { Margin = new WpfThickness(0, 0, 0, 20) };
+            for (int c = 0; c < 4; c++) statGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var stats = new (string v, string k, string cls)[]
+            {
+                (viewsScanned.ToString(), "Views scanned", ""),
+                (assembliesScanned.ToString(), "Assemblies scanned", ""),
+                (familyTypesChecked.ToString(), "Family types checked", ""),
+                (failingRows.Count.ToString(), "Failing", failingRows.Count > 0 ? "fail" : "ok"),
+            };
+            for (int i = 0; i < stats.Length; i++)
+            {
+                var tile = AvControls.StatTile(stats[i].v, stats[i].k, stats[i].cls);
+                tile.Margin = new WpfThickness(i == 0 ? 0 : 6, 0, i == stats.Length - 1 ? 0 : 6, 0);
+                WpfGrid.SetColumn(tile, i);
+                statGrid.Children.Add(tile);
+            }
+            body.Children.Add(statGrid);
+
+            if (failingRows.Count == 0)
+            {
+                body.Children.Add(new WpfTextBlock
+                {
+                    Text = "Every checked family type is tagged in its scanned view. Nothing to fix.",
+                    FontFamily = AvTokens.Ui,
+                    FontSize = 13,
+                    Foreground = AvTokens.B(AvTokens.TextDim)
+                });
+            }
+            else
+            {
+                var tableWrap = new WpfBorder
+                {
+                    BorderBrush = AvTokens.B(AvTokens.Border),
+                    BorderThickness = new WpfThickness(1),
+                    CornerRadius = new CornerRadius(5),
+                    ClipToBounds = true,
+                    Background = AvTokens.B(AvTokens.Surface)
+                };
+                tableWrap.Child = BuildResultsGrid(failingRows);
+                body.Children.Add(tableWrap);
+            }
+
+            var footer = new WpfBorder
+            {
+                Background = AvTokens.B(AvTokens.Surface),
+                BorderBrush = AvTokens.B(AvTokens.Border),
+                BorderThickness = new WpfThickness(0, 1, 0, 0),
+                Padding = new WpfThickness(20, 14, 20, 14)
+            };
+            var footerRow = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, HorizontalAlignment = WpfHAlign.Right };
+            var closeBtn = AvControls.PrimaryBtn("Close", () => Close());
+            footerRow.Children.Add(closeBtn);
+            footer.Child = footerRow;
+            WpfGrid.SetRow(footer, 2);
+            root.Children.Add(footer);
+        }
+
+        private WpfDataGrid BuildResultsGrid(List<TagReportRow> rows)
+        {
+            var grid = new WpfDataGrid
+            {
+                ItemsSource = rows,
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                CanUserDeleteRows = false,
+                IsReadOnly = true,
+                HeadersVisibility = System.Windows.Controls.DataGridHeadersVisibility.Column,
+                GridLinesVisibility = System.Windows.Controls.DataGridGridLinesVisibility.Horizontal,
+                HorizontalGridLinesBrush = AvTokens.B(AvTokens.Border),
+                RowHeight = 40,
+                FontFamily = AvTokens.Ui,
+                FontSize = 12.5,
+                Background = AvTokens.B(AvTokens.Surface),
+                BorderThickness = new WpfThickness(0),
+                RowBackground = AvTokens.B(AvTokens.Surface),
+                AlternatingRowBackground = AvTokens.B(AvTokens.Zebra),
+                AlternationCount = 2,
+                ColumnHeaderHeight = 34,
+                MaxHeight = 400
+            };
+
+            var headerStyle = new System.Windows.Style(typeof(WpfDataGridColumnHeader));
+            headerStyle.Setters.Add(new System.Windows.Setter(WpfDataGridColumnHeader.BackgroundProperty, AvTokens.B(AvTokens.Surface2)));
+            headerStyle.Setters.Add(new System.Windows.Setter(WpfDataGridColumnHeader.ForegroundProperty, AvTokens.B(AvTokens.TextFaint)));
+            headerStyle.Setters.Add(new System.Windows.Setter(WpfDataGridColumnHeader.FontFamilyProperty, AvTokens.Ui));
+            headerStyle.Setters.Add(new System.Windows.Setter(WpfDataGridColumnHeader.FontSizeProperty, 10.5));
+            headerStyle.Setters.Add(new System.Windows.Setter(WpfDataGridColumnHeader.FontWeightProperty, WpfFontWeights.Bold));
+            headerStyle.Setters.Add(new System.Windows.Setter(WpfDataGridColumnHeader.PaddingProperty, new WpfThickness(12, 9, 12, 9)));
+            grid.ColumnHeaderStyle = headerStyle;
+
+            var cellStyle = new System.Windows.Style(typeof(WpfDataGridCell));
+            cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.BorderThicknessProperty, new WpfThickness(0)));
+            cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.PaddingProperty, new WpfThickness(12, 8, 12, 8)));
+            cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.BackgroundProperty, WpfBrushes.Transparent));
+            cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.ForegroundProperty, AvTokens.B(AvTokens.Text)));
+            grid.CellStyle = cellStyle;
+
+            grid.Columns.Add(new WpfDataGridTextColumn { Header = "VIEW", Binding = new System.Windows.Data.Binding("ViewName"), Width = new System.Windows.Controls.DataGridLength(1, System.Windows.Controls.DataGridLengthUnitType.Star) });
+            grid.Columns.Add(new WpfDataGridTextColumn { Header = "ASSEMBLY", Binding = new System.Windows.Data.Binding("AssemblyName"), Width = new System.Windows.Controls.DataGridLength(1.4, System.Windows.Controls.DataGridLengthUnitType.Star) });
+            grid.Columns.Add(new WpfDataGridTextColumn { Header = "FAMILY TYPE", Binding = new System.Windows.Data.Binding("FamilyTypeName"), Width = new System.Windows.Controls.DataGridLength(1.6, System.Windows.Controls.DataGridLengthUnitType.Star) });
+            grid.Columns.Add(new WpfDataGridTextColumn { Header = "ELEMENT ID", Binding = new System.Windows.Data.Binding("ElementIdDisplay"), Width = new System.Windows.Controls.DataGridLength(0.8, System.Windows.Controls.DataGridLengthUnitType.Star) });
+
+            var selectCol = new WpfDataGridTemplateColumn { Header = "", Width = new System.Windows.Controls.DataGridLength(100) };
+            selectCol.CellTemplate = BuildSelectButtonTemplate();
+            grid.Columns.Add(selectCol);
+
+            return grid;
+        }
+
+        private DataTemplate BuildSelectButtonTemplate()
+        {
+            var template = new DataTemplate();
+            var factory = new FrameworkElementFactory(typeof(WpfButton));
+            factory.SetValue(WpfButton.ContentProperty, "Select");
+            factory.SetValue(WpfButton.FontFamilyProperty, AvTokens.Ui);
+            factory.SetValue(WpfButton.FontSizeProperty, 11.5);
+            factory.SetValue(WpfButton.ForegroundProperty, AvTokens.B(AvTokens.TextDim));
+            factory.SetValue(WpfButton.BackgroundProperty, AvTokens.B(AvTokens.Surface));
+            factory.SetValue(WpfButton.BorderBrushProperty, AvTokens.B(AvTokens.BorderStrong));
+            factory.SetValue(WpfButton.BorderThicknessProperty, new WpfThickness(1));
+            factory.SetValue(WpfButton.PaddingProperty, new WpfThickness(10, 4, 10, 4));
+            factory.SetValue(WpfButton.CursorProperty, System.Windows.Input.Cursors.Hand);
+            factory.SetValue(WpfButton.TemplateProperty, AvControls.FieldButtonTemplate());
+            factory.AddHandler(WpfButton.ClickEvent, new RoutedEventHandler(OnSelectClick));
+            template.VisualTree = factory;
+            return template;
+        }
+
+        private void OnSelectClick(object sender, RoutedEventArgs e)
+        {
+            if (sender is WpfButton btn && btn.DataContext is TagReportRow row && row.ExampleElementId != ElementId.InvalidElementId)
+            {
+                try
+                {
+                    _uiDoc.ShowElements(row.ExampleElementId);
+                    _uiDoc.Selection.SetElementIds(new List<ElementId> { row.ExampleElementId });
+                }
+                catch (Exception ex)
+                {
+                    TaskDialog.Show("Select in View", $"Could not select element {row.ExampleElementId.IntegerValue}:\n{ex.Message}");
+                }
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  COMMAND
     // ─────────────────────────────────────────────────────────────────────────
 
     [Transaction(TransactionMode.Manual)]
@@ -241,99 +675,68 @@ namespace AVES.Cmds_Button11
 
             try
             {
-                var view = doc.ActiveView;
-                if (view == null)
+                var allAssemblyViews = TagCompletenessScanner.GetAllAssemblyViews(doc);
+                if (allAssemblyViews.Count == 0)
                 {
-                    TaskDialog.Show("Tag Completeness — Diagnostic", "No active view.");
+                    TaskDialog.Show("Assembly Tag Completeness",
+                        "No assembly views were found in this project. This tool checks tags placed in an " +
+                        "assembly's own generated views (3D, front/section, plan, etc.) -- create those first.");
                     return Result.Cancelled;
                 }
 
-                if (!view.IsAssemblyView || view.AssociatedAssemblyInstanceId == ElementId.InvalidElementId)
-                {
-                    TaskDialog.Show("Tag Completeness — Diagnostic",
-                        $"\"{view.Name}\" is not an assembly view.\n\n" +
-                        "This tool must be run from one of an assembly's own generated views " +
-                        "(3D, front/section, plan, etc.) -- open that view and run the command again.");
-                    return Result.Cancelled;
-                }
+                var picker = new AssemblyViewPickerWindow(doc, allAssemblyViews);
+                picker.ShowDialog();
 
-                var assemblies = TagCompletenessScanner.GetAssembliesInView(doc, view);
-                if (assemblies.Count == 0)
-                {
-                    TaskDialog.Show("Tag Completeness — Diagnostic",
-                        $"View: {view.Name}\n\nNo assemblies detected in this view " +
-                        "(no visible element has a non-invalid AssemblyInstanceId).");
-                    return Result.Succeeded;
-                }
+                if (picker.SelectedViews.Count == 0)
+                    return Result.Cancelled;
 
                 var allTags = TagCompletenessScanner.GetAllIndependentTags(doc);
+                var failingRows = new List<TagReportRow>();
+                int assembliesScanned = 0;
+                int familyTypesChecked = 0;
 
-                // Scope is the active view only -- tags from every other view,
-                // including other views of the same assembly, are ignored. One
-                // scan covers every assembly detected, since they're all being
-                // viewed from this same active view.
-                var tagScan = TagCompletenessScanner.BuildTaggedTypeIdsForViews(
-                    doc, allTags, new HashSet<ElementId> { view.Id });
-
-                var sb = new StringBuilder();
-                sb.AppendLine($"Active view: {view.Name}  [Id {view.Id.IntegerValue}]");
-                sb.AppendLine($"Assemblies detected: {assemblies.Count}");
-                sb.AppendLine($"IndependentTag elements in document (unscoped): {allTags.Count}");
-                sb.AppendLine($"Tags scoped to this view only: {tagScan.TotalTagsScanned}" +
-                    $"  |  Orphaned skipped: {tagScan.OrphanedTagsSkipped}" +
-                    $"  |  Exceptions: {tagScan.Exceptions.Count}" +
-                    $"  |  Distinct tagged types (in-scope): {tagScan.TaggedTypeIds.Count}");
-                foreach (var (tagId, err) in tagScan.Exceptions)
-                    sb.AppendLine($"    - Tag Id {tagId.IntegerValue}: {err}");
-                sb.AppendLine();
-
-                int totalFailing = 0;
-                foreach (var assembly in assemblies.OrderBy(a => a.AssemblyTypeName).ThenBy(a => a.Id.IntegerValue))
+                foreach (var view in picker.SelectedViews)
                 {
-                    var scan = TagCompletenessScanner.ScanAssembly(doc, assembly, tagScan);
-                    totalFailing += scan.Failing.Count;
+                    var assemblies = TagCompletenessScanner.GetAssembliesInView(doc, view);
+                    if (assemblies.Count == 0) continue;
 
-                    sb.AppendLine($"Assembly: {assembly.AssemblyTypeName}  [Id {assembly.Id.IntegerValue}]");
-                    sb.AppendLine($"  Distinct member family types: {scan.DistinctFamilyTypeCount}  |  Failing: {scan.Failing.Count}");
-                    foreach (var t in scan.Types.OrderBy(t => t.TypeName))
+                    var tagScan = TagCompletenessScanner.BuildTaggedTypeIdsForViews(
+                        doc, allTags, new HashSet<ElementId> { view.Id });
+
+                    foreach (var assembly in assemblies.OrderBy(a => a.AssemblyTypeName, StringComparer.OrdinalIgnoreCase))
                     {
-                        if (t.TaggedMembersWithinAssembly.Count > 0)
+                        var scan = TagCompletenessScanner.ScanAssembly(doc, assembly, tagScan);
+                        assembliesScanned++;
+                        familyTypesChecked += scan.DistinctFamilyTypeCount;
+
+                        foreach (var failing in scan.Failing.OrderBy(t => t.TypeName, StringComparer.OrdinalIgnoreCase))
                         {
-                            sb.AppendLine($"    [PASS - tagged on this assembly's own member, in THIS view] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly})");
-                            foreach (var memberId in t.TaggedMembersWithinAssembly)
+                            failingRows.Add(new TagReportRow
                             {
-                                var tagIds = tagScan.TaggingTagsByElement.TryGetValue(memberId, out var ids)
-                                    ? string.Join(", ", ids.Select(i => i.IntegerValue))
-                                    : "(none found)";
-                                sb.AppendLine($"        - member Id {memberId.IntegerValue} is tagged by Tag Id(s): {tagIds}");
-                            }
-                        }
-                        else if (t.Passed)
-                        {
-                            sb.AppendLine($"    [PASS - tagged in this view, but not on this assembly's own member] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly}, " +
-                                $"example untagged member Id: {t.ExampleUntaggedMemberId.IntegerValue})");
-                        }
-                        else
-                        {
-                            sb.AppendLine($"    [FAIL - untagged in this view] {t.TypeName}  (members in assembly: {t.MemberCountInAssembly}, example untagged member Id: {t.ExampleUntaggedMemberId.IntegerValue})");
+                                ViewName = view.Name,
+                                AssemblyName = assembly.AssemblyTypeName,
+                                FamilyTypeName = failing.TypeName,
+                                ElementIdDisplay = failing.ExampleUntaggedMemberId.IntegerValue.ToString(),
+                                ExampleElementId = failing.ExampleUntaggedMemberId
+                            });
                         }
                     }
-                    sb.AppendLine();
                 }
 
-                var dialog = new TaskDialog("Tag Completeness — Diagnostic")
-                {
-                    MainInstruction = $"{assemblies.Count} assembl{(assemblies.Count == 1 ? "y" : "ies")} scanned, {totalFailing} failing family type(s) total",
-                    MainContent = "Full per-assembly trace is in the details below. Compare this against your known tagged/untagged members before the real UI is built.",
-                    ExpandedContent = sb.ToString()
-                };
-                dialog.Show();
+                var report = new TagReportWindow(
+                    uiDoc,
+                    failingRows,
+                    viewsScanned: picker.SelectedViews.Count,
+                    assembliesScanned: assembliesScanned,
+                    familyTypesChecked: familyTypesChecked,
+                    docTitle: doc.Title);
+                report.Show();
 
                 return Result.Succeeded;
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Tag Completeness — Diagnostic — Error", ex.ToString());
+                TaskDialog.Show("Assembly Tag Completeness – Error", ex.Message);
                 return Result.Failed;
             }
         }
