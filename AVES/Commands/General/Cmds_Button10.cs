@@ -5,7 +5,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -632,32 +631,10 @@ namespace AVES.Cmds_Button10
 
             // Single shared title block type across every selected sheet.
             //
-            // Keyed by InternalDefinition.Id (ElementId), not by the Definition
-            // object itself: neither Definition nor InternalDefinition overrides
-            // Equals/GetHashCode, and the Revit API hands back a fresh wrapper
-            // object each time .Definition is accessed through a different path
-            // (doc.ParameterBindings iteration vs. element.Parameters iteration).
-            // A HashSet<Definition> would therefore never match, even for a
-            // correctly-bound parameter.
-            var boundIds = new HashSet<ElementId>();
-            var it = _doc.ParameterBindings.ForwardIterator();
-            it.Reset();
-            while (it.MoveNext())
-            {
-                var def = it.Key;
-                if (it.Current is InstanceBinding ib && def is InternalDefinition idDef)
-                {
-                    foreach (Category cat in ib.Categories)
-                    {
-                        if (cat.Id.IntegerValue == (int)BuiltInCategory.OST_TitleBlocks)
-                        {
-                            boundIds.Add(idDef.Id);
-                            break;
-                        }
-                    }
-                }
-            }
-
+            // The title block's label parameters are shared parameters (no
+            // shared parameter file is available in this project to cross-check
+            // against doc.ParameterBindings), so qualification is judged directly
+            // off each Parameter's own IsShared flag instead.
             var representative = instances[0];
             var qualifying = new List<Definition>();
             foreach (Parameter p in representative.Parameters)
@@ -666,13 +643,13 @@ namespace AVES.Cmds_Button10
                 if (p.IsReadOnly) continue;
                 if (!(p.Definition is InternalDefinition pDef)) continue;
                 if (pDef.BuiltInParameter != BuiltInParameter.INVALID) continue;
-                if (!boundIds.Contains(pDef.Id)) continue;
+                if (!p.IsShared) continue;
                 qualifying.Add(p.Definition);
             }
 
             if (qualifying.Count == 0)
             {
-                errors.Add("No matching title block parameters found (string, editable, project parameter bound to Title Blocks).");
+                errors.Add("No matching title block parameters found (string, editable, shared parameter).");
                 return (errors, new List<TbParamField>(), instances);
             }
 
