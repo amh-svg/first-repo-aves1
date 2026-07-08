@@ -355,7 +355,6 @@ namespace AVES.Cmds_Button10
     internal class TbParamField
     {
         public string ParamName = "";
-        public bool IsTypeParam;
         public bool Agreed;
         public string? AgreedValue;
         public WpfTextBox Input = null!;
@@ -385,7 +384,6 @@ namespace AVES.Cmds_Button10
         public List<ViewSheet> SelectedSheets { get; private set; } = new List<ViewSheet>();
         public List<Revision> SelectedRevisions { get; private set; } = new List<Revision>();
         public List<TbParamField> TitleBlockFields { get; private set; } = new List<TbParamField>();
-        public List<FamilyInstance> TitleBlockInstances { get; private set; } = new List<FamilyInstance>();
         public bool Confirmed { get; private set; }
 
         private readonly WpfTextBlock _sheetsSummary;
@@ -564,140 +562,84 @@ namespace AVES.Cmds_Button10
             if (SelectedSheets.Count == 0)
             {
                 TitleBlockFields = new List<TbParamField>();
-                TitleBlockInstances = new List<FamilyInstance>();
                 RenderTbSection(new List<string> { "Select sheets to discover title block parameters." }, new List<TbParamField>());
                 return;
             }
 
-            var (errors, fields, instances) = DiscoverTitleBlockParams(SelectedSheets);
+            var (errors, fields) = DiscoverSheetLabelParams(SelectedSheets);
             TitleBlockFields = fields;
-            TitleBlockInstances = instances;
             RenderTbSection(errors, fields);
         }
 
         /// <summary>
-        /// Validates all selected sheets share one title block type, then
-        /// discovers instance string parameters that are project parameters
-        /// bound to the Title Blocks category (via the document's parameter
-        /// bindings — not name-matching), excluding built-ins and read-only
-        /// parameters. Returns any blocking errors instead of the field list
-        /// when validation fails.
+        /// The title block's on-sheet labels turned out to be driven by shared
+        /// parameters bound to the Sheets category (OST_Sheets), not by
+        /// parameters on the title block family instance/type — so discovery
+        /// reads the document's parameter bindings directly, and values are
+        /// read/written on each ViewSheet itself. Title block placement/type no
+        /// longer has any bearing on this operation, since every ViewSheet
+        /// carries these parameters regardless of what title block (if any)
+        /// is placed on it.
         /// </summary>
-        private (List<string> errors, List<TbParamField> fields, List<FamilyInstance> instances) DiscoverTitleBlockParams(List<ViewSheet> sheets)
+        private (List<string> errors, List<TbParamField> fields) DiscoverSheetLabelParams(List<ViewSheet> sheets)
         {
             var errors = new List<string>();
-            var tbBySheet = new Dictionary<ElementId, FamilyInstance>();
-            var sheetsWithNoTitleBlock = new List<string>();
 
-            foreach (var sheet in sheets)
+            var boundDefs = new List<Definition>();
+            var it = _doc.ParameterBindings.ForwardIterator();
+            it.Reset();
+            while (it.MoveNext())
             {
-                var tb = new FilteredElementCollector(_doc, sheet.Id)
-                    .OfCategory(BuiltInCategory.OST_TitleBlocks)
-                    .OfClass(typeof(FamilyInstance))
-                    .Cast<FamilyInstance>()
-                    .FirstOrDefault();
-
-                if (tb == null)
-                    sheetsWithNoTitleBlock.Add($"{sheet.SheetNumber} — {sheet.Name}");
-                else
-                    tbBySheet[sheet.Id] = tb;
-            }
-
-            if (sheetsWithNoTitleBlock.Count > 0)
-            {
-                errors.Add("No title block placed on: " + string.Join("; ", sheetsWithNoTitleBlock));
-            }
-
-            var instances = tbBySheet.Values.ToList();
-            if (instances.Count > 1)
-            {
-                var byType = instances.GroupBy(tb => tb.Symbol.Id).ToList();
-                if (byType.Count > 1)
+                var def = it.Key;
+                if (it.Current is InstanceBinding ib)
                 {
-                    var lines = byType.Select(g =>
+                    foreach (Category cat in ib.Categories)
                     {
-                        var symbol = g.Key != ElementId.InvalidElementId ? _doc.GetElement(g.Key) as FamilySymbol : null;
-                        string typeName = symbol != null ? $"{symbol.Family.Name} - {symbol.Name}" : "(unknown type)";
-                        var sheetLabels = tbBySheet
-                            .Where(kv => g.Any(tb => tb.Id == kv.Value.Id))
-                            .Select(kv => sheets.First(s => s.Id == kv.Key).SheetNumber);
-                        return $"{typeName}: {string.Join(", ", sheetLabels)}";
-                    });
-                    errors.Add("Selected sheets use different title block types — " + string.Join(" | ", lines));
+                        if (cat.Id.IntegerValue == (int)BuiltInCategory.OST_Sheets)
+                        {
+                            boundDefs.Add(def);
+                            break;
+                        }
+                    }
                 }
             }
 
-            if (errors.Count > 0)
-                return (errors, new List<TbParamField>(), instances);
-
-            // Single shared title block type across every selected sheet.
-            //
-            // The title block's label parameters are shared parameters (no
-            // shared parameter file is available in this project to cross-check
-            // against doc.ParameterBindings), so qualification is judged directly
-            // off each Parameter's own IsShared flag instead. Title block labels
-            // are sometimes bound as instance parameters and sometimes as type
-            // parameters, so both the instance (FamilyInstance.Parameters) and
-            // the type (FamilyInstance.Symbol.Parameters) sets are scanned.
-            var representative = instances[0];
-            var symbol = representative.Symbol;
-
-            var instanceQualifying = new List<Definition>();
-            foreach (Parameter p in representative.Parameters)
+            // Definition alone doesn't expose StorageType/IsReadOnly/IsShared —
+            // those live on a Parameter instance, so resolve each bound
+            // definition against a representative sheet to qualify it.
+            var representative = sheets[0];
+            var qualifying = new List<Definition>();
+            foreach (var def in boundDefs)
             {
-                if (IsQualifyingTbParam(p)) instanceQualifying.Add(p.Definition);
+                var p = representative.get_Parameter(def);
+                if (p == null) continue;
+                if (p.StorageType != StorageType.String) continue;
+                if (p.IsReadOnly) continue;
+                if (!p.IsShared) continue;
+                if (p.Definition is InternalDefinition pDef && pDef.BuiltInParameter != BuiltInParameter.INVALID) continue;
+                qualifying.Add(def);
             }
 
-            var typeQualifying = new List<Definition>();
-            foreach (Parameter p in symbol.Parameters)
+            if (qualifying.Count == 0)
             {
-                if (IsQualifyingTbParam(p)) typeQualifying.Add(p.Definition);
-            }
-
-            if (instanceQualifying.Count == 0 && typeQualifying.Count == 0)
-            {
-                errors.Add("No matching title block parameters found (string, editable, shared parameter).");
-                return (errors, new List<TbParamField>(), instances);
+                errors.Add("No matching sheet parameters found (string, editable, shared parameter bound to Sheets).");
+                return (errors, new List<TbParamField>());
             }
 
             var fields = new List<TbParamField>();
-            foreach (var def in instanceQualifying)
+            foreach (var def in qualifying)
             {
-                var values = instances.Select(tb => tb.get_Parameter(def)?.AsString() ?? "").ToList();
+                var values = sheets.Select(s => s.get_Parameter(def)?.AsString() ?? "").ToList();
                 bool agreed = values.Distinct().Count() == 1;
                 fields.Add(new TbParamField
                 {
                     ParamName = def.Name,
-                    IsTypeParam = false,
                     Agreed = agreed,
                     AgreedValue = agreed ? values[0] : null
                 });
             }
-            foreach (var def in typeQualifying)
-            {
-                // Type parameters live on the shared FamilySymbol (already
-                // validated identical across every selected sheet above), so
-                // there is exactly one underlying value -- never mixed.
-                fields.Add(new TbParamField
-                {
-                    ParamName = def.Name,
-                    IsTypeParam = true,
-                    Agreed = true,
-                    AgreedValue = symbol.get_Parameter(def)?.AsString() ?? ""
-                });
-            }
 
-            return (errors, fields, instances);
-        }
-
-        private static bool IsQualifyingTbParam(Parameter p)
-        {
-            if (p.StorageType != StorageType.String) return false;
-            if (p.IsReadOnly) return false;
-            if (!(p.Definition is InternalDefinition pDef)) return false;
-            if (pDef.BuiltInParameter != BuiltInParameter.INVALID) return false;
-            if (!p.IsShared) return false;
-            return true;
+            return (errors, fields);
         }
 
         private void RenderTbSection(List<string> errors, List<TbParamField> fields)
@@ -1048,15 +990,14 @@ namespace AVES.Cmds_Button10
 
                 var revisionIdsToAdd = main.SelectedRevisions.Select(r => r.Id).ToList();
 
-                // Only apply title block fields the user actually resolved (agreed
-                // value or explicitly typed a replacement for a mixed field).
+                // Only apply title block label fields the user actually resolved
+                // (agreed value or explicitly typed a replacement for a mixed
+                // field). These are shared parameters bound to the Sheets
+                // category, so they're read/written on the ViewSheet directly.
                 var fieldsToApply = main.TitleBlockFields
-                    .Select(f => new { f.ParamName, f.IsTypeParam, Value = f.ResolveValueToApply() })
+                    .Select(f => new { f.ParamName, Value = f.ResolveValueToApply() })
                     .Where(f => f.Value != null)
                     .ToList();
-                var tbByOwnerSheet = new Dictionary<ElementId, FamilyInstance>();
-                foreach (var tb in main.TitleBlockInstances)
-                    tbByOwnerSheet[tb.OwnerViewId] = tb;
 
                 foreach (var sheet in main.SelectedSheets)
                 {
@@ -1074,22 +1015,11 @@ namespace AVES.Cmds_Button10
                                 sheet.SetAdditionalRevisionIds(existing.ToList());
                             }
 
-                            if (fieldsToApply.Count > 0 && tbByOwnerSheet.TryGetValue(sheet.Id, out var tb))
+                            foreach (var f in fieldsToApply)
                             {
-                                foreach (var f in fieldsToApply)
-                                {
-                                    // Type parameters live on the shared FamilySymbol, not the
-                                    // instance; writing it once per sheet is harmless/idempotent
-                                    // since every selected sheet shares the same title block type.
-                                    Element target = f.IsTypeParam ? tb.Symbol : tb;
-                                    var param = target.LookupParameter(f.ParamName);
-                                    if (param != null && !param.IsReadOnly && param.StorageType == StorageType.String)
-                                        param.Set(f.Value);
-                                }
-                            }
-                            else if (fieldsToApply.Count > 0)
-                            {
-                                notes.Add("No title block on this sheet to receive parameter values.");
+                                var param = sheet.LookupParameter(f.ParamName);
+                                if (param != null && !param.IsReadOnly && param.StorageType == StorageType.String)
+                                    param.Set(f.Value);
                             }
 
                             tx.Commit();
