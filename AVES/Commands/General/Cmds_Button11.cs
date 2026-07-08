@@ -249,8 +249,10 @@ namespace AVES.Cmds_Button11
     {
         public List<View> SelectedViews { get; private set; } = new List<View>();
 
-        private readonly List<(View View, string Label, WpfBorder Row, WpfCheckBox Box)> _rows
+        private readonly List<(View View, string SearchKey, WpfBorder Row, WpfCheckBox Box)> _rows
             = new List<(View, string, WpfBorder, WpfCheckBox)>();
+        private readonly List<(WpfBorder Header, List<WpfBorder> ChildRows)> _sections
+            = new List<(WpfBorder, List<WpfBorder>)>();
         private readonly WpfTextBox _searchBox;
         private readonly WpfTextBlock _countLabel;
         private bool _confirmed;
@@ -337,6 +339,7 @@ namespace AVES.Cmds_Button11
             btnAll.FontSize = 12.5;
             btnAll.Padding = new WpfThickness(10, 5, 10, 5);
             btnAll.Margin = new WpfThickness(0, 0, 6, 0);
+            btnAll.Foreground = AvTokens.B(AvTokens.Accent);
             var btnNone = AvControls.SecondaryBtn("Deselect All", () => SetAllChecked(false));
             btnNone.FontSize = 12.5;
             btnNone.Padding = new WpfThickness(10, 5, 10, 5);
@@ -369,16 +372,25 @@ namespace AVES.Cmds_Button11
                     Foreground = AvTokens.B(AvTokens.TextFaint)
                 });
             }
-            foreach (var entry in ordered)
+            foreach (var group in ordered.GroupBy(e => e.Assembly?.AssemblyTypeName ?? "(unknown assembly)"))
             {
-                string assemblyName = entry.Assembly?.AssemblyTypeName ?? "(unknown assembly)";
-                string label = $"{assemblyName} — {entry.View.Name}";
-                var (visual, box) = AvControls.CheckRow(label, false);
-                visual.MouseLeftButtonUp += (s, e) => { box.IsChecked = !box.IsChecked; };
-                box.Checked += (s, e) => UpdateCount();
-                box.Unchecked += (s, e) => UpdateCount();
-                list.Children.Add(visual);
-                _rows.Add((entry.View, label, visual, box));
+                var headerVisual = AvControls.SectionHeader(group.Key);
+                list.Children.Add(headerVisual);
+                var childRows = new List<WpfBorder>();
+
+                foreach (var entry in group)
+                {
+                    string searchKey = $"{group.Key} {entry.View.Name}";
+                    var (visual, box) = AvControls.CheckRow(entry.View.Name, false);
+                    visual.MouseLeftButtonUp += (s, e) => { box.IsChecked = !box.IsChecked; };
+                    box.Checked += (s, e) => UpdateCount();
+                    box.Unchecked += (s, e) => UpdateCount();
+                    list.Children.Add(visual);
+                    _rows.Add((entry.View, searchKey, visual, box));
+                    childRows.Add(visual);
+                }
+
+                _sections.Add((headerVisual, childRows));
             }
             var scroll = new WpfScrollViewer
             {
@@ -399,7 +411,7 @@ namespace AVES.Cmds_Button11
             };
             var footerRow = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, HorizontalAlignment = WpfHAlign.Right };
             var btnCancel = AvControls.GhostBtn("Cancel", OnCancel);
-            var btnOk = AvControls.PrimaryBtn("▶  Run Check", OnOk);
+            var btnOk = AvControls.PrimaryBtn("▶  Run Script", OnOk);
             btnCancel.Margin = new WpfThickness(0, 0, 8, 0);
             footerRow.Children.Add(btnCancel);
             footerRow.Children.Add(btnOk);
@@ -413,10 +425,16 @@ namespace AVES.Cmds_Button11
         private void ApplyFilter()
         {
             var filter = _searchBox.Text?.Trim() ?? "";
-            foreach (var (_, label, row, _) in _rows)
+            foreach (var (_, searchKey, row, _) in _rows)
             {
-                bool match = filter.Length == 0 || label.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+                bool match = filter.Length == 0 || searchKey.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
                 row.Visibility = match ? WpfVisibility.Visible : WpfVisibility.Collapsed;
+            }
+
+            foreach (var (header, childRows) in _sections)
+            {
+                bool anyVisible = childRows.Any(r => r.Visibility == WpfVisibility.Visible);
+                header.Visibility = anyVisible ? WpfVisibility.Visible : WpfVisibility.Collapsed;
             }
         }
 
@@ -617,11 +635,29 @@ namespace AVES.Cmds_Button11
             grid.Columns.Add(new WpfDataGridTextColumn { Header = "FAMILY TYPE", Binding = new System.Windows.Data.Binding("FamilyTypeName"), Width = new System.Windows.Controls.DataGridLength(1.6, System.Windows.Controls.DataGridLengthUnitType.Star) });
             grid.Columns.Add(new WpfDataGridTextColumn { Header = "ELEMENT ID", Binding = new System.Windows.Data.Binding("ElementIdDisplay"), Width = new System.Windows.Controls.DataGridLength(0.8, System.Windows.Controls.DataGridLengthUnitType.Star) });
 
-            var selectCol = new WpfDataGridTemplateColumn { Header = "", Width = new System.Windows.Controls.DataGridLength(100) };
+            // Every row shown is already a failure -- the pill is decorative/
+            // consistent labeling here, not tied to any pass/fail branching.
+            var statusCol = new WpfDataGridTemplateColumn { Header = "STATUS", Width = System.Windows.Controls.DataGridLength.Auto, MinWidth = 90 };
+            statusCol.CellTemplate = BuildStatusPillTemplate();
+            grid.Columns.Add(statusCol);
+
+            var selectCol = new WpfDataGridTemplateColumn { Header = "", Width = System.Windows.Controls.DataGridLength.Auto, MinWidth = 70 };
             selectCol.CellTemplate = BuildSelectButtonTemplate();
             grid.Columns.Add(selectCol);
 
             return grid;
+        }
+
+        private static DataTemplate BuildStatusPillTemplate()
+        {
+            var template = new DataTemplate();
+            var factory = new FrameworkElementFactory(typeof(ContentControl));
+            factory.AddHandler(FrameworkElement.LoadedEvent, new RoutedEventHandler((s, e) =>
+            {
+                if (s is ContentControl cc) cc.Content = AvControls.StatusPill("fail");
+            }));
+            template.VisualTree = factory;
+            return template;
         }
 
         private DataTemplate BuildSelectButtonTemplate()
@@ -631,16 +667,51 @@ namespace AVES.Cmds_Button11
             factory.SetValue(WpfButton.ContentProperty, "Select");
             factory.SetValue(WpfButton.FontFamilyProperty, AvTokens.Ui);
             factory.SetValue(WpfButton.FontSizeProperty, 11.5);
+            factory.SetValue(WpfButton.FontWeightProperty, WpfFontWeights.SemiBold);
             factory.SetValue(WpfButton.ForegroundProperty, AvTokens.B(AvTokens.TextDim));
             factory.SetValue(WpfButton.BackgroundProperty, AvTokens.B(AvTokens.Surface));
             factory.SetValue(WpfButton.BorderBrushProperty, AvTokens.B(AvTokens.BorderStrong));
             factory.SetValue(WpfButton.BorderThicknessProperty, new WpfThickness(1));
-            factory.SetValue(WpfButton.PaddingProperty, new WpfThickness(10, 4, 10, 4));
+            // Matches AvControls.StatusPill's own Padding/CornerRadius exactly,
+            // so the pill and the button read as the same chip-like size/shape.
+            factory.SetValue(WpfButton.PaddingProperty, new WpfThickness(8, 5, 10, 5));
             factory.SetValue(WpfButton.CursorProperty, System.Windows.Input.Cursors.Hand);
-            factory.SetValue(WpfButton.TemplateProperty, AvControls.FieldButtonTemplate());
+            factory.SetValue(WpfButton.TemplateProperty, BuildChipButtonTemplate());
             factory.AddHandler(WpfButton.ClickEvent, new RoutedEventHandler(OnSelectClick));
             template.VisualTree = factory;
             return template;
+        }
+
+        /// <summary>
+        /// Same shape as AvControls' FieldButtonTemplate (Border + hover-tint
+        /// ControlTemplate), but with CornerRadius 6 instead of 5 to exactly
+        /// match AvControls.StatusPill's corner radius for this one chip-sized
+        /// button -- kept local rather than changing the shared Core template.
+        /// </summary>
+        private static System.Windows.Controls.ControlTemplate BuildChipButtonTemplate()
+        {
+            var tpl = new System.Windows.Controls.ControlTemplate(typeof(WpfButton));
+            var bd = new FrameworkElementFactory(typeof(WpfBorder));
+            bd.Name = "bd";
+            bd.SetValue(WpfBorder.CornerRadiusProperty, new CornerRadius(6));
+            bd.SetValue(WpfBorder.BackgroundProperty, AvTokens.B(AvTokens.Surface));
+            bd.SetValue(WpfBorder.BorderBrushProperty, AvTokens.B(AvTokens.BorderStrong));
+            bd.SetValue(WpfBorder.BorderThicknessProperty, new WpfThickness(1));
+            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, WpfHAlign.Center);
+            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            cp.SetBinding(ContentPresenter.MarginProperty,
+                new System.Windows.Data.Binding("Padding")
+                {
+                    RelativeSource = new System.Windows.Data.RelativeSource(
+                        System.Windows.Data.RelativeSourceMode.TemplatedParent)
+                });
+            bd.AppendChild(cp);
+            tpl.VisualTree = bd;
+            var trigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            trigger.Setters.Add(new Setter(WpfBorder.BackgroundProperty, AvTokens.B(AvTokens.Surface2), "bd"));
+            tpl.Triggers.Add(trigger);
+            return tpl;
         }
 
         private void OnSelectClick(object sender, RoutedEventArgs e)

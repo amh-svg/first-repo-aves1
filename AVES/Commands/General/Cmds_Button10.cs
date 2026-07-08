@@ -140,6 +140,7 @@ namespace AVES.Cmds_Button10
             btnAll.FontSize = 12.5;
             btnAll.Padding = new WpfThickness(10, 5, 10, 5);
             btnAll.Margin = new WpfThickness(0, 0, 6, 0);
+            btnAll.Foreground = AvTokens.B(AvTokens.Accent);
             var btnNone = AvControls.SecondaryBtn("Deselect All", () => SetAllChecked(false));
             btnNone.FontSize = 12.5;
             btnNone.Padding = new WpfThickness(10, 5, 10, 5);
@@ -521,7 +522,7 @@ namespace AVES.Cmds_Button10
             };
             var footerRow = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, HorizontalAlignment = WpfHAlign.Right };
             var btnCancel = AvControls.GhostBtn("Cancel", OnCancel);
-            _runBtn = AvControls.PrimaryBtn("▶  Run", OnRun);
+            _runBtn = AvControls.PrimaryBtn("▶  Run Script", OnRun);
             _runBtn.IsEnabled = false;
             btnCancel.Margin = new WpfThickness(0, 0, 8, 0);
             footerRow.Children.Add(btnCancel);
