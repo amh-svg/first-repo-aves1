@@ -34,6 +34,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using AVES.Core;
 using DBTransform = Autodesk.Revit.DB.Transform;
 using WinTextBox = System.Windows.Controls.TextBox;
 using WpfColor = System.Windows.Media.Color;
@@ -1025,152 +1026,37 @@ namespace AVES.Cmds_PullDownAutoDimension
 
     internal static class AvesUI
     {
-        // ── Design tokens ─────────────────────────────────────────────────────
-        public const string Accent = "#E64A2E";
-        public const string AccentDeep = "#C2402A";
-        public const string AccentTint = "#FBE9E4";
-        public const string Surface = "#FFFFFF";
-        public const string Surface2 = "#FAFAFB";
-        public const string Border = "#E5E6EA";
-        public const string BorderStrong = "#D4D6DC";
-        public const string Text = "#1F2329";
-        public const string TextDim = "#5A6069";
-        public const string TextFaint = "#8B9099";
-        public const string OkBg = "#E4F3EA"; public const string OkFg = "#2C7A52";
-        public const string SkipBg = "#EDEFF2"; public const string SkipFg = "#5B6573";
-        public const string FailBg = "#FBE3DE"; public const string FailFg = "#C0381F";
-        public const string WarnBg = "#FAF0DA"; public const string WarnFg = "#9A6B12";
-        public const string Zebra = "#F7F8FA";
-
-        public static SolidColorBrush B(string hex) =>
-            new SolidColorBrush((WpfColor)ColorConverter.ConvertFromString(hex));
-
-        public static readonly FontFamily Ui = new FontFamily("Segoe UI");
-        public static readonly FontFamily Mono = new FontFamily("Consolas");
-
-        // ── Logo ──────────────────────────────────────────────────────────────
-        private const string LogoB64 = "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";
-
-        private static ImageSource? _logoImg;
-        private static ImageSource LogoImage
-        {
-            get
-            {
-                if (_logoImg != null) return _logoImg;
-                var bytes = Convert.FromBase64String(LogoB64);
-                using var ms = new System.IO.MemoryStream(bytes);
-                var bi = new System.Windows.Media.Imaging.BitmapImage();
-                bi.BeginInit();
-                bi.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
-                bi.StreamSource = ms;
-                bi.EndInit();
-                bi.Freeze();
-                _logoImg = bi;
-                return _logoImg;
-            }
-        }
-
-        // ── Title bar ─────────────────────────────────────────────────────────
-        public static Border TitleBar(string title, string? subtitle = null)
-        {
-            var img = new System.Windows.Controls.Image
-            {
-                Source = LogoImage,
-                Height = 28,
-                Width = double.NaN,
-                Stretch = Stretch.Uniform,
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Margin = new Thickness(0, 0, 14, 0)
-            };
-            var brand = new Border { Background = Brushes.Transparent, VerticalAlignment = VerticalAlignment.Center, Child = img };
-
-            var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            textStack.Children.Add(new TextBlock { Text = title, FontFamily = Ui, FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = B(Text) });
-            if (subtitle != null)
-                textStack.Children.Add(new TextBlock { Text = subtitle, FontFamily = Ui, FontSize = 11.5, Foreground = B(TextFaint), Margin = new Thickness(0, 1, 0, 0) });
-
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(brand); row.Children.Add(textStack);
-
-            return new Border
-            {
-                Background = B(Surface2),
-                BorderBrush = B(Border),
-                BorderThickness = new Thickness(0, 0, 0, 1),
-                Padding = new Thickness(20, 0, 20, 0),
-                Height = 52,
-                Child = row
-            };
-        }
-
         // ── Widgets ───────────────────────────────────────────────────────────
-        public static TextBlock SectionLabel(string text) => new TextBlock
-        {
-            Text = text.ToUpperInvariant(),
-            FontFamily = Ui,
-            FontSize = 11,
-            FontWeight = FontWeights.Bold,
-            Foreground = B(TextFaint),
-            Margin = new Thickness(0, 0, 0, 10)
-        };
-
         public static Border StatTile(string value, string label, string accent = "")
         {
-            string vc = accent switch { "ok" => OkFg, "fail" => FailFg, "accent" => Accent, _ => Text };
-            var val = new TextBlock { Text = value, FontFamily = Mono, FontSize = 22, FontWeight = FontWeights.Bold, Foreground = B(vc), Margin = new Thickness(0, 0, 0, 3), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = value };
-            var cap = new TextBlock { Text = label, FontFamily = Ui, FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = B(TextFaint) };
+            string vc = accent switch { "ok" => AvTokens.OkFg, "fail" => AvTokens.FailFg, "accent" => AvTokens.Accent, _ => AvTokens.Text };
+            var val = new TextBlock { Text = value, FontFamily = AvTokens.Mono, FontSize = 22, FontWeight = FontWeights.Bold, Foreground = AvTokens.B(vc), Margin = new Thickness(0, 0, 0, 3), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = value };
+            var cap = new TextBlock { Text = label, FontFamily = AvTokens.Ui, FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = AvTokens.B(AvTokens.TextFaint) };
             var stack = new StackPanel(); stack.Children.Add(val); stack.Children.Add(cap);
-            return new Border { Background = B(Surface), BorderBrush = B(Border), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), Padding = new Thickness(14, 12, 14, 12), Child = stack };
+            return new Border { Background = AvTokens.B(AvTokens.Surface), BorderBrush = AvTokens.B(AvTokens.Border), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), Padding = new Thickness(14, 12, 14, 12), Child = stack };
         }
 
         public static Border StatusPill(string kind)
         {
             var (bg, fg, label) = kind switch
             {
-                "ok" => (OkBg, OkFg, "Done"),
-                "fail" => (FailBg, FailFg, "Error"),
-                "skip" => (SkipBg, SkipFg, "Skipped"),
-                "warn" => (WarnBg, WarnFg, "Warning"),
+                "ok" => (AvTokens.OkBg, AvTokens.OkFg, "Done"),
+                "fail" => (AvTokens.FailBg, AvTokens.FailFg, "Error"),
+                "skip" => (AvTokens.SkipBg, AvTokens.SkipFg, "Skipped"),
+                "warn" => (AvTokens.WarnBg, AvTokens.WarnFg, "Warning"),
                 _ => ("#E7EFFB", "#2E66A8", "Info"),
             };
-            var dot = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Fill = B(fg), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
-            var txt = new TextBlock { Text = label, Foreground = B(fg), FontFamily = Ui, FontSize = 11.5, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+            var dot = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Fill = AvTokens.B(fg), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+            var txt = new TextBlock { Text = label, Foreground = AvTokens.B(fg), FontFamily = AvTokens.Ui, FontSize = 11.5, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
             var row = new StackPanel { Orientation = Orientation.Horizontal };
             row.Children.Add(dot); row.Children.Add(txt);
-            return new Border { Background = B(bg), CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 5, 10, 5), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Child = row };
-        }
-
-        public static Border HDivider() => new Border { Height = 1, Background = B(Border) };
-
-        // ── Number badge (circled step number, e.g. "① Section title") ────────
-        public static Border NumberBadge(int n)
-        {
-            var t = new TextBlock
-            {
-                Text = n.ToString(),
-                FontFamily = Ui,
-                FontSize = 10.5,
-                FontWeight = FontWeights.Bold,
-                Foreground = B(Accent),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            return new Border
-            {
-                Width = 18,
-                Height = 18,
-                CornerRadius = new CornerRadius(9),
-                Background = B(AccentTint),
-                Margin = new Thickness(0, 0, 7, 0),
-                Child = t
-            };
+            return new Border { Background = AvTokens.B(bg), CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 5, 10, 5), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Child = row };
         }
 
         // ── Buttons ───────────────────────────────────────────────────────────
-        public static Button PrimaryButton(string text) => Btn(text, Accent, AccentDeep, null, 0, "#FFFFFF");
-        public static Button SecondaryButton(string text) => Btn(text, Surface, Surface2, BorderStrong, 1, Text);
-        public static Button GhostButton(string text) => Btn(text, null, Surface2, null, 0, TextDim);
+        public static Button PrimaryButton(string text) => Btn(text, AvTokens.Accent, AvTokens.AccentDeep, null, 0, "#FFFFFF");
+        public static Button SecondaryButton(string text) => Btn(text, AvTokens.Surface, AvTokens.Surface2, AvTokens.BorderStrong, 1, AvTokens.Text);
+        public static Button GhostButton(string text) => Btn(text, null, AvTokens.Surface2, null, 0, AvTokens.TextDim);
 
         private static Button Btn(string text, string? bg, string hoverBg,
                                   string? borderHex, double borderPx, string fg)
@@ -1178,11 +1064,11 @@ namespace AVES.Cmds_PullDownAutoDimension
             var btn = new Button
             {
                 Content = text,
-                FontFamily = Ui,
+                FontFamily = AvTokens.Ui,
                 FontSize = 13,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = B(fg),
-                Background = bg != null ? B(bg) : Brushes.Transparent,
+                Foreground = AvTokens.B(fg),
+                Background = bg != null ? AvTokens.B(bg) : Brushes.Transparent,
                 Padding = new Thickness(16, 9, 16, 9),
                 Cursor = System.Windows.Input.Cursors.Hand,
             };
@@ -1190,10 +1076,10 @@ namespace AVES.Cmds_PullDownAutoDimension
             var bd = new FrameworkElementFactory(typeof(System.Windows.Controls.Border));
             bd.Name = "bd";
             bd.SetValue(System.Windows.Controls.Border.CornerRadiusProperty, new CornerRadius(5));
-            bd.SetValue(System.Windows.Controls.Border.BackgroundProperty, bg != null ? (object)B(bg) : Brushes.Transparent);
+            bd.SetValue(System.Windows.Controls.Border.BackgroundProperty, bg != null ? (object)AvTokens.B(bg) : Brushes.Transparent);
             if (borderHex != null)
             {
-                bd.SetValue(System.Windows.Controls.Border.BorderBrushProperty, B(borderHex));
+                bd.SetValue(System.Windows.Controls.Border.BorderBrushProperty, AvTokens.B(borderHex));
                 bd.SetValue(System.Windows.Controls.Border.BorderThicknessProperty, new Thickness(borderPx));
             }
             var cp = new FrameworkElementFactory(typeof(ContentPresenter));
@@ -1205,7 +1091,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             bd.AppendChild(cp);
             tpl.VisualTree = bd;
             var trigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            trigger.Setters.Add(new Setter(System.Windows.Controls.Border.BackgroundProperty, B(hoverBg), "bd"));
+            trigger.Setters.Add(new Setter(System.Windows.Controls.Border.BackgroundProperty, AvTokens.B(hoverBg), "bd"));
             tpl.Triggers.Add(trigger);
             btn.Template = tpl;
             return btn;
@@ -1285,24 +1171,24 @@ namespace AVES.Cmds_PullDownAutoDimension
 
                 var stack = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
                 var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
-                titleRow.Children.Add(NumberBadge(badgeNumber));
+                titleRow.Children.Add(AvControls.NumberBadge(badgeNumber));
                 titleRow.Children.Add(new TextBlock
                 {
                     Text = sectionLabel,
-                    FontFamily = Ui,
+                    FontFamily = AvTokens.Ui,
                     FontSize = 12.5,
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = B(TextFaint),
+                    Foreground = AvTokens.B(AvTokens.TextFaint),
                     VerticalAlignment = VerticalAlignment.Center
                 });
                 stack.Children.Add(titleRow);
 
                 _btn = new Button
                 {
-                    FontFamily = Ui,
+                    FontFamily = AvTokens.Ui,
                     FontSize = 13,
-                    Foreground = B(TextFaint),
-                    Background = B(Surface),
+                    Foreground = AvTokens.B(AvTokens.TextFaint),
+                    Background = AvTokens.B(AvTokens.Surface),
                     HorizontalContentAlignment = HorizontalAlignment.Left,
                     Padding = new Thickness(10, 8, 10, 8),
                     Cursor = System.Windows.Input.Cursors.Hand,
@@ -1320,7 +1206,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                     {
                         SelectedId = _items[idx].Id;
                         _btn.Content = _items[idx].Label;
-                        _btn.Foreground = B(Text);
+                        _btn.Foreground = AvTokens.B(AvTokens.Text);
                     }
                 }
 
@@ -1336,7 +1222,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                         var picked = _items.First(it => it.Label == picker.SelectedLabel);
                         SelectedId = picked.Id;
                         _btn.Content = picked.Label;
-                        _btn.Foreground = B(Text);
+                        _btn.Foreground = AvTokens.B(AvTokens.Text);
                         DimTypeMemory.Save(_memoryKey, picked.Label);
                         Changed?.Invoke();
                     }
@@ -1355,8 +1241,8 @@ namespace AVES.Cmds_PullDownAutoDimension
             var bd = new FrameworkElementFactory(typeof(System.Windows.Controls.Border));
             bd.Name = "bd";
             bd.SetValue(System.Windows.Controls.Border.CornerRadiusProperty, new CornerRadius(5));
-            bd.SetValue(System.Windows.Controls.Border.BackgroundProperty, B(Surface));
-            bd.SetValue(System.Windows.Controls.Border.BorderBrushProperty, B(BorderStrong));
+            bd.SetValue(System.Windows.Controls.Border.BackgroundProperty, AvTokens.B(AvTokens.Surface));
+            bd.SetValue(System.Windows.Controls.Border.BorderBrushProperty, AvTokens.B(AvTokens.BorderStrong));
             bd.SetValue(System.Windows.Controls.Border.BorderThicknessProperty, new Thickness(1));
             var cp = new FrameworkElementFactory(typeof(ContentPresenter));
             cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Left);
@@ -1367,7 +1253,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             bd.AppendChild(cp);
             tpl.VisualTree = bd;
             var trigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            trigger.Setters.Add(new Setter(System.Windows.Controls.Border.BackgroundProperty, B(Surface2), "bd"));
+            trigger.Setters.Add(new Setter(System.Windows.Controls.Border.BackgroundProperty, AvTokens.B(AvTokens.Surface2), "bd"));
             tpl.Triggers.Add(trigger);
             return tpl;
         }
@@ -1398,13 +1284,13 @@ namespace AVES.Cmds_PullDownAutoDimension
                 WindowStyle = WindowStyle.SingleBorderWindow;
                 ResizeMode = ResizeMode.NoResize;
                 WindowStartupLocation = WindowStartupLocation.CenterScreen;
-                Background = B(Surface); FontFamily = Ui;
+                Background = AvTokens.B(AvTokens.Surface); FontFamily = AvTokens.Ui;
                 UseLayoutRounding = true; SnapsToDevicePixels = true;
                 ShowInTaskbar = false;
 
                 var root = new DockPanel();
 
-                var tb = TitleBar(title);
+                var tb = AvControls.TitleBarWithSubtitle(title);
                 DockPanel.SetDock(tb, Dock.Top);
                 root.Children.Add(tb);
 
@@ -1420,7 +1306,7 @@ namespace AVES.Cmds_PullDownAutoDimension
 
                 _listBox = new ListBox
                 {
-                    FontFamily = Ui,
+                    FontFamily = AvTokens.Ui,
                     FontSize = 13,
                     BorderThickness = new Thickness(0),
                     Background = Brushes.Transparent,
@@ -1428,9 +1314,9 @@ namespace AVES.Cmds_PullDownAutoDimension
                 };
                 var itemStyle = new Style(typeof(ListBoxItem));
                 itemStyle.Setters.Add(new Setter(ListBoxItem.PaddingProperty, new Thickness(12, 9, 12, 9)));
-                itemStyle.Setters.Add(new Setter(ListBoxItem.FontFamilyProperty, Ui));
+                itemStyle.Setters.Add(new Setter(ListBoxItem.FontFamilyProperty, AvTokens.Ui));
                 itemStyle.Setters.Add(new Setter(ListBoxItem.FontSizeProperty, 13.0));
-                itemStyle.Setters.Add(new Setter(ListBoxItem.ForegroundProperty, B(Text)));
+                itemStyle.Setters.Add(new Setter(ListBoxItem.ForegroundProperty, AvTokens.B(AvTokens.Text)));
                 itemStyle.Setters.Add(new Setter(ListBoxItem.BackgroundProperty, Brushes.Transparent));
 
                 var itemTemplate = new ControlTemplate(typeof(ListBoxItem));
@@ -1450,8 +1336,8 @@ namespace AVES.Cmds_PullDownAutoDimension
                 itemStyle.Setters.Add(new Setter(ListBoxItem.TemplateProperty, itemTemplate));
 
                 var selectedTrigger = new Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
-                selectedTrigger.Setters.Add(new Setter(ListBoxItem.BackgroundProperty, B(AccentTint)));
-                selectedTrigger.Setters.Add(new Setter(ListBoxItem.ForegroundProperty, B(Accent)));
+                selectedTrigger.Setters.Add(new Setter(ListBoxItem.BackgroundProperty, AvTokens.B(AvTokens.AccentTint)));
+                selectedTrigger.Setters.Add(new Setter(ListBoxItem.ForegroundProperty, AvTokens.B(AvTokens.Accent)));
                 itemStyle.Triggers.Add(selectedTrigger);
                 _listBox.ItemContainerStyle = itemStyle;
                 _listBox.SelectionChanged += (s, e) => _selectBtn.IsEnabled = _listBox.SelectedItem != null;
@@ -1472,8 +1358,8 @@ namespace AVES.Cmds_PullDownAutoDimension
 
                 var listBorder = new Border
                 {
-                    Background = B(Surface),
-                    BorderBrush = B(Border),
+                    Background = AvTokens.B(AvTokens.Surface),
+                    BorderBrush = AvTokens.B(AvTokens.Border),
                     BorderThickness = new Thickness(1),
                     CornerRadius = new CornerRadius(5),
                     Margin = new Thickness(0, 10, 0, 16),
@@ -1503,7 +1389,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                 {
                     Text = "⌕",
                     FontSize = 15,
-                    Foreground = B(TextFaint),
+                    Foreground = AvTokens.B(AvTokens.TextFaint),
                     HorizontalAlignment = HorizontalAlignment.Center,
                     VerticalAlignment = VerticalAlignment.Center
                 };
@@ -1511,9 +1397,9 @@ namespace AVES.Cmds_PullDownAutoDimension
 
                 _searchBox = new WinTextBox
                 {
-                    FontFamily = Ui,
+                    FontFamily = AvTokens.Ui,
                     FontSize = 13,
-                    Foreground = B(Text),
+                    Foreground = AvTokens.B(AvTokens.Text),
                     Background = Brushes.Transparent,
                     BorderThickness = new Thickness(0),
                     VerticalAlignment = VerticalAlignment.Center,
@@ -1526,8 +1412,8 @@ namespace AVES.Cmds_PullDownAutoDimension
                 g.Children.Add(icon); g.Children.Add(_searchBox);
                 return new Border
                 {
-                    Background = B(Surface2),
-                    BorderBrush = B(BorderStrong),
+                    Background = AvTokens.B(AvTokens.Surface2),
+                    BorderBrush = AvTokens.B(AvTokens.BorderStrong),
                     BorderThickness = new Thickness(1),
                     CornerRadius = new CornerRadius(5),
                     Child = g
@@ -1538,8 +1424,8 @@ namespace AVES.Cmds_PullDownAutoDimension
             {
                 var footerBorder = new Border
                 {
-                    Background = B(Surface2),
-                    BorderBrush = B(Border),
+                    Background = AvTokens.B(AvTokens.Surface2),
+                    BorderBrush = AvTokens.B(AvTokens.Border),
                     BorderThickness = new Thickness(0, 1, 0, 0),
                     Padding = new Thickness(20, 14, 20, 14)
                 };
@@ -1622,14 +1508,14 @@ namespace AVES.Cmds_PullDownAutoDimension
             footerInner.Children.Add(footerBtns);
 
             var footerStack = new StackPanel();
-            footerStack.Children.Add(HDivider());
-            footerStack.Children.Add(new Border { Background = B(Surface2), Child = new Border { Margin = new Thickness(20, 14, 20, 14), Child = footerInner } });
+            footerStack.Children.Add(AvControls.HDivider());
+            footerStack.Children.Add(new Border { Background = AvTokens.B(AvTokens.Surface2), Child = new Border { Margin = new Thickness(20, 14, 20, 14), Child = footerInner } });
 
             var body = new StackPanel { Margin = new Thickness(20, 16, 20, 16) };
             body.Children.Add(section.Control);
 
             var root = new DockPanel();
-            var titleBar = TitleBar(title, subtitle);
+            var titleBar = AvControls.TitleBarWithSubtitle(title, subtitle);
             DockPanel.SetDock(titleBar, Dock.Top);
             DockPanel.SetDock(footerStack, Dock.Bottom);
             root.Children.Add(titleBar); root.Children.Add(footerStack); root.Children.Add(body);
@@ -1643,8 +1529,8 @@ namespace AVES.Cmds_PullDownAutoDimension
                 WindowStyle = WindowStyle.SingleBorderWindow,
                 ResizeMode = ResizeMode.NoResize,
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
-                Background = B(Surface),
-                FontFamily = Ui,
+                Background = AvTokens.B(AvTokens.Surface),
+                FontFamily = AvTokens.Ui,
                 UseLayoutRounding = true,
                 SnapsToDevicePixels = true,
                 ShowInTaskbar = false,
@@ -1699,7 +1585,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             void RefreshCounter()
             {
                 counterLbl.Text = checkedCount == 1 ? "1 selected" : $"{checkedCount} selected";
-                counterLbl.Foreground = B(checkedCount > 0 ? Accent : TextDim);
+                counterLbl.Foreground = AvTokens.B(checkedCount > 0 ? AvTokens.Accent : AvTokens.TextDim);
                 confirmBtn.IsEnabled = checkedCount > 0 && dimTypeSection.SelectedId != ElementId.InvalidElementId;
             }
 
@@ -1726,7 +1612,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                             Width = 17,
                             Height = 17,
                             CornerRadius = new CornerRadius(4),
-                            BorderBrush = B(BorderStrong),
+                            BorderBrush = AvTokens.B(AvTokens.BorderStrong),
                             BorderThickness = new Thickness(1.5),
                             Background = Brushes.Transparent,
                             VerticalAlignment = VerticalAlignment.Center,
@@ -1747,9 +1633,9 @@ namespace AVES.Cmds_PullDownAutoDimension
                         var nameLabel = new TextBlock
                         {
                             Text = lbl,
-                            FontFamily = Ui,
+                            FontFamily = AvTokens.Ui,
                             FontSize = 13,
-                            Foreground = B(Text),
+                            Foreground = AvTokens.B(AvTokens.Text),
                             VerticalAlignment = VerticalAlignment.Center,
                             TextTrimming = TextTrimming.CharacterEllipsis,
                             ToolTip = lbl
@@ -1774,32 +1660,32 @@ namespace AVES.Cmds_PullDownAutoDimension
                         box.Checked += (s, e) =>
                         {
                             checkedLabels.Add(lbl); checkedCount = checkedLabels.Count;
-                            checkSquare.Background = B(Accent); checkSquare.BorderBrush = B(Accent);
+                            checkSquare.Background = AvTokens.B(AvTokens.Accent); checkSquare.BorderBrush = AvTokens.B(AvTokens.Accent);
                             checkMark.Visibility = WpfVisibility.Visible;
-                            nameLabel.Foreground = B(Accent); nameLabel.FontWeight = FontWeights.SemiBold;
-                            rowBorder.Background = B(AccentTint);
+                            nameLabel.Foreground = AvTokens.B(AvTokens.Accent); nameLabel.FontWeight = FontWeights.SemiBold;
+                            rowBorder.Background = AvTokens.B(AvTokens.AccentTint);
                             RefreshCounter();
                         };
                         box.Unchecked += (s, e) =>
                         {
                             checkedLabels.Remove(lbl); checkedCount = checkedLabels.Count;
-                            checkSquare.Background = Brushes.Transparent; checkSquare.BorderBrush = B(BorderStrong);
+                            checkSquare.Background = Brushes.Transparent; checkSquare.BorderBrush = AvTokens.B(AvTokens.BorderStrong);
                             checkMark.Visibility = WpfVisibility.Hidden;
-                            nameLabel.Foreground = B(Text); nameLabel.FontWeight = FontWeights.Normal;
+                            nameLabel.Foreground = AvTokens.B(AvTokens.Text); nameLabel.FontWeight = FontWeights.Normal;
                             rowBorder.Background = Brushes.Transparent;
                             RefreshCounter();
                         };
 
                         if (checkedLabels.Contains(lbl))
                         {
-                            checkSquare.Background = B(Accent); checkSquare.BorderBrush = B(Accent);
+                            checkSquare.Background = AvTokens.B(AvTokens.Accent); checkSquare.BorderBrush = AvTokens.B(AvTokens.Accent);
                             checkMark.Visibility = WpfVisibility.Visible;
-                            nameLabel.Foreground = B(Accent); nameLabel.FontWeight = FontWeights.SemiBold;
-                            rowBorder.Background = B(AccentTint);
+                            nameLabel.Foreground = AvTokens.B(AvTokens.Accent); nameLabel.FontWeight = FontWeights.SemiBold;
+                            rowBorder.Background = AvTokens.B(AvTokens.AccentTint);
                         }
 
                         rowBorder.MouseLeftButtonUp += (s, e) => { box.IsChecked = !(box.IsChecked == true); e.Handled = true; };
-                        rowBorder.MouseEnter += (s, e) => { if (box.IsChecked != true) rowBorder.Background = B(Surface2); };
+                        rowBorder.MouseEnter += (s, e) => { if (box.IsChecked != true) rowBorder.Background = AvTokens.B(AvTokens.Surface2); };
                         rowBorder.MouseLeave += (s, e) => { if (box.IsChecked != true) rowBorder.Background = Brushes.Transparent; };
 
                         rb = (rowBorder, box);
@@ -1814,9 +1700,9 @@ namespace AVES.Cmds_PullDownAutoDimension
                     listPanel.Children.Add(new TextBlock
                     {
                         Text = "No assemblies match.",
-                        FontFamily = Ui,
+                        FontFamily = AvTokens.Ui,
                         FontSize = 12.5,
-                        Foreground = B(TextFaint),
+                        Foreground = AvTokens.B(AvTokens.TextFaint),
                         Margin = new Thickness(16, 14, 16, 14),
                         HorizontalAlignment = HorizontalAlignment.Center
                     });
@@ -1824,14 +1710,14 @@ namespace AVES.Cmds_PullDownAutoDimension
 
             // ── Select Assemblies header ─────────────────────────────────────────────
             var assembliesTitleRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 10) };
-            assembliesTitleRow.Children.Add(NumberBadge(2));
+            assembliesTitleRow.Children.Add(AvControls.NumberBadge(2));
             assembliesTitleRow.Children.Add(new TextBlock
             {
                 Text = "Select Assemblies",
-                FontFamily = Ui,
+                FontFamily = AvTokens.Ui,
                 FontSize = 12.5,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = B(TextFaint),
+                Foreground = AvTokens.B(AvTokens.TextFaint),
                 VerticalAlignment = VerticalAlignment.Center
             });
 
@@ -1846,7 +1732,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             {
                 Text = "⌕",
                 FontSize = 15,
-                Foreground = B(TextFaint),
+                Foreground = AvTokens.B(AvTokens.TextFaint),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -1854,25 +1740,25 @@ namespace AVES.Cmds_PullDownAutoDimension
 
             var searchInput = new WinTextBox
             {
-                FontFamily = Ui,
+                FontFamily = AvTokens.Ui,
                 FontSize = 13,
                 Text = placeholder,
-                Foreground = B(TextFaint),
+                Foreground = AvTokens.B(AvTokens.TextFaint),
                 Background = Brushes.Transparent,
                 BorderThickness = new Thickness(0),
                 VerticalAlignment = VerticalAlignment.Center,
                 Padding = new Thickness(0, 8, 10, 8)
             };
-            searchInput.GotFocus += (s, e) => { if (searchInput.Text == placeholder) { searchInput.Text = ""; searchInput.Foreground = B(Text); } };
-            searchInput.LostFocus += (s, e) => { if (string.IsNullOrWhiteSpace(searchInput.Text)) { searchInput.Text = placeholder; searchInput.Foreground = B(TextFaint); } };
+            searchInput.GotFocus += (s, e) => { if (searchInput.Text == placeholder) { searchInput.Text = ""; searchInput.Foreground = AvTokens.B(AvTokens.Text); } };
+            searchInput.LostFocus += (s, e) => { if (string.IsNullOrWhiteSpace(searchInput.Text)) { searchInput.Text = placeholder; searchInput.Foreground = AvTokens.B(AvTokens.TextFaint); } };
             searchInput.TextChanged += (s, e) => PopulateList(searchInput.Text == placeholder ? "" : searchInput.Text.Trim());
             System.Windows.Controls.Grid.SetColumn(searchInput, 1);
             searchGrid.Children.Add(searchIcon); searchGrid.Children.Add(searchInput);
 
             var searchBorder = new Border
             {
-                Background = B(Surface2),
-                BorderBrush = B(BorderStrong),
+                Background = AvTokens.B(AvTokens.Surface2),
+                BorderBrush = AvTokens.B(AvTokens.BorderStrong),
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(5),
                 Margin = new Thickness(0, 0, 0, 8),
@@ -1880,11 +1766,11 @@ namespace AVES.Cmds_PullDownAutoDimension
             };
 
             // ── 6. Toolbar (bordered Select All / Deselect All + right-aligned counter) ─
-            counterLbl = new TextBlock { FontFamily = Ui, FontSize = 12, Foreground = B(Accent), VerticalAlignment = VerticalAlignment.Center };
+            counterLbl = new TextBlock { FontFamily = AvTokens.Ui, FontSize = 12, Foreground = AvTokens.B(AvTokens.Accent), VerticalAlignment = VerticalAlignment.Center };
 
             var selAllBtn = SecondaryButton("Select All");
             selAllBtn.FontSize = 12;
-            selAllBtn.Foreground = B(Accent);
+            selAllBtn.Foreground = AvTokens.B(AvTokens.Accent);
             selAllBtn.Padding = new Thickness(12, 5, 12, 5);
             selAllBtn.Click += (s, e) =>
             {
@@ -1895,7 +1781,7 @@ namespace AVES.Cmds_PullDownAutoDimension
 
             var deselAllBtn = SecondaryButton("Deselect All");
             deselAllBtn.FontSize = 12;
-            deselAllBtn.Foreground = B(TextDim);
+            deselAllBtn.Foreground = AvTokens.B(AvTokens.TextDim);
             deselAllBtn.Padding = new Thickness(12, 5, 12, 5);
             deselAllBtn.Margin = new Thickness(8, 0, 0, 0);
             deselAllBtn.Click += (s, e) =>
@@ -1916,7 +1802,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             // ── 7. Scrollable list ────────────────────────────────────────────────────
             var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Content = listPanel };
             scroll.PreviewMouseWheel += (s, e) => { scroll.ScrollToVerticalOffset(scroll.VerticalOffset - e.Delta * 0.5); e.Handled = true; };
-            var listBorder = new Border { Background = B(Surface), BorderBrush = B(Border), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), MaxHeight = 360, Child = scroll };
+            var listBorder = new Border { Background = AvTokens.B(AvTokens.Surface), BorderBrush = AvTokens.B(AvTokens.Border), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), MaxHeight = 360, Child = scroll };
 
             // ── 8. Footer ─────────────────────────────────────────────────────────────
             var cancelBtn = GhostButton("Cancel");
@@ -1933,8 +1819,8 @@ namespace AVES.Cmds_PullDownAutoDimension
             footerInner.Children.Add(footerBtns);
 
             var footerStack = new StackPanel();
-            footerStack.Children.Add(HDivider());
-            footerStack.Children.Add(new Border { Background = B(Surface2), Child = new Border { Margin = new Thickness(20, 14, 20, 14), Child = footerInner } });
+            footerStack.Children.Add(AvControls.HDivider());
+            footerStack.Children.Add(new Border { Background = AvTokens.B(AvTokens.Surface2), Child = new Border { Margin = new Thickness(20, 14, 20, 14), Child = footerInner } });
 
             // ── 9. Window layout ──────────────────────────────────────────────────────
             var body = new DockPanel { Margin = new Thickness(20, 16, 20, 0) };
@@ -1945,7 +1831,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             body.Children.Add(dimTypeSection.Control); body.Children.Add(assembliesTitleRow); body.Children.Add(searchBorder); body.Children.Add(toolbar); body.Children.Add(listBorder);
 
             var root = new DockPanel();
-            var titleBar = TitleBar(title, subtitle);
+            var titleBar = AvControls.TitleBarWithSubtitle(title, subtitle);
             DockPanel.SetDock(titleBar, Dock.Top);
             DockPanel.SetDock(footerStack, Dock.Bottom);
             root.Children.Add(titleBar); root.Children.Add(footerStack); root.Children.Add(body);
@@ -1959,8 +1845,8 @@ namespace AVES.Cmds_PullDownAutoDimension
                 WindowStyle = WindowStyle.SingleBorderWindow,
                 ResizeMode = ResizeMode.NoResize,
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
-                Background = B(Surface),
-                FontFamily = Ui,
+                Background = AvTokens.B(AvTokens.Surface),
+                FontFamily = AvTokens.Ui,
                 UseLayoutRounding = true,
                 SnapsToDevicePixels = true,
                 ShowInTaskbar = false,
@@ -2037,7 +1923,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             int totalViews = rows.Count;
 
             var body = new StackPanel { Margin = new Thickness(20, 20, 20, 20) };
-            body.Children.Add(SectionLabel("Run Summary"));
+            body.Children.Add(AvControls.SectionLabel("Run Summary"));
 
             var tileGrid = new UniformGrid { Columns = 3, Rows = 1, Margin = new Thickness(0, 0, 0, 20) };
             var t1 = StatTile(totalDims.ToString(), "Dims created", totalDims > 0 ? "ok" : "");
@@ -2047,7 +1933,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             tileGrid.Children.Add(t1); tileGrid.Children.Add(t2); tileGrid.Children.Add(t3);
             body.Children.Add(tileGrid);
 
-            body.Children.Add(SectionLabel("Results per view"));
+            body.Children.Add(AvControls.SectionLabel("Results per view"));
             body.Children.Add(BuildResultsTable(rows));
 
             var scrollBody = new ScrollViewer
@@ -2060,9 +1946,9 @@ namespace AVES.Cmds_PullDownAutoDimension
             var caption = new TextBlock
             {
                 Text = error ? "Completed with errors" : "Completed successfully",
-                FontFamily = Ui,
+                FontFamily = AvTokens.Ui,
                 FontSize = 11.5,
-                Foreground = B(error ? FailFg : OkFg),
+                Foreground = AvTokens.B(error ? AvTokens.FailFg : AvTokens.OkFg),
                 VerticalAlignment = VerticalAlignment.Center
             };
 
@@ -2091,11 +1977,11 @@ namespace AVES.Cmds_PullDownAutoDimension
             footerInner.Children.Add(caption); footerInner.Children.Add(btns);
 
             var footerStack = new StackPanel();
-            footerStack.Children.Add(HDivider());
-            footerStack.Children.Add(new Border { Background = B(Surface2), Child = new Border { Margin = new Thickness(20, 14, 20, 14), Child = footerInner } });
+            footerStack.Children.Add(AvControls.HDivider());
+            footerStack.Children.Add(new Border { Background = AvTokens.B(AvTokens.Surface2), Child = new Border { Margin = new Thickness(20, 14, 20, 14), Child = footerInner } });
 
             var root = new DockPanel();
-            var titleBar_ = TitleBar(
+            var titleBar_ = AvControls.TitleBarWithSubtitle(
                 error ? $"{title} — Completed with errors" : $"{title} — Done",
                 $"{totalViews} view(s) processed  ·  {totalDims} dim(s) created");
 
@@ -2113,8 +1999,8 @@ namespace AVES.Cmds_PullDownAutoDimension
                 WindowStyle = WindowStyle.SingleBorderWindow,
                 ResizeMode = ResizeMode.NoResize,
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
-                Background = B(Surface),
-                FontFamily = Ui,
+                Background = AvTokens.B(AvTokens.Surface),
+                FontFamily = AvTokens.Ui,
                 UseLayoutRounding = true,
                 SnapsToDevicePixels = true,
                 ShowInTaskbar = false,
@@ -2128,12 +2014,12 @@ namespace AVES.Cmds_PullDownAutoDimension
         private static Border BuildResultsTable(
             List<(string Assembly, string View, string Count, string Status, string Notes)> rows)
         {
-            var headerGrid = new System.Windows.Controls.Grid { Background = B(Surface2) };
+            var headerGrid = new System.Windows.Controls.Grid { Background = AvTokens.B(AvTokens.Surface2) };
             SetTableCols(headerGrid);
             string[] hdrs = { "Status", "Assembly", "View", "Count", "Notes" };
             for (int i = 0; i < hdrs.Length; i++)
             {
-                var h = new TextBlock { Text = hdrs[i], FontFamily = Ui, FontSize = 10.5, FontWeight = FontWeights.Bold, Foreground = B(TextFaint), Padding = new Thickness(i == 0 ? 14 : 12, 9, 12, 9) };
+                var h = new TextBlock { Text = hdrs[i], FontFamily = AvTokens.Ui, FontSize = 10.5, FontWeight = FontWeights.Bold, Foreground = AvTokens.B(AvTokens.TextFaint), Padding = new Thickness(i == 0 ? 14 : 12, 9, 12, 9) };
                 System.Windows.Controls.Grid.SetColumn(h, i);
                 headerGrid.Children.Add(h);
             }
@@ -2142,7 +2028,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             bool odd = false;
             foreach (var r in rows)
             {
-                var rg = new System.Windows.Controls.Grid { Background = B(odd ? Zebra : Surface), MinHeight = 42 };
+                var rg = new System.Windows.Controls.Grid { Background = AvTokens.B(odd ? AvTokens.Zebra : AvTokens.Surface), MinHeight = 42 };
                 SetTableCols(rg);
 
                 var pill = StatusPill(r.Status);
@@ -2150,20 +2036,20 @@ namespace AVES.Cmds_PullDownAutoDimension
                 pill.VerticalAlignment = VerticalAlignment.Center;
                 System.Windows.Controls.Grid.SetColumn(pill, 0); rg.Children.Add(pill);
 
-                var aCell = MakeCell(r.Assembly, Ui, 11.5, TextDim);
+                var aCell = MakeCell(r.Assembly, AvTokens.Ui, 11.5, AvTokens.TextDim);
                 System.Windows.Controls.Grid.SetColumn(aCell, 1); rg.Children.Add(aCell);
 
-                var vCell = MakeCell(r.View, Ui, 12.5, Text, bold: true);
+                var vCell = MakeCell(r.View, AvTokens.Ui, 12.5, AvTokens.Text, bold: true);
                 System.Windows.Controls.Grid.SetColumn(vCell, 2); rg.Children.Add(vCell);
 
-                string cFg = r.Status == "ok" ? OkFg : TextFaint;
-                var cCell = MakeCell(r.Count, Mono, 11.5, cFg, centre: true);
+                string cFg = r.Status == "ok" ? AvTokens.OkFg : AvTokens.TextFaint;
+                var cCell = MakeCell(r.Count, AvTokens.Mono, 11.5, cFg, centre: true);
                 System.Windows.Controls.Grid.SetColumn(cCell, 3); rg.Children.Add(cCell);
 
-                var nCell = MakeCell(r.Notes, Ui, 11.5, TextFaint);
+                var nCell = MakeCell(r.Notes, AvTokens.Ui, 11.5, AvTokens.TextFaint);
                 System.Windows.Controls.Grid.SetColumn(nCell, 4); rg.Children.Add(nCell);
 
-                rowsPanel.Children.Add(new Border { BorderBrush = B(Border), BorderThickness = new Thickness(0, 0, 0, 1), Child = rg });
+                rowsPanel.Children.Add(new Border { BorderBrush = AvTokens.B(AvTokens.Border), BorderThickness = new Thickness(0, 0, 0, 1), Child = rg });
                 odd = !odd;
             }
 
@@ -2171,21 +2057,21 @@ namespace AVES.Cmds_PullDownAutoDimension
                 rowsPanel.Children.Add(new TextBlock
                 {
                     Text = "No views were processed.",
-                    FontFamily = Ui,
+                    FontFamily = AvTokens.Ui,
                     FontSize = 12.5,
-                    Foreground = B(TextFaint),
+                    Foreground = AvTokens.B(AvTokens.TextFaint),
                     Margin = new Thickness(16, 14, 16, 14),
                     HorizontalAlignment = HorizontalAlignment.Center
                 });
 
             var tableStack = new StackPanel();
-            tableStack.Children.Add(new Border { BorderBrush = B(BorderStrong), BorderThickness = new Thickness(0, 0, 0, 1.5), Child = headerGrid });
+            tableStack.Children.Add(new Border { BorderBrush = AvTokens.B(AvTokens.BorderStrong), BorderThickness = new Thickness(0, 0, 0, 1.5), Child = headerGrid });
 
             var dataScroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, MaxHeight = 280, Content = rowsPanel };
             dataScroll.PreviewMouseWheel += (s, e) => { dataScroll.ScrollToVerticalOffset(dataScroll.VerticalOffset - e.Delta * 0.5); e.Handled = true; };
             tableStack.Children.Add(dataScroll);
 
-            return new Border { Background = B(Surface), BorderBrush = B(Border), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), Child = tableStack };
+            return new Border { Background = AvTokens.B(AvTokens.Surface), BorderBrush = AvTokens.B(AvTokens.Border), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), Child = tableStack };
         }
 
         private static void SetTableCols(System.Windows.Controls.Grid g)
@@ -2206,7 +2092,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                 FontFamily = font,
                 FontSize = size,
                 FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal,
-                Foreground = B(fg),
+                Foreground = AvTokens.B(fg),
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 ToolTip = text,
                 Padding = new Thickness(12, 11, 12, 11),
