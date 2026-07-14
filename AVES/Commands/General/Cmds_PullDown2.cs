@@ -39,6 +39,7 @@
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using AVES.Core;
 // File dialogs
 using Microsoft.Win32;
 // System
@@ -78,478 +79,41 @@ namespace AVES.Cmds_PullDownCreateSheets;
 // 1. AVES UI HELPER  — design-system factory methods
 // =============================================================================
 
+// Tokens, fonts, ApplyHover, the brand logo, HeaderStrip, SectionHeader,
+// PrimaryButton/SecondaryButton/GhostButton and StatTile all routed to
+// AVES.Core (AvTokens/AvControls) during the Phase 3 migration -- verified
+// byte-for-byte/pixel-for-pixel identical first. StatusPill stays local: its
+// warn label ("Completed with errors") and outer Border's missing
+// VerticalAlignment differ from AvControls.StatusPill, and per the
+// "freeze behavior" rule that's flagged for a later decision, not silently
+// resolved here.
 internal static class AvesUiHelper
 {
-    // ── Colour tokens ─────────────────────────────────────────────────────────
-    public const string Accent = "#E64A2E";
-    public const string AccentDeep = "#C2402A";
-    public const string AccentTint = "#FBE9E4";
-    public const string Backdrop = "#F4F4F6";
-    public const string Surface = "#FFFFFF";
-    public const string Surface2 = "#FAFAFB";
-    public const string Border = "#E5E6EA";
-    public const string BorderStrong = "#D4D6DC";
-    public const string TextPrimary = "#1F2329";
-    public const string TextDim = "#5A6069";
-    public const string TextFaint = "#8B9099";
-
-    // Status
-    public const string OkBg = "#E4F3EA"; public const string OkFg = "#2C7A52";
-    public const string SkipBg = "#EDEFF2"; public const string SkipFg = "#5B6573";
-    public const string FailBg = "#FBE3DE"; public const string FailFg = "#C0381F";
-    public const string WarnBg = "#FAF0DA"; public const string WarnFg = "#9A6B12";
-    public const string InfoBg = "#E7EFFB"; public const string InfoFg = "#2E66A8";
-
-    // ── Fonts ─────────────────────────────────────────────────────────────────
-    public static readonly FontFamily UiFont = new("Segoe UI");
-    public static readonly FontFamily MonoFont = new("Consolas");
-
-    // ── Brush helpers ─────────────────────────────────────────────────────────
-    public static SolidColorBrush Br(string hex) =>
-        new((Color)ColorConverter.ConvertFromString(hex));
-
-    // ── Hover helper — MouseEnter/Leave on a Border ───────────────────────────
-    public static void ApplyHover(Border bd, string normalHex, string hoverHex)
-    {
-        var normal = Br(normalHex);
-        var hover = Br(hoverHex);
-        bd.MouseEnter += (_, _) => bd.Background = hover;
-        bd.MouseLeave += (_, _) => bd.Background = normal;
-    }
-
-    // ── Brand logo — Øglænd System / Hilti, embedded as Base64 ────────────
-    // 240 chunks × 76 chars, round-trip verified. Joined at first call only.
-    private static readonly string[] _logoChunks =
-    {
-        "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",
-        "P5K4gFTpOi+HAAAAAElFTkSuQmCC"
-    };
-
-    private static System.Windows.Media.Imaging.BitmapImage? _logoImage;
-
-    private static System.Windows.Media.Imaging.BitmapImage LogoImage()
-    {
-        if (_logoImage != null) return _logoImage;
-        var b64 = string.Concat(_logoChunks);
-        var bytes = Convert.FromBase64String(b64);
-        var ms = new System.IO.MemoryStream(bytes);
-        var bmp = new System.Windows.Media.Imaging.BitmapImage();
-        bmp.BeginInit();
-        bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
-        bmp.StreamSource = ms;
-        bmp.EndInit();
-        bmp.Freeze();
-        _logoImage = bmp;
-        return _logoImage;
-    }
-
-    // ── Brand tile — renders the embedded logo image ──────────────────────────
-    public static System.Windows.Controls.Image BrandTile(double height = 28)
-    {
-        return new System.Windows.Controls.Image
-        {
-            Source = LogoImage(),
-            Height = height,
-            Width = double.NaN,   // auto-width to preserve aspect ratio
-            Stretch = System.Windows.Media.Stretch.Uniform,
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Left,
-            SnapsToDevicePixels = true,
-        };
-    }
-
-    // ── Interior header strip (logo + title text) ─────────────────────────────
-    public static Border HeaderStrip(string titleText)
-    {
-        var logo = BrandTile(28);
-
-        var title = new TextBlock
-        {
-            Text = titleText,
-            FontFamily = UiFont,
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Br(TextPrimary),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(14, 0, 0, 0),
-        };
-
-        var row = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        row.Children.Add(logo);
-        row.Children.Add(title);
-
-        return new Border
-        {
-            Background = Br(Surface),
-            BorderBrush = Br(Border),
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            Padding = new Thickness(20, 10, 20, 10),
-            Child = row,
-        };
-    }
-
-    // ── Section header — accent left stripe + uppercase label ────────────────
-    public static Border SectionHeader(string text)
-    {
-        var label = new TextBlock
-        {
-            Text = text.ToUpperInvariant(),
-            FontFamily = UiFont,
-            FontSize = 11,
-            FontWeight = FontWeights.Bold,
-            Foreground = Br(TextFaint),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-
-        // Accent left stripe via inner Border
-        var inner = new Border
-        {
-            BorderBrush = Br(Accent),
-            BorderThickness = new Thickness(3, 0, 0, 0),
-            Background = Br(Surface2),
-            Padding = new Thickness(8, 6, 8, 6),
-            Child = label,
-        };
-
-        return new Border
-        {
-            Margin = new Thickness(0, 12, 0, 8),
-            BorderBrush = Br(Border),
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            Child = inner,
-        };
-    }
-
-    // ── Primary button — accent fill ─────────────────────────────────────────
-    public static Button PrimaryButton(string content)
-    {
-        var bd = new Border
-        {
-            Background = Br(Accent),
-            CornerRadius = new CornerRadius(5),
-            Padding = new Thickness(16, 9, 16, 9),
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Child = new ContentPresenter(),
-        };
-        ApplyHover(bd, Accent, AccentDeep);
-
-        var btn = new Button
-        {
-            Content = content,
-            FontFamily = UiFont,
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Brushes.White,
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(16, 9, 16, 9),
-            Cursor = System.Windows.Input.Cursors.Hand,
-        };
-        StyleButtonAsPrimary(btn);
-        return btn;
-    }
-
-    // ── Secondary button — white fill, strong border ─────────────────────────
-    public static Button SecondaryButton(string content)
-    {
-        var btn = new Button
-        {
-            Content = content,
-            FontFamily = UiFont,
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Br(TextPrimary),
-            Padding = new Thickness(16, 9, 16, 9),
-            Cursor = System.Windows.Input.Cursors.Hand,
-        };
-        StyleButtonAsSecondary(btn);
-        return btn;
-    }
-
-    // ── Ghost button — transparent, dim text (Cancel) ────────────────────────
-    public static Button GhostButton(string content)
-    {
-        var btn = new Button
-        {
-            Content = content,
-            FontFamily = UiFont,
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Br(TextDim),
-            Padding = new Thickness(14, 9, 14, 9),
-            Cursor = System.Windows.Input.Cursors.Hand,
-        };
-        StyleButtonAsGhost(btn);
-        return btn;
-    }
-
     // ── Status pill — coloured dot + label ───────────────────────────────────
     public static Border StatusPill(string kind)
     {
         (string bg, string fg, string label) = kind switch
         {
-            "ok" => (OkBg, OkFg, "Done"),
-            "skip" => (SkipBg, SkipFg, "Skipped"),
-            "fail" => (FailBg, FailFg, "Failed"),
-            "warn" => (WarnBg, WarnFg, "Completed with errors"),
-            _ => (InfoBg, InfoFg, "Info"),
+            "ok" => (AvTokens.OkBg, AvTokens.OkFg, "Done"),
+            "skip" => (AvTokens.SkipBg, AvTokens.SkipFg, "Skipped"),
+            "fail" => (AvTokens.FailBg, AvTokens.FailFg, "Failed"),
+            "warn" => (AvTokens.WarnBg, AvTokens.WarnFg, "Completed with errors"),
+            _ => (AvTokens.InfoBg, AvTokens.InfoFg, "Info"),
         };
 
         var dot = new Ellipse
         {
             Width = 7,
             Height = 7,
-            Fill = Br(fg),
+            Fill = AvTokens.Br(fg),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 6, 0),
         };
         var txt = new TextBlock
         {
             Text = label,
-            Foreground = Br(fg),
-            FontFamily = UiFont,
+            Foreground = AvTokens.Br(fg),
+            FontFamily = AvTokens.Ui,
             FontSize = 11.5,
             FontWeight = FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
@@ -560,132 +124,14 @@ internal static class AvesUiHelper
 
         return new Border
         {
-            Background = Br(bg),
+            Background = AvTokens.Br(bg),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(8, 5, 10, 5),
             HorizontalAlignment = HorizontalAlignment.Left,
             Child = row,
         };
     }
-
-    // ── Stat tile — large number + caption ───────────────────────────────────
-    // accentKind: "" | "ok" | "fail" | "warn" | "accent"
-    public static Border StatTile(string value, string label, string accentKind = "")
-    {
-        string valColor = accentKind switch
-        {
-            "ok" => OkFg,
-            "fail" => FailFg,
-            "warn" => WarnFg,
-            "accent" => Accent,
-            _ => TextPrimary,
-        };
-
-        var valTb = new TextBlock
-        {
-            Text = value,
-            FontFamily = MonoFont,
-            FontSize = 22,
-            FontWeight = FontWeights.Bold,
-            Foreground = Br(valColor),
-            Margin = new Thickness(0, 0, 0, 4),
-        };
-        var keyTb = new TextBlock
-        {
-            Text = label,
-            FontFamily = UiFont,
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Br(TextFaint),
-        };
-
-        var stack = new StackPanel();
-        stack.Children.Add(valTb);
-        stack.Children.Add(keyTb);
-
-        return new Border
-        {
-            Background = Br(Surface),
-            BorderBrush = Br(Border),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(5),
-            Padding = new Thickness(14, 12, 14, 12),
-            Child = stack,
-        };
-    }
-
-    // ── Internal styling helpers — no ControlTemplate, no FrameworkElementFactory ─
-    // Each button is styled by setting properties directly and wiring
-    // MouseEnter/MouseLeave for hover. Corner radius is achieved by wrapping
-    // the Button's content in a clipped Border at the call site (see factory
-    // methods above, which return a pre-wired Button with its own Border child).
-
-    private static void StyleButtonAsPrimary(Button btn)
-    {
-        var normalBg = Br(Accent);
-        var hoverBg = Br(AccentDeep);
-        btn.Foreground = Brushes.White;
-        btn.Background = normalBg;
-        btn.BorderThickness = new Thickness(0);
-        btn.Padding = new Thickness(16, 9, 16, 9);
-        btn.Cursor = System.Windows.Input.Cursors.Hand;
-        ApplyRoundedStyle(btn, normalBg, hoverBg, null, new Thickness(0));
-    }
-
-    private static void StyleButtonAsSecondary(Button btn)
-    {
-        var normalBg = Br(Surface);
-        var hoverBg = Br(Surface2);
-        btn.Foreground = Br(TextPrimary);
-        btn.Background = normalBg;
-        btn.BorderBrush = Br(BorderStrong);
-        btn.BorderThickness = new Thickness(1);
-        btn.Padding = new Thickness(16, 9, 16, 9);
-        btn.Cursor = System.Windows.Input.Cursors.Hand;
-        ApplyRoundedStyle(btn, normalBg, hoverBg, Br(BorderStrong), new Thickness(1));
-    }
-
-    private static void StyleButtonAsGhost(Button btn)
-    {
-        var normalBg = new SolidColorBrush(Colors.Transparent);
-        var hoverBg = Br(Surface2);
-        btn.Foreground = Br(TextDim);
-        btn.Background = normalBg;
-        btn.BorderThickness = new Thickness(0);
-        btn.Padding = new Thickness(14, 9, 14, 9);
-        btn.Cursor = System.Windows.Input.Cursors.Hand;
-        ApplyRoundedStyle(btn, normalBg, hoverBg, null, new Thickness(0));
-    }
-
-    /// <summary>
-    /// Gives a Button rounded corners and hover colour by replacing its content
-    /// with a Border at Loaded time. No FrameworkElementFactory, no ControlTemplate.
-    /// </summary>
-    private static void ApplyRoundedStyle(
-        Button btn,
-        SolidColorBrush normalBg,
-        SolidColorBrush hoverBg,
-        SolidColorBrush? borderBrush,
-        Thickness borderThickness)
-    {
-        btn.Loaded += (_, _) =>
-        {
-            // Retrieve the outermost Border the default Button template creates
-            // (named "border" in the WPF default template).
-            if (btn.Template?.FindName("border", btn) is Border outerBd)
-            {
-                outerBd.CornerRadius = new CornerRadius(5);
-                outerBd.Background = normalBg;
-                outerBd.BorderBrush = borderBrush ?? new SolidColorBrush(Colors.Transparent);
-                outerBd.BorderThickness = borderThickness;
-            }
-        };
-
-        btn.MouseEnter += (_, _) => btn.Background = hoverBg;
-        btn.MouseLeave += (_, _) => btn.Background = normalBg;
-    }
 }
-
 
 // =============================================================================
 // 2. SHARED CORE
@@ -1010,8 +456,8 @@ internal sealed class ReportWindow : Window
         ResizeMode = ResizeMode.CanResize;
         ShowInTaskbar = false;
         UseLayoutRounding = true;
-        FontFamily = AvesUiHelper.UiFont;
-        Background = AvesUiHelper.Br(AvesUiHelper.Backdrop);
+        FontFamily = AvTokens.Ui;
+        Background = AvTokens.Br(AvTokens.Backdrop);
 
         if (revitHandle != IntPtr.Zero)
             _ = new WindowInteropHelper(this) { Owner = revitHandle };
@@ -1019,7 +465,7 @@ internal sealed class ReportWindow : Window
         var root = new DockPanel();
 
         // Header
-        var header = AvesUiHelper.HeaderStrip(title);
+        var header = AvControls.HeaderStrip(title);
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
 
@@ -1061,7 +507,7 @@ internal sealed class ReportWindow : Window
 
         Border MakeTile(string val, string lbl, string accent)
         {
-            var t = AvesUiHelper.StatTile(val, lbl, accent);
+            var t = AvControls.StatTile(val, lbl, accent);
             t.Margin = new Thickness(8, 0, 0, 0);
             return t;
         }
@@ -1078,10 +524,10 @@ internal sealed class ReportWindow : Window
         var sectionLabel = new TextBlock
         {
             Text = "RESULTS",
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 11,
             FontWeight = FontWeights.Bold,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextFaint),
+            Foreground = AvTokens.Br(AvTokens.TextFaint),
             Margin = new Thickness(0, 0, 0, 6),
         };
         DockPanel.SetDock(sectionLabel, Dock.Top);
@@ -1102,12 +548,12 @@ internal sealed class ReportWindow : Window
             IsReadOnly = true,
             HeadersVisibility = DataGridHeadersVisibility.Column,
             GridLinesVisibility = DataGridGridLinesVisibility.Horizontal,
-            HorizontalGridLinesBrush = AvesUiHelper.Br(AvesUiHelper.Border),
-            BorderBrush = AvesUiHelper.Br(AvesUiHelper.Border),
+            HorizontalGridLinesBrush = AvTokens.Br(AvTokens.Border),
+            BorderBrush = AvTokens.Br(AvTokens.Border),
             BorderThickness = new Thickness(1),
-            Background = AvesUiHelper.Br(AvesUiHelper.Surface),
-            RowBackground = AvesUiHelper.Br(AvesUiHelper.Surface),
-            AlternatingRowBackground = AvesUiHelper.Br(AvesUiHelper.Surface2),
+            Background = AvTokens.Br(AvTokens.Surface),
+            RowBackground = AvTokens.Br(AvTokens.Surface),
+            AlternatingRowBackground = AvTokens.Br(AvTokens.Surface2),
             AlternationCount = 2,
             RowHeight = 38,
             CanUserReorderColumns = false,
@@ -1131,7 +577,7 @@ internal sealed class ReportWindow : Window
             Header = "#",
             Binding = new System.Windows.Data.Binding(nameof(ReportRow.Index)),
             Width = new DataGridLength(36),
-            ElementStyle = BuildMonoCellStyle(AvesUiHelper.TextFaint, TextAlignment.Center),
+            ElementStyle = BuildMonoCellStyle(AvTokens.TextFaint, TextAlignment.Center),
         });
 
         // ── Column: Assembly Name ─────────────────────────────────────────────
@@ -1171,13 +617,13 @@ internal sealed class ReportWindow : Window
     private static Style BuildColumnHeaderStyle()
     {
         var s = new Style(typeof(DataGridColumnHeader));
-        s.Setters.Add(new Setter(DataGridColumnHeader.FontFamilyProperty, AvesUiHelper.UiFont));
+        s.Setters.Add(new Setter(DataGridColumnHeader.FontFamilyProperty, AvTokens.Ui));
         s.Setters.Add(new Setter(DataGridColumnHeader.FontSizeProperty, 10.5));
         s.Setters.Add(new Setter(DataGridColumnHeader.FontWeightProperty, FontWeights.Bold));
-        s.Setters.Add(new Setter(DataGridColumnHeader.ForegroundProperty, AvesUiHelper.Br(AvesUiHelper.TextFaint)));
-        s.Setters.Add(new Setter(DataGridColumnHeader.BackgroundProperty, AvesUiHelper.Br(AvesUiHelper.Surface2)));
+        s.Setters.Add(new Setter(DataGridColumnHeader.ForegroundProperty, AvTokens.Br(AvTokens.TextFaint)));
+        s.Setters.Add(new Setter(DataGridColumnHeader.BackgroundProperty, AvTokens.Br(AvTokens.Surface2)));
         s.Setters.Add(new Setter(DataGridColumnHeader.PaddingProperty, new Thickness(10, 8, 10, 8)));
-        s.Setters.Add(new Setter(DataGridColumnHeader.BorderBrushProperty, AvesUiHelper.Br(AvesUiHelper.BorderStrong)));
+        s.Setters.Add(new Setter(DataGridColumnHeader.BorderBrushProperty, AvTokens.Br(AvTokens.BorderStrong)));
         s.Setters.Add(new Setter(DataGridColumnHeader.BorderThicknessProperty, new Thickness(0, 0, 0, 1.5)));
         s.Setters.Add(new Setter(DataGridColumnHeader.HorizontalContentAlignmentProperty, HorizontalAlignment.Left));
         return s;
@@ -1195,9 +641,9 @@ internal sealed class ReportWindow : Window
     private static Style BuildMonoCellStyle(string colorHex, TextAlignment align)
     {
         var s = new Style(typeof(TextBlock));
-        s.Setters.Add(new Setter(TextBlock.FontFamilyProperty, AvesUiHelper.MonoFont));
+        s.Setters.Add(new Setter(TextBlock.FontFamilyProperty, AvTokens.Mono));
         s.Setters.Add(new Setter(TextBlock.FontSizeProperty, 11.5));
-        s.Setters.Add(new Setter(TextBlock.ForegroundProperty, AvesUiHelper.Br(colorHex)));
+        s.Setters.Add(new Setter(TextBlock.ForegroundProperty, AvTokens.Br(colorHex)));
         s.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, align));
         s.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
         s.Setters.Add(new Setter(TextBlock.PaddingProperty, new Thickness(10, 0, 10, 0)));
@@ -1207,10 +653,10 @@ internal sealed class ReportWindow : Window
     private static Style BuildNameCellStyle()
     {
         var s = new Style(typeof(TextBlock));
-        s.Setters.Add(new Setter(TextBlock.FontFamilyProperty, AvesUiHelper.UiFont));
+        s.Setters.Add(new Setter(TextBlock.FontFamilyProperty, AvTokens.Ui));
         s.Setters.Add(new Setter(TextBlock.FontSizeProperty, 12.5));
         s.Setters.Add(new Setter(TextBlock.FontWeightProperty, FontWeights.SemiBold));
-        s.Setters.Add(new Setter(TextBlock.ForegroundProperty, AvesUiHelper.Br(AvesUiHelper.TextPrimary)));
+        s.Setters.Add(new Setter(TextBlock.ForegroundProperty, AvTokens.Br(AvTokens.Text)));
         s.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
         s.Setters.Add(new Setter(TextBlock.PaddingProperty, new Thickness(10, 0, 10, 0)));
         s.Setters.Add(new Setter(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis));
@@ -1220,9 +666,9 @@ internal sealed class ReportWindow : Window
     private static Style BuildDetailsCellStyle()
     {
         var s = new Style(typeof(TextBlock));
-        s.Setters.Add(new Setter(TextBlock.FontFamilyProperty, AvesUiHelper.UiFont));
+        s.Setters.Add(new Setter(TextBlock.FontFamilyProperty, AvTokens.Ui));
         s.Setters.Add(new Setter(TextBlock.FontSizeProperty, 11.5));
-        s.Setters.Add(new Setter(TextBlock.ForegroundProperty, AvesUiHelper.Br(AvesUiHelper.TextFaint)));
+        s.Setters.Add(new Setter(TextBlock.ForegroundProperty, AvTokens.Br(AvTokens.TextFaint)));
         s.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
         s.Setters.Add(new Setter(TextBlock.PaddingProperty, new Thickness(10, 0, 10, 0)));
         s.Setters.Add(new Setter(TextBlock.TextWrappingProperty, TextWrapping.NoWrap));
@@ -1297,17 +743,17 @@ internal sealed class ReportWindow : Window
         var summary = new TextBlock
         {
             Text = $"{ok} succeeded · {bad} failed · {ok + bad} total",
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 11,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextFaint),
+            Foreground = AvTokens.Br(AvTokens.TextFaint),
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        _copyBtn = AvesUiHelper.SecondaryButton("Copy as TSV");
+        _copyBtn = AvControls.SecondaryButtonHoverLoaded("Copy as TSV");
         _copyBtn.Margin = new Thickness(0, 0, 8, 0);
         _copyBtn.Click += OnCopy;
 
-        var closeBtn = AvesUiHelper.PrimaryButton("Close");
+        var closeBtn = AvControls.PrimaryButtonHoverLoaded("Close");
         closeBtn.IsDefault = true;
         closeBtn.IsCancel = true;
         closeBtn.Click += (_, _) => Close();
@@ -1327,8 +773,8 @@ internal sealed class ReportWindow : Window
 
         return new Border
         {
-            Background = AvesUiHelper.Br(AvesUiHelper.Surface2),
-            BorderBrush = AvesUiHelper.Br(AvesUiHelper.Border),
+            Background = AvTokens.Br(AvTokens.Surface2),
+            BorderBrush = AvTokens.Br(AvTokens.Border),
             BorderThickness = new Thickness(0, 1, 0, 0),
             Padding = new Thickness(20, 14, 20, 14),
             Child = inner,
@@ -1378,8 +824,8 @@ internal sealed class TemplatePickerWindow : Window
         MinHeight = 340;
         ShowInTaskbar = false;
         UseLayoutRounding = true;
-        FontFamily = AvesUiHelper.UiFont;
-        Background = AvesUiHelper.Br(AvesUiHelper.Backdrop);
+        FontFamily = AvTokens.Ui;
+        Background = AvTokens.Br(AvTokens.Backdrop);
 
         if (revitHandle != IntPtr.Zero)
             _ = new WindowInteropHelper(this) { Owner = revitHandle };
@@ -1387,17 +833,17 @@ internal sealed class TemplatePickerWindow : Window
         var root = new DockPanel();
 
         // ── Header strip ──────────────────────────────────────────────────────
-        var header = AvesUiHelper.HeaderStrip(title);
+        var header = AvControls.HeaderStrip(title);
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
 
         // ── Footer ────────────────────────────────────────────────────────────
-        var okBtn = AvesUiHelper.PrimaryButton("OK");
+        var okBtn = AvControls.PrimaryButtonHoverLoaded("OK");
         okBtn.IsDefault = true;
         okBtn.Margin = new Thickness(0, 0, 8, 0);
         okBtn.Click += (_, _) => Confirm();
 
-        var cancelBtn = AvesUiHelper.GhostButton("Cancel");
+        var cancelBtn = AvControls.GhostButtonHoverLoaded("Cancel");
         cancelBtn.IsCancel = true;
         cancelBtn.Click += (_, _) => { DialogResult = false; Close(); };
 
@@ -1411,8 +857,8 @@ internal sealed class TemplatePickerWindow : Window
 
         var footer = new Border
         {
-            Background = AvesUiHelper.Br(AvesUiHelper.Surface2),
-            BorderBrush = AvesUiHelper.Br(AvesUiHelper.Border),
+            Background = AvTokens.Br(AvTokens.Surface2),
+            BorderBrush = AvTokens.Br(AvTokens.Border),
             BorderThickness = new Thickness(0, 1, 0, 0),
             Padding = new Thickness(20, 14, 20, 14),
             Child = btnRow,
@@ -1429,7 +875,7 @@ internal sealed class TemplatePickerWindow : Window
             Text = "Select a template, then click OK.",
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextDim),
+            Foreground = AvTokens.Br(AvTokens.TextDim),
             Margin = new Thickness(0, 0, 0, 10),
         };
         DockPanel.SetDock(hint, Dock.Top);
@@ -1442,16 +888,16 @@ internal sealed class TemplatePickerWindow : Window
         {
             Text = "⌕",
             FontSize = 15,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextFaint),
+            Foreground = AvTokens.Br(AvTokens.TextFaint),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(10, 0, 6, 0),
         };
 
         var searchBox = new TextBox
         {
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 13,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextPrimary),
+            Foreground = AvTokens.Br(AvTokens.Text),
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
@@ -1463,9 +909,9 @@ internal sealed class TemplatePickerWindow : Window
         var placeholder = new TextBlock
         {
             Text = "Filter templates…",
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 13,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextFaint),
+            Foreground = AvTokens.Br(AvTokens.TextFaint),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 0),
             IsHitTestVisible = false,
@@ -1492,8 +938,8 @@ internal sealed class TemplatePickerWindow : Window
 
         var searchBorder = new Border
         {
-            Background = AvesUiHelper.Br(AvesUiHelper.Surface2),
-            BorderBrush = AvesUiHelper.Br(AvesUiHelper.BorderStrong),
+            Background = AvTokens.Br(AvTokens.Surface2),
+            BorderBrush = AvTokens.Br(AvTokens.BorderStrong),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(5),
             Margin = new Thickness(0, 0, 0, 8),
@@ -1512,11 +958,11 @@ internal sealed class TemplatePickerWindow : Window
         _listBox = new ListBox
         {
             ItemsSource = _allNames,
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 13,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextPrimary),
-            Background = AvesUiHelper.Br(AvesUiHelper.Surface),
-            BorderBrush = AvesUiHelper.Br(AvesUiHelper.Border),
+            Foreground = AvTokens.Br(AvTokens.Text),
+            Background = AvTokens.Br(AvTokens.Surface),
+            BorderBrush = AvTokens.Br(AvTokens.Border),
             BorderThickness = new Thickness(1),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
@@ -1727,10 +1173,10 @@ internal sealed class NumericRow
         {
             Text = label,
             Width = 215,
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextDim),
+            Foreground = AvTokens.Br(AvTokens.TextDim),
             VerticalAlignment = VerticalAlignment.Center,
         };
         if (tooltip != null) lbl.ToolTip = tooltip;
@@ -1739,11 +1185,11 @@ internal sealed class NumericRow
         {
             Width = 82,
             Text = initial.ToString("0.###", CultureInfo.InvariantCulture),
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 13,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextPrimary),
-            Background = AvesUiHelper.Br(AvesUiHelper.Surface),
-            BorderBrush = AvesUiHelper.Br(AvesUiHelper.BorderStrong),
+            Foreground = AvTokens.Br(AvTokens.Text),
+            Background = AvTokens.Br(AvTokens.Surface),
+            BorderBrush = AvTokens.Br(AvTokens.BorderStrong),
             BorderThickness = new Thickness(1),
             Padding = new Thickness(8, 5, 8, 5),
             HorizontalContentAlignment = HorizontalAlignment.Right,
@@ -1756,13 +1202,13 @@ internal sealed class NumericRow
         {
             if (IsValid)
             {
-                TextBox.Background = AvesUiHelper.Br(AvesUiHelper.Surface);
-                TextBox.BorderBrush = AvesUiHelper.Br(AvesUiHelper.BorderStrong);
+                TextBox.Background = AvTokens.Br(AvTokens.Surface);
+                TextBox.BorderBrush = AvTokens.Br(AvTokens.BorderStrong);
             }
             else
             {
-                TextBox.Background = AvesUiHelper.Br(AvesUiHelper.AccentTint);
-                TextBox.BorderBrush = AvesUiHelper.Br(AvesUiHelper.Accent);
+                TextBox.Background = AvTokens.Br(AvTokens.AccentTint);
+                TextBox.BorderBrush = AvTokens.Br(AvTokens.Accent);
             }
             ValueChanged?.Invoke();
         };
@@ -1770,9 +1216,9 @@ internal sealed class NumericRow
         var suffixTb = new TextBlock
         {
             Text = $" {suffix}",
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 12,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextFaint),
+            Foreground = AvTokens.Br(AvTokens.TextFaint),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(6, 0, 0, 0),
             Width = 45,
@@ -1840,9 +1286,9 @@ internal sealed class BoolRow
         {
             Content = label,
             IsChecked = initial,
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 13,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextPrimary),
+            Foreground = AvTokens.Br(AvTokens.Text),
             VerticalAlignment = VerticalAlignment.Center,
         };
         if (tooltip != null) CheckBox.ToolTip = tooltip;
@@ -1858,11 +1304,11 @@ internal sealed class BoolRow
     }
 }
 
-/// <summary>Thin wrapper — now delegates to AvesUiHelper.SectionHeader.</summary>
+/// <summary>Thin wrapper — now delegates to AvControls.SectionHeader.</summary>
 internal static class FormHelpers
 {
     public static Border SectionHeader(string text) =>
-        AvesUiHelper.SectionHeader(text);
+        AvControls.SectionHeader(text);
 }
 
 internal sealed class LayoutPreviewCanvas : Canvas
@@ -1977,7 +1423,7 @@ internal sealed class LayoutPreviewCanvas : Canvas
         {
             Text = text,
             FontSize = fontSize,
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             Foreground = color,
             FontWeight = weight ?? FontWeights.Normal,
         };
@@ -2018,8 +1464,8 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
         UseLayoutRounding = true;
-        FontFamily = AvesUiHelper.UiFont;
-        Background = AvesUiHelper.Br(AvesUiHelper.Backdrop);
+        FontFamily = AvTokens.Ui;
+        Background = AvTokens.Br(AvTokens.Backdrop);
 
         if (revitHandle != IntPtr.Zero)
             _ = new WindowInteropHelper(this) { Owner = revitHandle };
@@ -2027,7 +1473,7 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
         var root = new DockPanel();
 
         // ── Interior header strip ─────────────────────────────────────────────
-        var headerStrip = AvesUiHelper.HeaderStrip(title);
+        var headerStrip = AvControls.HeaderStrip(title);
         DockPanel.SetDock(headerStrip, Dock.Top);
         root.Children.Add(headerStrip);
 
@@ -2039,7 +1485,7 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
         // ── Main content area ─────────────────────────────────────────────────
         var contentBorder = new Border
         {
-            Background = AvesUiHelper.Br(AvesUiHelper.Surface),
+            Background = AvTokens.Br(AvTokens.Surface),
             Padding = new Thickness(20, 16, 20, 16),
         };
 
@@ -2066,7 +1512,7 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
         var previewLabel = new TextBlock
         {
             Text = "Layout Preview",
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
             Foreground = new SolidColorBrush(Color.FromRgb(60, 80, 110)),
@@ -2077,7 +1523,7 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
         Preview = new LayoutPreviewCanvas();
         rightCol.Children.Add(new Border
         {
-            BorderBrush = AvesUiHelper.Br(AvesUiHelper.Border),
+            BorderBrush = AvTokens.Br(AvTokens.Border),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(5),
             Child = Preview,
@@ -2087,8 +1533,8 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
         {
             Text = "Schematic only — element sizes are approximate; positions reflect your inputs.",
             FontSize = 9,
-            FontFamily = AvesUiHelper.UiFont,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextFaint),
+            FontFamily = AvTokens.Ui,
+            Foreground = AvTokens.Br(AvTokens.TextFaint),
             Margin = new Thickness(0, 5, 0, 0),
             TextWrapping = TextWrapping.Wrap,
         };
@@ -2097,9 +1543,9 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
         // StatusText lives in the right column below the caption
         StatusText = new TextBlock
         {
-            FontFamily = AvesUiHelper.UiFont,
+            FontFamily = AvTokens.Ui,
             FontSize = 10,
-            Foreground = AvesUiHelper.Br(AvesUiHelper.TextFaint),
+            Foreground = AvTokens.Br(AvTokens.TextFaint),
             Margin = new Thickness(0, 6, 0, 0),
             TextWrapping = TextWrapping.Wrap,
         };
@@ -2116,12 +1562,12 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
     // ── Footer strip: Ghost Cancel | Secondary Make Default | Primary Run ─────
     private Border BuildFooterStrip()
     {
-        var cancelBtn = AvesUiHelper.GhostButton("Cancel");
+        var cancelBtn = AvControls.GhostButtonHoverLoaded("Cancel");
         cancelBtn.IsCancel = true;
         cancelBtn.Margin = new Thickness(0, 0, 10, 0);
         cancelBtn.Click += (_, _) => { DialogResult = false; Close(); };
 
-        var makeDefaultBtn = AvesUiHelper.SecondaryButton("Make Default");
+        var makeDefaultBtn = AvControls.SecondaryButtonHoverLoaded("Make Default");
         makeDefaultBtn.Margin = new Thickness(0, 0, 10, 0);
         makeDefaultBtn.Click += (_, _) =>
         {
@@ -2139,7 +1585,7 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
             StatusText.Text = "Saved as new default. Preview updated.";
         };
 
-        var runBtn = AvesUiHelper.PrimaryButton("Run");
+        var runBtn = AvControls.PrimaryButtonHoverLoaded("Run");
         runBtn.IsDefault = true;
         runBtn.Click += (_, _) =>
         {
@@ -2167,8 +1613,8 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
 
         return new Border
         {
-            Background = AvesUiHelper.Br(AvesUiHelper.Surface2),
-            BorderBrush = AvesUiHelper.Br(AvesUiHelper.Border),
+            Background = AvTokens.Br(AvTokens.Surface2),
+            BorderBrush = AvTokens.Br(AvTokens.Border),
             BorderThickness = new Thickness(0, 1, 0, 0),
             Padding = new Thickness(20, 14, 20, 14),
             Child = btnRow,
