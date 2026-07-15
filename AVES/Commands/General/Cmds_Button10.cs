@@ -797,7 +797,7 @@ namespace AVES.Cmds_Button10
             root.RowDefinitions.Add(new WpfRowDef { Height = GridLength.Auto });
             Content = root;
 
-            var titleBar = AvControls.TitleBarWithSubtitle("Revisions & Title Block Fill", $"Source · {docTitle}");
+            var titleBar = AvControls.TitleBar("Revisions & Title Block Fill");
             WpfGrid.SetRow(titleBar, 0);
             root.Children.Add(titleBar);
 
@@ -846,10 +846,23 @@ namespace AVES.Cmds_Button10
                 BorderThickness = new WpfThickness(0, 1, 0, 0),
                 Padding = new WpfThickness(20, 14, 20, 14)
             };
+            var footerInner = new DockPanel { LastChildFill = false };
+            var caption = new WpfTextBlock
+            {
+                Text = $"Source · {docTitle}",
+                FontFamily = AvTokens.Ui,
+                FontSize = 11.5,
+                Foreground = AvTokens.B(AvTokens.TextFaint),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            DockPanel.SetDock(caption, Dock.Left);
+            footerInner.Children.Add(caption);
             var footerRow = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, HorizontalAlignment = WpfHAlign.Right };
             var closeBtn = AvControls.PrimaryBtn("Close", () => Close());
             footerRow.Children.Add(closeBtn);
-            footer.Child = footerRow;
+            DockPanel.SetDock(footerRow, Dock.Right);
+            footerInner.Children.Add(footerRow);
+            footer.Child = footerInner;
             WpfGrid.SetRow(footer, 2);
             root.Children.Add(footer);
         }
