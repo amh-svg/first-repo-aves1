@@ -1,10 +1,10 @@
 ﻿// ============================================================================
 //  Auto-Dimension PullDown  –  Revit 2025 / C#
 //
-//  Button 1 – MTQ Drawings  (Cmd_MtqDimension)
+//  Button 1 – MT Drawings  (Cmd_MtDimension)
 //    Full chain dimensioning: bay segments + overall for each 2D view
 //    associated with selected AssemblyInstance elements.
-//    Identical behaviour to the original Cmds_Button7 (MTQ) command.
+//    Identical behaviour to the original Cmds_Button7 (MT) command.
 //
 //  Button 2 – Vendor Drawings  (Cmd_VendorDimension)
 //    Simplified dimensioning: ONE overall dimension per axis per view.
@@ -43,12 +43,12 @@ using WpfVisibility = System.Windows.Visibility;
 namespace AVES.Cmds_PullDownAutoDimension
 {
     // =========================================================================
-    //  BUTTON 1 – MTQ Drawings
-    //  Full chain dimensioning (bay segments + overall), identical to Button7 (MTQ).
+    //  BUTTON 1 – MT Drawings
+    //  Full chain dimensioning (bay segments + overall), identical to Button7 (MT).
     // =========================================================================
 
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_MTQDimensions : IExternalCommand
+    public class Cmd_MTDimensions : IExternalCommand
     {
         // ── Configuration (all distances in feet) ────────────────────────────
         private static class DimConfig
@@ -119,8 +119,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                 }
 
                 var chosen = ShowAssemblyPicker(doc, allAsm,
-                    "Auto-Dimension MTQ Views",
-                    "Select assemblies to process");
+                    "Auto-Dimension MT Views");
                 if (chosen == null || chosen.Value.Assemblies.Count == 0) return Result.Cancelled;
                 assemblies = chosen.Value.Assemblies;
                 dimType = chosen.Value.DimType;
@@ -128,7 +127,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             else
             {
                 dimType = AvesUI.ShowDimensionTypePicker(
-                    doc, "Auto-Dimension MTQ Views", "Select dimension type", "MTQ");
+                    doc, "Auto-Dimension MT Views", "MT");
                 if (dimType == null) return Result.Cancelled;
             }
 
@@ -142,7 +141,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             var summary = new StringBuilder();
             var sink = new StringBuilder();
 
-            using (var t = new Transaction(doc, "Auto-Dimension MTQ 2D Views"))
+            using (var t = new Transaction(doc, "Auto-Dimension MT 2D Views"))
             {
                 try
                 {
@@ -216,13 +215,13 @@ namespace AVES.Cmds_PullDownAutoDimension
                     message = $"Transaction failed: {ex.Message}";
                     summary.AppendLine($"Transaction failed: {ex.Message}");
                     ShowLogWindow(summary.ToString(), error: true,
-                        title: "Auto-Dimension MTQ Views");
+                        title: "Auto-Dimension MT Views");
                     return Result.Failed;
                 }
             }
 
             ShowLogWindow(summary.ToString(), error: anyError,
-                title: "Auto-Dimension MTQ Views");
+                title: "Auto-Dimension MT Views");
             return anyError ? Result.Failed : Result.Succeeded;
         }
 
@@ -578,8 +577,8 @@ namespace AVES.Cmds_PullDownAutoDimension
         // ── Shared UI helpers (delegated to AvesUI + local methods) ─────────
 
         private static (List<AssemblyInstance> Assemblies, DimensionType DimType)? ShowAssemblyPicker(
-            Document doc, List<AssemblyInstance> all, string title, string subtitle)
-            => AvesUI.ShowAssemblyPicker(doc, all, title, subtitle, "MTQ");
+            Document doc, List<AssemblyInstance> all, string title)
+            => AvesUI.ShowAssemblyPicker(doc, all, title, "MT");
 
         private static void ShowLogWindow(string summaryText, bool error, string title)
             => AvesUI.ShowLogWindow(summaryText, error, title);
@@ -670,8 +669,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                 }
 
                 var chosen = AvesUI.ShowAssemblyPicker(doc, allAsm,
-                    "Vendor Dimension — Overall H×W×D",
-                    "Select assemblies to dimension", "Vendor");
+                    "Vendor Dimension — Overall H×W×D", "Vendor");
                 if (chosen == null || chosen.Value.Assemblies.Count == 0) return Result.Cancelled;
                 assemblies = chosen.Value.Assemblies;
                 dimType = chosen.Value.DimType;
@@ -679,7 +677,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             else
             {
                 dimType = AvesUI.ShowDimensionTypePicker(
-                    doc, "Vendor Dimension — Overall H×W×D", "Select dimension type", "Vendor");
+                    doc, "Vendor Dimension — Overall H×W×D", "Vendor");
                 if (dimType == null) return Result.Cancelled;
             }
 
@@ -1099,7 +1097,7 @@ namespace AVES.Cmds_PullDownAutoDimension
 
         // ── Dimension Type Memory ────────────────────────────────────────────
         //  Remembers the last linear dimension type picked, per button
-        //  (MTQ vs Vendor use separate keys), so returning users get it
+        //  (MT vs Vendor use separate keys), so returning users get it
         //  pre-selected next time. Stored per-Windows-user in
         //  %AppData%\AVES\last_dim_type.txt as "Key<TAB>Label" lines.
         private static class DimTypeMemory
@@ -1290,7 +1288,7 @@ namespace AVES.Cmds_PullDownAutoDimension
 
                 var root = new DockPanel();
 
-                var tb = AvControls.TitleBarWithSubtitle(title);
+                var tb = AvControls.TitleBar(title);
                 DockPanel.SetDock(tb, Dock.Top);
                 root.Children.Add(tb);
 
@@ -1491,7 +1489,7 @@ namespace AVES.Cmds_PullDownAutoDimension
         //  assembly picker window is skipped) but a dimension type still
         //  needs to be chosen.
         public static DimensionType? ShowDimensionTypePicker(
-            Document doc, string title, string subtitle, string memoryKey)
+            Document doc, string title, string memoryKey)
         {
             var section = new DimTypeSection(doc, "Dimension type", memoryKey);
 
@@ -1515,7 +1513,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             body.Children.Add(section.Control);
 
             var root = new DockPanel();
-            var titleBar = AvControls.TitleBarWithSubtitle(title, subtitle);
+            var titleBar = AvControls.TitleBar(title);
             DockPanel.SetDock(titleBar, Dock.Top);
             DockPanel.SetDock(footerStack, Dock.Bottom);
             root.Children.Add(titleBar); root.Children.Add(footerStack); root.Children.Add(body);
@@ -1556,7 +1554,7 @@ namespace AVES.Cmds_PullDownAutoDimension
         /// Multi-select assembly picker with live search and checkbox rows.
         /// </summary>
         public static (List<AssemblyInstance> Assemblies, DimensionType DimType)? ShowAssemblyPicker(
-            Document doc, List<AssemblyInstance> all, string title, string subtitle, string dimTypeMemoryKey)
+            Document doc, List<AssemblyInstance> all, string title, string dimTypeMemoryKey)
         {
             // ── Build flat entry list with dedup labels ───────────────────────────────
             var labelToAsm = new Dictionary<string, AssemblyInstance>();
@@ -1831,7 +1829,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             body.Children.Add(dimTypeSection.Control); body.Children.Add(assembliesTitleRow); body.Children.Add(searchBorder); body.Children.Add(toolbar); body.Children.Add(listBorder);
 
             var root = new DockPanel();
-            var titleBar = AvControls.TitleBarWithSubtitle(title, subtitle);
+            var titleBar = AvControls.TitleBar(title);
             DockPanel.SetDock(titleBar, Dock.Top);
             DockPanel.SetDock(footerStack, Dock.Bottom);
             root.Children.Add(titleBar); root.Children.Add(footerStack); root.Children.Add(body);
@@ -1981,9 +1979,8 @@ namespace AVES.Cmds_PullDownAutoDimension
             footerStack.Children.Add(new Border { Background = AvTokens.B(AvTokens.Surface2), Child = new Border { Margin = new Thickness(20, 14, 20, 14), Child = footerInner } });
 
             var root = new DockPanel();
-            var titleBar_ = AvControls.TitleBarWithSubtitle(
-                error ? $"{title} — Completed with errors" : $"{title} — Done",
-                $"{totalViews} view(s) processed  ·  {totalDims} dim(s) created");
+            var titleBar_ = AvControls.TitleBar(
+                error ? $"{title} — Completed with errors" : $"{title} — Done");
 
             DockPanel.SetDock(titleBar_, Dock.Top);
             DockPanel.SetDock(footerStack, Dock.Bottom);

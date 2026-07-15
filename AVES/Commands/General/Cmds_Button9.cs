@@ -515,7 +515,7 @@ namespace AVES.Cmds_Button9
             WGrid.SetColumn(logo, 0);
             grid.Children.Add(logo);
 
-            // Title + subtitle
+            // Title
             var titleStack = new StackPanel
             {
                 Orientation = Orientation.Vertical,
@@ -527,13 +527,6 @@ namespace AVES.Cmds_Button9
                 FontSize = 13,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = AvTokens.Br(AvTokens.Text),
-            });
-            titleStack.Children.Add(new TextBlock
-            {
-                Text = "Selected families exported as .rfa files",
-                FontSize = 11.5,
-                Foreground = AvTokens.Br(AvTokens.TextFaint),
-                Margin = new Thickness(0, 1, 0, 0),
             });
             WGrid.SetColumn(titleStack, 1);
             grid.Children.Add(titleStack);
