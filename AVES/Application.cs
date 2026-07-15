@@ -85,7 +85,7 @@ namespace AVES
             var pulldown3 = panelSheets.Ext_AddPulldownButton("Auto-add\nDimensions", "AVES.Cmds_PullDownAutoDimension");
 
             // Add buttons to "Add Dimensions" pulldown
-            pulldown3.Ext_AddPushButton("MT Dimensions", "AVES.Cmds_PullDownAutoDimension.Cmd_MTQDimensions");
+            pulldown3.Ext_AddPushButton("MT Dimensions", "AVES.Cmds_PullDownAutoDimension.Cmd_MTDimensions");
             pulldown3.Ext_AddPushButton("Vendor Dimensions", "AVES.Cmds_PullDownAutoDimension.Cmd_VendorDimensions");
 
             // Add "Add Tags" pulldownbutton to panel
