@@ -73,7 +73,7 @@ namespace AVES.Cmds_PullDownAutoTag
 
     // ============================================================
     //  TAG FAMILY MEMORY
-    //  Remembers the last tag family picked per category (MTQ vs
+    //  Remembers the last tag family picked per category (MT vs
     //  Vendor use different BuiltInCategory values) so returning
     //  users get it pre-selected next time. Stored per-Windows-user
     //  in %AppData%\AVES\last_tag_family.txt as "Category<TAB>Label" lines.
@@ -383,7 +383,7 @@ namespace AVES.Cmds_PullDownAutoTag
         private ElementId _selectedTagFamilyId = ElementId.InvalidElementId;
         public ElementId SelectedTagFamilyId => _selectedTagFamilyId;
 
-        // confirmLabel is injected so both MTQ and Vendor can share this window
+        // confirmLabel is injected so both MT and Vendor can share this window
         // with their own footer button text. tagCat/tagSectionLabel let each
         // button load its own tag family list (MultiCategoryTags vs GenericModelTags)
         // into the same in-window picker.
@@ -1017,10 +1017,10 @@ namespace AVES.Cmds_PullDownAutoTag
     }
 
     // ============================================================
-    //  BUTTON 1 — CMD_MTQTAG  (MTQ Drawings — untouched)
+    //  BUTTON 1 — CMD_MTTAG  (MT Drawings — untouched)
     // ============================================================
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_MTQTag : IExternalCommand
+    public class Cmd_MTTag : IExternalCommand
     {
         private const double EdgeClearanceFt = 1.0;
         private const double MinTagSpacingFt = 0.40;
@@ -1052,7 +1052,7 @@ namespace AVES.Cmds_PullDownAutoTag
             // 2. Single window: pick tag family (in-window section) + multi-select views
             var picker = new BatchViewPickerWindow(
                 entries, doc, BuiltInCategory.OST_MultiCategoryTags,
-                "MTQ Tag Family", "▶  Run Script");
+                "MT Tag Family", "▶  Run Script");
             if (picker.ShowDialog() != true
                 || picker.SelectedViews.Count == 0
                 || picker.SelectedTagFamilyId == ElementId.InvalidElementId)
@@ -1719,7 +1719,7 @@ namespace AVES.Cmds_PullDownAutoTag
             return result;
         }
 
-        // ── Projection helpers (copy — shared with Cmd_MTQTag) ────────────────
+        // ── Projection helpers (copy — shared with Cmd_MTTag) ────────────────
         private static double Dot(XYZ a, XYZ b) =>
             a.X * b.X + a.Y * b.Y + a.Z * b.Z;
 

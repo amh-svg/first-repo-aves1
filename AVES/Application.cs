@@ -78,7 +78,7 @@ namespace AVES
 
             // Add buttons to "Sheet Creation" pulldown
             pulldown2.Ext_AddPushButton("Assembly Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_AssemblyDrawings");
-            pulldown2.Ext_AddPushButton("MT Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_MTQDrawings");
+            pulldown2.Ext_AddPushButton("MT Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_MTDrawings");
             pulldown2.Ext_AddPushButton("Vendor Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_VendorDrawings");
 
             // Add "Add Dimensions" pulldownbutton to panel
@@ -92,7 +92,7 @@ namespace AVES
             var pulldown4 = panelSheets.Ext_AddPulldownButton("Auto-tag\nViews", "AVES.Cmds_PullDownAutoTag");
 
             // Add buttons to "Add Tags" pulldown
-            pulldown4.Ext_AddPushButton("3D - MT Tags", "AVES.Cmds_PullDownAutoTag.Cmd_MTQTag");
+            pulldown4.Ext_AddPushButton("3D - MT Tags", "AVES.Cmds_PullDownAutoTag.Cmd_MTTag");
             pulldown4.Ext_AddPushButton("3D - Vendor Tags", "AVES.Cmds_PullDownAutoTag.Cmd_VendorTag");
 
             // Add button to panel

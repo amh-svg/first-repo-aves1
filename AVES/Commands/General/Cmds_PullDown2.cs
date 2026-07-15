@@ -26,13 +26,13 @@
 //                                TitleblockUtils, NameRegistry, FailureHandling,
 //                                Reporting, TemplatePickerWindow, TemplatePicker.
 //   3. Settings models         — VendorDrawingsSettings, AssemblyDrawingsSettings,
-//                                MTQDrawingsSettings
+//                                MTDrawingsSettings
 //   4. Persistence             — SettingsStore
 //   5. UI building blocks      — NumericRow, BoolRow, FormHelpers,
 //                                LayoutPreviewCanvas, dialog base, three dialogs.
 //   6. SettingsGate
 //   7. Commands                — Cmd_VendorDrawings, Cmd_AssemblyDrawings,
-//                                Cmd_MTQDrawings.
+//                                Cmd_MTDrawings.
 // =============================================================================
 
 // Autodesk
@@ -1090,7 +1090,7 @@ public sealed class AssemblyDrawingsSettings : ICloneableSettings<AssemblyDrawin
     public double SectionBoxPaddingFt() => UnitUtils.ConvertToInternalUnits(SectionBoxPaddingMm, UnitTypeId.Millimeters);
 }
 
-public sealed class MTQDrawingsSettings : ICloneableSettings<MTQDrawingsSettings>
+public sealed class MTDrawingsSettings : ICloneableSettings<MTDrawingsSettings>
 {
     public double OffsetXMm { get; set; } = -229.0;
     public double OffsetYMm { get; set; } = 400.0;
@@ -1104,7 +1104,7 @@ public sealed class MTQDrawingsSettings : ICloneableSettings<MTQDrawingsSettings
     public double View3DOffsetXMm { get; set; } = 0.0;
     public double View3DOffsetYMm { get; set; } = 0.0;
 
-    public MTQDrawingsSettings Clone() => (MTQDrawingsSettings)MemberwiseClone();
+    public MTDrawingsSettings Clone() => (MTDrawingsSettings)MemberwiseClone();
     public double OffsetXFt() => UnitUtils.ConvertToInternalUnits(OffsetXMm, UnitTypeId.Millimeters);
     public double OffsetYFt() => UnitUtils.ConvertToInternalUnits(OffsetYMm, UnitTypeId.Millimeters);
     public double BundleSpacingXFt() => UnitUtils.ConvertToInternalUnits(BundleSpacingXMm, UnitTypeId.Millimeters);
@@ -1679,7 +1679,7 @@ internal sealed class VendorDrawingsSettingsDialog
     private NumericRow _clusterSpacing = null!;
 
     public VendorDrawingsSettingsDialog(VendorDrawingsSettings initial, IntPtr revitHandle)
-        : base(initial, "Button 1 — Vendor Drawings (A3, two sheets per assembly)", revitHandle)
+        : base(initial, "Vendor Drawings (A3, two sheets per assembly)", revitHandle)
     {
         RebuildAll();
     }
@@ -1861,11 +1861,11 @@ internal sealed class AssemblyDrawingsSettingsDialog
 
 
 // =============================================================================
-// Button 3 dialog — MTQ Drawings
+// Button 3 dialog — MT Drawings
 // =============================================================================
 
-internal sealed class MTQDrawingsSettingsDialog
-    : LayoutSettingsDialogBase<MTQDrawingsSettings>
+internal sealed class MTDrawingsSettingsDialog
+    : LayoutSettingsDialogBase<MTDrawingsSettings>
 {
     private NumericRow _offsetX = null!, _offsetY = null!;
     private NumericRow _bundleX = null!, _bundleY = null!;
@@ -1873,8 +1873,8 @@ internal sealed class MTQDrawingsSettingsDialog
     private NumericRow _v3dX = null!, _v3dY = null!;
     private NumericRow _plX = null!, _plY = null!;
 
-    public MTQDrawingsSettingsDialog(MTQDrawingsSettings initial, IntPtr revitHandle)
-        : base(initial, "Button 3 — MTQ Drawings (A1, single sheet per assembly)", revitHandle)
+    public MTDrawingsSettingsDialog(MTDrawingsSettings initial, IntPtr revitHandle)
+        : base(initial, "MT Drawings (A1, single sheet per assembly)", revitHandle)
     {
         RebuildAll();
     }
@@ -2000,10 +2000,10 @@ internal static class SettingsGate
         return result;
     }
 
-    public static MTQDrawingsSettings? ShowMTQDrawings(UIApplication uiApp)
+    public static MTDrawingsSettings? ShowMTDrawings(UIApplication uiApp)
     {
-        var initial = SettingsStore.LoadOrDefault<MTQDrawingsSettings>("mtq-drawings.json");
-        var dlg = new MTQDrawingsSettingsDialog(initial, uiApp.MainWindowHandle);
+        var initial = SettingsStore.LoadOrDefault<MTDrawingsSettings>("mtq-drawings.json");
+        var dlg = new MTDrawingsSettingsDialog(initial, uiApp.MainWindowHandle);
         if (dlg.ShowDialog() != true) return null;
         var result = dlg.Result;
         if (result is null) return null;
@@ -2533,11 +2533,11 @@ public sealed class Cmd_AssemblyDrawings : IExternalCommand
 
 
 // =============================================================================
-// 7. BUTTON 3 — Cmd_MTQDrawings (A1, single sheet per assembly)
+// 7. BUTTON 3 — Cmd_MTDrawings (A1, single sheet per assembly)
 // =============================================================================
 
 [Transaction(TransactionMode.Manual)]
-public sealed class Cmd_MTQDrawings : IExternalCommand
+public sealed class Cmd_MTDrawings : IExternalCommand
 {
     private const double ProjectionSpacingFactor = 0.4;
 
@@ -2601,7 +2601,7 @@ public sealed class Cmd_MTQDrawings : IExternalCommand
                 return Result.Failed;
             }
 
-            var settings = SettingsGate.ShowMTQDrawings(uiApp);
+            var settings = SettingsGate.ShowMTDrawings(uiApp);
             if (settings is null) return Result.Cancelled;
 
             var viewNames = Cmd_VendorDrawings.BuildViewNameRegistry(doc);
@@ -2609,7 +2609,7 @@ public sealed class Cmd_MTQDrawings : IExternalCommand
 
             var results = new List<(string Name, string? Error)>();
 
-            using var tx = new Transaction(doc, "Vendor Sheet (MTQ) - Batch");
+            using var tx = new Transaction(doc, "Vendor Sheet (MT) - Batch");
             tx.Start();
             FailureHandling.SuppressWarnings(tx);
 
@@ -2633,7 +2633,7 @@ public sealed class Cmd_MTQDrawings : IExternalCommand
 
             tx.Commit();
 
-            Reporting.ShowResult("MTQ Drawing Automation", results,
+            Reporting.ShowResult("MT Drawing Automation", results,
                 uiApp.MainWindowHandle);
             return Result.Succeeded;
         }
@@ -2649,7 +2649,7 @@ public sealed class Cmd_MTQDrawings : IExternalCommand
         AssemblyInstance assembly,
         View tmpl3d, View tmpl2d, View tmplSched,
         ElementId titleblockId,
-        MTQDrawingsSettings settings,
+        MTDrawingsSettings settings,
         NameRegistry viewNames, NameRegistry sheetNames)
     {
         var bbox = GeometryUtils.GetAssemblyBoundingBox(doc, assembly)
@@ -2674,7 +2674,7 @@ public sealed class Cmd_MTQDrawings : IExternalCommand
             doc, assembly.Id, tmpl2d.Id, assembly.Name, viewNames, Orientations);
 
         var sheet = ViewSheet.Create(doc, titleblockId);
-        sheet.Name = sheetNames.Reserve($"MTQ-{assembly.Name}");
+        sheet.Name = sheetNames.Reserve($"MT-{assembly.Name}");
 
         var scale2d = GeometryUtils.PickScale(
             modelW * 3.0, modelH * 2.0,
