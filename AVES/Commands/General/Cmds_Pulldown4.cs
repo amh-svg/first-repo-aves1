@@ -393,7 +393,7 @@ namespace AVES.Cmds_PullDownAutoTag
         {
             _all = entries;
 
-            Title = "Batch Tag — Select Views";
+            Title = "Batch Tag";
             Width = 520; Height = 680;
             WindowStyle = WindowStyle.SingleBorderWindow;
             ResizeMode = ResizeMode.NoResize;
@@ -403,7 +403,7 @@ namespace AVES.Cmds_PullDownAutoTag
 
             var root = new DockPanel();
 
-            var tb = AvControls.TitleBar("Batch Tag", "Select Views");
+            var tb = AvControls.TitleBar("Batch Tag", "");
             DockPanel.SetDock(tb, Dock.Top);
             root.Children.Add(tb);
 
