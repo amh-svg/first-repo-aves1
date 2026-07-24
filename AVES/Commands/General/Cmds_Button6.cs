@@ -62,9 +62,10 @@ namespace AVES.Cmds_Button6
             var selectionIds = uiDoc.Selection.GetElementIds();
             if (selectionIds == null || selectionIds.Count == 0)
             {
-                ShowWpfAlert(
+                AvControls.ShowAlert(
                     "Family Renamer",
-                    "No elements selected.\n\nPlease select family instances or types and re-run.");
+                    "No elements selected.\n\nPlease select family instances or types and re-run.",
+                    AlertSeverity.Warning);
                 return Result.Cancelled;
             }
 
@@ -889,96 +890,6 @@ namespace AVES.Cmds_Button6
                 timer.Start();
             };
 
-            window.ShowDialog();
-        }
-
-        #endregion
-
-        #region ── ShowWpfAlert ──────────────────────────────────────────────
-
-        /// <summary>
-        /// Small modal alert — "Refined Native" styling.
-        /// Replaces the previous plain-white alert window.
-        /// </summary>
-        private static void ShowWpfAlert(string title, string body)
-        {
-            // Icon area (accent circle with "!")
-            var icon = new System.Windows.Controls.Border
-            {
-                Width = 36,
-                Height = 36,
-                Background = AvTokens.Brush(AvTokens.AccentTint),
-                CornerRadius = new System.Windows.CornerRadius(18),
-                Margin = new System.Windows.Thickness(0, 0, 14, 0),
-                VerticalAlignment = System.Windows.VerticalAlignment.Top,
-                Child = new System.Windows.Controls.TextBlock
-                {
-                    Text = "!",
-                    FontFamily = AvTokens.Ui,
-                    FontSize = 17,
-                    FontWeight = System.Windows.FontWeights.Bold,
-                    Foreground = AvTokens.Brush(AvTokens.Accent),
-                    HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-                    VerticalAlignment = System.Windows.VerticalAlignment.Center
-                }
-            };
-
-            // Message text
-            var msg = new System.Windows.Controls.TextBlock
-            {
-                Text = body,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                Foreground = AvTokens.Brush(AvTokens.Text),
-                TextWrapping = System.Windows.TextWrapping.Wrap,
-                LineHeight = 20,
-                VerticalAlignment = System.Windows.VerticalAlignment.Top
-            };
-
-            var contentRow = new System.Windows.Controls.StackPanel
-            {
-                Orientation = System.Windows.Controls.Orientation.Horizontal,
-                Margin = new System.Windows.Thickness(20, 20, 20, 0)
-            };
-            contentRow.Children.Add(icon);
-            contentRow.Children.Add(msg);
-
-            // Footer
-            var okBtn = MakePrimaryButton("OK");
-            var footer = new System.Windows.Controls.Border
-            {
-                Background = AvTokens.Brush(AvTokens.Surface2),
-                BorderBrush = AvTokens.Brush(AvTokens.Border),
-                BorderThickness = new System.Windows.Thickness(0, 1, 0, 0),
-                Padding = new System.Windows.Thickness(20, 12, 20, 12),
-                Margin = new System.Windows.Thickness(0, 16, 0, 0),
-                Child = new System.Windows.Controls.DockPanel
-                {
-                    LastChildFill = false,
-                    Children = { DockRight(okBtn) }
-                }
-            };
-
-            var root = new System.Windows.Controls.StackPanel();
-            root.Children.Add(contentRow);
-            root.Children.Add(footer);
-
-            var window = new System.Windows.Window
-            {
-                Title = title,
-                Width = 420,
-                Height = 200,
-                MinHeight = 180,
-                SizeToContent = System.Windows.SizeToContent.Height,
-                WindowStartupLocation = System.Windows.WindowStartupLocation.CenterScreen,
-                ResizeMode = System.Windows.ResizeMode.NoResize,
-                Background = AvTokens.Brush(AvTokens.Surface),
-                FontFamily = AvTokens.Ui,
-                UseLayoutRounding = true,
-                Content = root
-            };
-
-            okBtn.Click += (s, e) => window.Close();
             window.ShowDialog();
         }
 
