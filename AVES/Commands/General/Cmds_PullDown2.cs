@@ -82,55 +82,15 @@ namespace AVES.Cmds_PullDownCreateSheets;
 // Tokens, fonts, ApplyHover, the brand logo, HeaderStrip, SectionHeader,
 // PrimaryButton/SecondaryButton/GhostButton and StatTile all routed to
 // AVES.Core (AvTokens/AvControls) during the Phase 3 migration -- verified
-// byte-for-byte/pixel-for-pixel identical first. StatusPill stays local: its
-// warn label ("Completed with errors") and outer Border's missing
-// VerticalAlignment differ from AvControls.StatusPill, and per the
-// "freeze behavior" rule that's flagged for a later decision, not silently
-// resolved here.
+// byte-for-byte/pixel-for-pixel identical first. StatusPill now routes to
+// AvControls.StatusPill too: geometry unified, "warn" keeps this file's own
+// "Completed with errors" wording via labelOverride (reconciliation
+// decision: unify styling, keep existing per-file wording).
 internal static class AvesUiHelper
 {
     // ── Status pill — coloured dot + label ───────────────────────────────────
-    public static Border StatusPill(string kind)
-    {
-        (string bg, string fg, string label) = kind switch
-        {
-            "ok" => (AvTokens.OkBg, AvTokens.OkFg, "Done"),
-            "skip" => (AvTokens.SkipBg, AvTokens.SkipFg, "Skipped"),
-            "fail" => (AvTokens.FailBg, AvTokens.FailFg, "Failed"),
-            "warn" => (AvTokens.WarnBg, AvTokens.WarnFg, "Completed with errors"),
-            _ => (AvTokens.InfoBg, AvTokens.InfoFg, "Info"),
-        };
-
-        var dot = new Ellipse
-        {
-            Width = 7,
-            Height = 7,
-            Fill = AvTokens.Br(fg),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 6, 0),
-        };
-        var txt = new TextBlock
-        {
-            Text = label,
-            Foreground = AvTokens.Br(fg),
-            FontFamily = AvTokens.Ui,
-            FontSize = 11.5,
-            FontWeight = FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
-        row.Children.Add(dot);
-        row.Children.Add(txt);
-
-        return new Border
-        {
-            Background = AvTokens.Br(bg),
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(8, 5, 10, 5),
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Child = row,
-        };
-    }
+    public static Border StatusPill(string kind) =>
+        AvControls.StatusPill(kind, kind == "warn" ? "Completed with errors" : null);
 }
 
 // =============================================================================
