@@ -669,7 +669,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                 }
 
                 var chosen = AvesUI.ShowAssemblyPicker(doc, allAsm,
-                    "Vendor Dimension — Overall H×W×D", "Vendor");
+                    "Auto-Dimension Vendor H×W×D", "Vendor");
                 if (chosen == null || chosen.Value.Assemblies.Count == 0) return Result.Cancelled;
                 assemblies = chosen.Value.Assemblies;
                 dimType = chosen.Value.DimType;
@@ -677,7 +677,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             else
             {
                 dimType = AvesUI.ShowDimensionTypePicker(
-                    doc, "Vendor Dimension — Overall H×W×D", "Vendor");
+                    doc, "Auto-Dimension Vendor H×W×D", "Vendor");
                 if (dimType == null) return Result.Cancelled;
             }
 
@@ -758,13 +758,13 @@ namespace AVES.Cmds_PullDownAutoDimension
                     message = $"Transaction failed: {ex.Message}";
                     summary.AppendLine($"Transaction failed: {ex.Message}");
                     AvesUI.ShowLogWindow(summary.ToString(), error: true,
-                        title: "Vendor Dimension — Overall H×W×D");
+                        title: "Auto-Dimension Vendor H×W×D");
                     return Result.Failed;
                 }
             }
 
             AvesUI.ShowLogWindow(summary.ToString(), error: anyError,
-                title: "Vendor Dimension — Overall H×W×D");
+                title: "Auto-Dimension Vendor H×W×D");
             return anyError ? Result.Failed : Result.Succeeded;
         }
 
