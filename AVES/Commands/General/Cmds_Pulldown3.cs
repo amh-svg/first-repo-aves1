@@ -1025,75 +1025,24 @@ namespace AVES.Cmds_PullDownAutoDimension
     internal static class AvesUI
     {
         // ── Widgets ───────────────────────────────────────────────────────────
-        public static Border StatTile(string value, string label, string accent = "")
-        {
-            string vc = accent switch { "ok" => AvTokens.OkFg, "fail" => AvTokens.FailFg, "accent" => AvTokens.Accent, _ => AvTokens.Text };
-            var val = new TextBlock { Text = value, FontFamily = AvTokens.Mono, FontSize = 22, FontWeight = FontWeights.Bold, Foreground = AvTokens.B(vc), Margin = new Thickness(0, 0, 0, 3), TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = value };
-            var cap = new TextBlock { Text = label, FontFamily = AvTokens.Ui, FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = AvTokens.B(AvTokens.TextFaint) };
-            var stack = new StackPanel(); stack.Children.Add(val); stack.Children.Add(cap);
-            return new Border { Background = AvTokens.B(AvTokens.Surface), BorderBrush = AvTokens.B(AvTokens.Border), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(5), Padding = new Thickness(14, 12, 14, 12), Child = stack };
-        }
+        // StatTile and buttons routed to AvControls (Family B); geometry was
+        // already Family-B-shaped here except padding, which Core's factories
+        // fix automatically. Kept as thin same-name wrappers (rather than
+        // updating every call site to an AvControls.-qualified call) since
+        // several callers are nested Window classes that reach these via
+        // unqualified enclosing-type lookup. StatusPill keeps its
+        // labelOverride wrapper to preserve this file's "fail"->"Error"
+        // wording (reconciliation decision: unify styling, keep existing
+        // per-file wording).
+        public static Border StatusPill(string kind) =>
+            AvControls.StatusPill(kind, kind == "fail" ? "Error" : null);
 
-        public static Border StatusPill(string kind)
-        {
-            var (bg, fg, label) = kind switch
-            {
-                "ok" => (AvTokens.OkBg, AvTokens.OkFg, "Done"),
-                "fail" => (AvTokens.FailBg, AvTokens.FailFg, "Error"),
-                "skip" => (AvTokens.SkipBg, AvTokens.SkipFg, "Skipped"),
-                "warn" => (AvTokens.WarnBg, AvTokens.WarnFg, "Warning"),
-                _ => ("#E7EFFB", "#2E66A8", "Info"),
-            };
-            var dot = new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Fill = AvTokens.B(fg), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
-            var txt = new TextBlock { Text = label, Foreground = AvTokens.B(fg), FontFamily = AvTokens.Ui, FontSize = 11.5, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center };
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(dot); row.Children.Add(txt);
-            return new Border { Background = AvTokens.B(bg), CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 5, 10, 5), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Child = row };
-        }
+        public static Border StatTile(string value, string label, string accent = "") =>
+            AvControls.StatTile(value, label, accent);
 
-        // ── Buttons ───────────────────────────────────────────────────────────
-        public static Button PrimaryButton(string text) => Btn(text, AvTokens.Accent, AvTokens.AccentDeep, null, 0, "#FFFFFF");
-        public static Button SecondaryButton(string text) => Btn(text, AvTokens.Surface, AvTokens.Surface2, AvTokens.BorderStrong, 1, AvTokens.Text);
-        public static Button GhostButton(string text) => Btn(text, null, AvTokens.Surface2, null, 0, AvTokens.TextDim);
-
-        private static Button Btn(string text, string? bg, string hoverBg,
-                                  string? borderHex, double borderPx, string fg)
-        {
-            var btn = new Button
-            {
-                Content = text,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.B(fg),
-                Background = bg != null ? AvTokens.B(bg) : Brushes.Transparent,
-                Padding = new Thickness(16, 9, 16, 9),
-                Cursor = System.Windows.Input.Cursors.Hand,
-            };
-            var tpl = new ControlTemplate(typeof(Button));
-            var bd = new FrameworkElementFactory(typeof(System.Windows.Controls.Border));
-            bd.Name = "bd";
-            bd.SetValue(System.Windows.Controls.Border.CornerRadiusProperty, new CornerRadius(5));
-            bd.SetValue(System.Windows.Controls.Border.BackgroundProperty, bg != null ? (object)AvTokens.B(bg) : Brushes.Transparent);
-            if (borderHex != null)
-            {
-                bd.SetValue(System.Windows.Controls.Border.BorderBrushProperty, AvTokens.B(borderHex));
-                bd.SetValue(System.Windows.Controls.Border.BorderThicknessProperty, new Thickness(borderPx));
-            }
-            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
-            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-            cp.SetBinding(ContentPresenter.MarginProperty,
-                new System.Windows.Data.Binding("Padding")
-                { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
-            bd.AppendChild(cp);
-            tpl.VisualTree = bd;
-            var trigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            trigger.Setters.Add(new Setter(System.Windows.Controls.Border.BackgroundProperty, AvTokens.B(hoverBg), "bd"));
-            tpl.Triggers.Add(trigger);
-            btn.Template = tpl;
-            return btn;
-        }
+        public static Button PrimaryButton(string text) => AvControls.PrimaryButton(text);
+        public static Button SecondaryButton(string text) => AvControls.SecondaryButton(text);
+        public static Button GhostButton(string text) => AvControls.GhostButton(text);
 
         // ── Dimension Type Memory ────────────────────────────────────────────
         //  Remembers the last linear dimension type picked, per button
