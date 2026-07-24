@@ -451,99 +451,36 @@ namespace AVES.Cmds_Button6
         /// <summary>
         /// Coloured pill badge — replaces old emoji status glyphs.
         /// kind: "Renamed" | "Skipped" | "Error" | "Already Correct"
+        /// Maps this file's own status domain onto AvControls.StatusPill's
+        /// ok/skip/fail/info kinds for geometry, using labelOverride to keep
+        /// this file's exact existing label text (reconciliation decision:
+        /// unify styling, keep existing per-file wording). Visual change:
+        /// the pill's geometry (dot size/margin, padding) now matches Core
+        /// exactly, and the extra outer Margin(12,0,12,0) this file used to
+        /// add is gone (Core doesn't set one).
         /// </summary>
         private static System.Windows.Controls.Border StatusPill(string? kind)
         {
-            var (bg, fg, label) = kind switch
+            var (coreKind, label) = kind switch
             {
-                "Renamed" => (AvTokens.OkBg, AvTokens.OkFg, "Renamed"),
-                "Skipped" => (AvTokens.SkipBg, AvTokens.SkipFg, "Skipped"),
-                "Error" => (AvTokens.FailBg, AvTokens.FailFg, "Failed"),
-                "Already Correct" => (AvTokens.InfoBg, AvTokens.InfoFg, "No change"),
-                _ => (AvTokens.InfoBg, AvTokens.InfoFg, kind)
+                "Renamed" => ("ok", "Renamed"),
+                "Skipped" => ("skip", "Skipped"),
+                "Error" => ("fail", "Failed"),
+                "Already Correct" => ("info", "No change"),
+                _ => ("info", kind ?? "")
             };
-
-            var dot = new System.Windows.Shapes.Ellipse
-            {
-                Width = 7,
-                Height = 7,
-                Fill = AvTokens.Brush(fg),
-                VerticalAlignment = System.Windows.VerticalAlignment.Center,
-                Margin = new System.Windows.Thickness(0, 0, 5, 0)
-            };
-            var text = new System.Windows.Controls.TextBlock
-            {
-                Text = label,
-                Foreground = AvTokens.Brush(fg),
-                FontFamily = AvTokens.Ui,
-                FontSize = 11.5,
-                FontWeight = System.Windows.FontWeights.SemiBold,
-                VerticalAlignment = System.Windows.VerticalAlignment.Center
-            };
-            var row = new System.Windows.Controls.StackPanel
-            { Orientation = System.Windows.Controls.Orientation.Horizontal };
-            row.Children.Add(dot);
-            row.Children.Add(text);
-
-            return new System.Windows.Controls.Border
-            {
-                Background = AvTokens.Brush(bg),
-                CornerRadius = new System.Windows.CornerRadius(6),
-                Padding = new System.Windows.Thickness(8, 4, 10, 4),
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-                Margin = new System.Windows.Thickness(12, 0, 12, 0),
-                VerticalAlignment = System.Windows.VerticalAlignment.Center,
-                Child = row
-            };
+            return AvControls.StatusPill(coreKind, label);
         }
 
         /// <summary>
         /// Summary stat tile — large mono number + faint label below.
         /// accentKind: "" | "ok" | "fail" | "warn" | "accent"
+        /// Routed to AvControls.StatTile. Visual change: value margin-bottom
+        /// 3 -> 4, adds TextTrimming/ToolTip on the value, and the extra
+        /// outer Margin(0,0,10,0) this file used to add is gone.
         /// </summary>
-        private static System.Windows.Controls.Border StatTile(string value, string label, string accentKind = "")
-        {
-            string valColor = accentKind switch
-            {
-                "ok" => AvTokens.OkFg,
-                "fail" => AvTokens.FailFg,
-                "warn" => AvTokens.WarnFg,
-                "accent" => AvTokens.Accent,
-                _ => AvTokens.Text
-            };
-
-            var numBlock = new System.Windows.Controls.TextBlock
-            {
-                Text = value,
-                FontFamily = AvTokens.Mono,
-                FontSize = 22,
-                FontWeight = System.Windows.FontWeights.Bold,
-                Foreground = AvTokens.Brush(valColor),
-                Margin = new System.Windows.Thickness(0, 0, 0, 3)
-            };
-            var labelBlock = new System.Windows.Controls.TextBlock
-            {
-                Text = label,
-                FontFamily = AvTokens.Ui,
-                FontSize = 11,
-                FontWeight = System.Windows.FontWeights.SemiBold,
-                Foreground = AvTokens.Brush(AvTokens.TextFaint)
-            };
-            var stack = new System.Windows.Controls.StackPanel();
-            stack.Children.Add(numBlock);
-            stack.Children.Add(labelBlock);
-
-            return new System.Windows.Controls.Border
-            {
-                Background = AvTokens.Brush(AvTokens.Surface),
-                BorderBrush = AvTokens.Brush(AvTokens.Border),
-                BorderThickness = new(1),
-                CornerRadius = new(5),
-                Padding = new(14, 12, 14, 12),
-                Margin = new(0, 0, 10, 0),
-                Child = stack
-            };
-        }
+        private static System.Windows.Controls.Border StatTile(string value, string label, string accentKind = "") =>
+            AvControls.StatTile(value, label, accentKind);
 
         /// <summary>
         /// Ø glænd / Hilti logo embedded as a Base64 PNG.
@@ -629,12 +566,23 @@ namespace AVES.Cmds_Button6
             };
             var statPanel = new System.Windows.Controls.StackPanel
             { Orientation = System.Windows.Controls.Orientation.Horizontal };
-            statPanel.Children.Add(StatTile(selected.ToString(), "Selected", ""));
-            statPanel.Children.Add(StatTile(renamed.ToString(), "Renamed", "ok"));
-            statPanel.Children.Add(StatTile(alreadyOk.ToString(), "Already correct", ""));
-            statPanel.Children.Add(StatTile(skipped.ToString(), "Skipped", ""));
-            statPanel.Children.Add(StatTile(errorCount.ToString(), "Errors",
-                errorCount > 0 ? "fail" : ""));
+            var statTiles = new[]
+            {
+                StatTile(selected.ToString(), "Selected", ""),
+                StatTile(renamed.ToString(), "Renamed", "ok"),
+                StatTile(alreadyOk.ToString(), "Already correct", ""),
+                StatTile(skipped.ToString(), "Skipped", ""),
+                StatTile(errorCount.ToString(), "Errors", errorCount > 0 ? "fail" : "")
+            };
+            // AvControls.StatTile has no built-in margin (unlike this file's old
+            // local copy, which added a trailing 10px margin on every tile) --
+            // spacing between tiles now added explicitly here instead, matching
+            // the convention already used by Cmds_Button10.cs/Cmds_Button11.cs.
+            for (int i = 0; i < statTiles.Length; i++)
+            {
+                if (i > 0) statTiles[i].Margin = new System.Windows.Thickness(10, 0, 0, 0);
+                statPanel.Children.Add(statTiles[i]);
+            }
             statBorder.Child = statPanel;
             System.Windows.Controls.Grid.SetRow(statBorder, 1);
             root.Children.Add(statBorder);
@@ -897,112 +845,24 @@ namespace AVES.Cmds_Button6
 
         #region ── Small UI helpers ──────────────────────────────────────────
 
-        /// <summary>Accent-fill primary button with hover state.</summary>
-        private static System.Windows.Controls.Button MakePrimaryButton(string label)
-        {
-            var btn = new System.Windows.Controls.Button
-            {
-                Content = label,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = System.Windows.FontWeights.SemiBold,
-                Foreground = System.Windows.Media.Brushes.White,
-                Background = AvTokens.Brush(AvTokens.Accent),
-                Padding = new System.Windows.Thickness(20, 8, 20, 8),
-                Cursor = System.Windows.Input.Cursors.Hand,
-                MinWidth = 80
-            };
+        /// <summary>
+        /// Accent-fill primary button. Routed to AvControls.PrimaryButton
+        /// (Family B -- caller wires Click externally, matching this file's
+        /// existing calling convention exactly). Visual change: padding
+        /// (20,8,20,8) -> Core's uniform (16,9,16,9), and MinWidth=80 is
+        /// gone (Core sets none).
+        /// </summary>
+        private static System.Windows.Controls.Button MakePrimaryButton(string label) =>
+            AvControls.PrimaryButton(label);
 
-            // Rounded corners + hover via a ControlTemplate
-            var tpl = new System.Windows.Controls.ControlTemplate(typeof(System.Windows.Controls.Button));
-            var bd = new System.Windows.FrameworkElementFactory(typeof(System.Windows.Controls.Border));
-            bd.Name = "bd";
-            bd.SetValue(System.Windows.Controls.Border.CornerRadiusProperty, new System.Windows.CornerRadius(5));
-            bd.SetBinding(System.Windows.Controls.Border.BackgroundProperty,
-                new System.Windows.Data.Binding("Background")
-                {
-                    RelativeSource = new System.Windows.Data.RelativeSource(
-                        System.Windows.Data.RelativeSourceMode.TemplatedParent)
-                });
-            var cp = new System.Windows.FrameworkElementFactory(typeof(System.Windows.Controls.ContentPresenter));
-            cp.SetValue(System.Windows.Controls.ContentPresenter.HorizontalAlignmentProperty,
-                System.Windows.HorizontalAlignment.Center);
-            cp.SetValue(System.Windows.Controls.ContentPresenter.VerticalAlignmentProperty,
-                System.Windows.VerticalAlignment.Center);
-            cp.SetBinding(System.Windows.Controls.ContentPresenter.MarginProperty,
-                new System.Windows.Data.Binding("Padding")
-                {
-                    RelativeSource = new System.Windows.Data.RelativeSource(
-                        System.Windows.Data.RelativeSourceMode.TemplatedParent)
-                });
-            bd.AppendChild(cp);
-            tpl.VisualTree = bd;
-
-            tpl.Triggers.Add(new System.Windows.Trigger
-            {
-                Property = System.Windows.Controls.Control.IsMouseOverProperty,
-                Value = true,
-                Setters = { new System.Windows.Setter(
-                    System.Windows.Controls.Border.BackgroundProperty, AvTokens.Brush(AvTokens.AccentDeep), "bd") }
-            });
-
-            btn.Template = tpl;
-            return btn;
-        }
-
-        /// <summary>White-fill secondary button (1 px BorderStrong border) with hover state.</summary>
-        private static System.Windows.Controls.Button MakeSecondaryButton(string label)
-        {
-            var btn = new System.Windows.Controls.Button
-            {
-                Content = label,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = System.Windows.FontWeights.SemiBold,
-                Foreground = AvTokens.Brush(AvTokens.Text),
-                Background = AvTokens.Brush(AvTokens.Surface),
-                Padding = new System.Windows.Thickness(16, 8, 16, 8),
-                Cursor = System.Windows.Input.Cursors.Hand,
-                MinWidth = 80
-            };
-
-            var tpl = new System.Windows.Controls.ControlTemplate(typeof(System.Windows.Controls.Button));
-            var bd = new System.Windows.FrameworkElementFactory(typeof(System.Windows.Controls.Border));
-            bd.Name = "bd";
-            bd.SetValue(System.Windows.Controls.Border.CornerRadiusProperty, new System.Windows.CornerRadius(5));
-            bd.SetValue(System.Windows.Controls.Border.BorderBrushProperty, AvTokens.Brush(AvTokens.BorderStrong));
-            bd.SetValue(System.Windows.Controls.Border.BorderThicknessProperty, new System.Windows.Thickness(1));
-            bd.SetBinding(System.Windows.Controls.Border.BackgroundProperty,
-                new System.Windows.Data.Binding("Background")
-                {
-                    RelativeSource = new System.Windows.Data.RelativeSource(
-                        System.Windows.Data.RelativeSourceMode.TemplatedParent)
-                });
-            var cp = new System.Windows.FrameworkElementFactory(typeof(System.Windows.Controls.ContentPresenter));
-            cp.SetValue(System.Windows.Controls.ContentPresenter.HorizontalAlignmentProperty,
-                System.Windows.HorizontalAlignment.Center);
-            cp.SetValue(System.Windows.Controls.ContentPresenter.VerticalAlignmentProperty,
-                System.Windows.VerticalAlignment.Center);
-            cp.SetBinding(System.Windows.Controls.ContentPresenter.MarginProperty,
-                new System.Windows.Data.Binding("Padding")
-                {
-                    RelativeSource = new System.Windows.Data.RelativeSource(
-                        System.Windows.Data.RelativeSourceMode.TemplatedParent)
-                });
-            bd.AppendChild(cp);
-            tpl.VisualTree = bd;
-
-            tpl.Triggers.Add(new System.Windows.Trigger
-            {
-                Property = System.Windows.Controls.Control.IsMouseOverProperty,
-                Value = true,
-                Setters = { new System.Windows.Setter(
-                    System.Windows.Controls.Border.BackgroundProperty, AvTokens.Brush(AvTokens.Surface2), "bd") }
-            });
-
-            btn.Template = tpl;
-            return btn;
-        }
+        /// <summary>
+        /// White-fill secondary button (1px BorderStrong border). Routed to
+        /// AvControls.SecondaryButton (Family B). Visual change: padding
+        /// (16,8,16,8) -> Core's uniform (16,9,16,9), and MinWidth=80 is
+        /// gone (Core sets none).
+        /// </summary>
+        private static System.Windows.Controls.Button MakeSecondaryButton(string label) =>
+            AvControls.SecondaryButton(label);
 
         /// <summary>
         /// Walks the visual tree to find the first child of type T.
