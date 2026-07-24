@@ -777,5 +777,117 @@ namespace AVES.Core
 
             return (rowBorder, box);
         }
+
+        // ====================================================================
+        //  Alert window
+        // ====================================================================
+
+        /// <summary>
+        /// Shows a modal alert with an icon badge whose glyph/color reflects
+        /// severity. Modeled on Cmds_Button6.cs's ShowWpfAlert.
+        /// </summary>
+        public static void ShowAlert(string title, string message, AlertSeverity severity)
+            => new AlertWindow(title, message, severity).ShowDialog();
+    }
+
+    // ========================================================================
+    //  Alert severity + window
+    // ========================================================================
+
+    public enum AlertSeverity { Error, Warning, Info, Success }
+
+    /// <summary>
+    /// Modal icon-badge alert window. Same shape as Cmds_Button6.cs's
+    /// ShowWpfAlert (36x36 tinted circle + glyph, wrapped message, single OK
+    /// button in a bordered footer) but with the icon badge's background/
+    /// foreground/glyph driven by AlertSeverity, reusing AvTokens'
+    /// fail/warn/info/ok token pairs rather than new colors.
+    /// </summary>
+    internal sealed class AlertWindow : Window
+    {
+        public AlertWindow(string title, string message, AlertSeverity severity)
+        {
+            var (bg, fg, glyph) = severity switch
+            {
+                AlertSeverity.Error => (AvTokens.FailBg, AvTokens.FailFg, "✕"),
+                AlertSeverity.Warning => (AvTokens.WarnBg, AvTokens.WarnFg, "!"),
+                AlertSeverity.Info => (AvTokens.InfoBg, AvTokens.InfoFg, "i"),
+                AlertSeverity.Success => (AvTokens.OkBg, AvTokens.OkFg, "✓"),
+                _ => (AvTokens.InfoBg, AvTokens.InfoFg, "i")
+            };
+
+            // Icon area (tinted circle with severity glyph)
+            var icon = new Border
+            {
+                Width = 36,
+                Height = 36,
+                Background = AvTokens.B(bg),
+                CornerRadius = new CornerRadius(18),
+                Margin = new Thickness(0, 0, 14, 0),
+                VerticalAlignment = VerticalAlignment.Top,
+                Child = new TextBlock
+                {
+                    Text = glyph,
+                    FontFamily = AvTokens.Ui,
+                    FontSize = 17,
+                    FontWeight = FontWeights.Bold,
+                    Foreground = AvTokens.B(fg),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center
+                }
+            };
+
+            // Message text
+            var msg = new TextBlock
+            {
+                Text = message,
+                FontFamily = AvTokens.Ui,
+                FontSize = 13,
+                Foreground = AvTokens.B(AvTokens.Text),
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = 20,
+                VerticalAlignment = VerticalAlignment.Top
+            };
+
+            var contentRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(20, 20, 20, 0)
+            };
+            contentRow.Children.Add(icon);
+            contentRow.Children.Add(msg);
+
+            // Footer
+            var okBtn = AvControls.PrimaryBtn("OK", () => Close());
+            var footerInner = new DockPanel { LastChildFill = false };
+            DockPanel.SetDock(okBtn, Dock.Right);
+            footerInner.Children.Add(okBtn);
+            var footer = new Border
+            {
+                Background = AvTokens.B(AvTokens.Surface2),
+                BorderBrush = AvTokens.B(AvTokens.Border),
+                BorderThickness = new Thickness(0, 1, 0, 0),
+                Padding = new Thickness(20, 12, 20, 12),
+                Margin = new Thickness(0, 16, 0, 0),
+                Child = footerInner
+            };
+
+            var root = new StackPanel();
+            root.Children.Add(contentRow);
+            root.Children.Add(footer);
+
+            Title = title;
+            Width = 420;
+            Height = 200;
+            MinHeight = 180;
+            SizeToContent = SizeToContent.Height;
+            WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            ResizeMode = ResizeMode.NoResize;
+            Background = AvTokens.B(AvTokens.Surface);
+            FontFamily = AvTokens.Ui;
+            UseLayoutRounding = true;
+            ShowInTaskbar = false;
+            Content = root;
+        }
     }
 }
