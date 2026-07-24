@@ -661,42 +661,15 @@ namespace AVES.Cmds_Button9
             return strip;
         }
 
-        private static Border BuildStatTile(string value, string label, string accentKind)
-        {
-            string valColor = accentKind switch
-            {
-                "ok" => AvTokens.OkFg,
-                "fail" => AvTokens.FailFg,
-                "accent" => AvTokens.Accent,
-                _ => AvTokens.Text,
-            };
-            var stack = new StackPanel();
-            stack.Children.Add(new TextBlock
-            {
-                Text = value,
-                FontFamily = AvTokens.Mono,
-                FontSize = 22,
-                FontWeight = FontWeights.Bold,
-                Foreground = AvTokens.Br(valColor),
-                Margin = new Thickness(0, 0, 0, 3),
-            });
-            stack.Children.Add(new TextBlock
-            {
-                Text = label,
-                FontSize = 10.5,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.Br(AvTokens.TextFaint),
-            });
-            return new Border
-            {
-                Background = AvTokens.Br(AvTokens.Surface),
-                BorderBrush = AvTokens.Br(AvTokens.Border),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(5),
-                Padding = new Thickness(14, 12, 14, 12),
-                Child = stack,
-            };
-        }
+        // Routed to AvControls.StatTile. Visual change: no "warn" case was
+        // ever unreachable here (this file's switch never had one; Core's
+        // does, and now covers it too), label FontSize 10.5 -> 11, value
+        // margin-bottom 3 -> 4, adds TextTrimming/ToolTip. No spacing impact:
+        // this file already adds inter-tile spacing explicitly at the call
+        // site (see the loop right after the 3 BuildStatTile calls below),
+        // not via the tile's own margin.
+        private static Border BuildStatTile(string value, string label, string accentKind) =>
+            AvControls.StatTile(value, label, accentKind);
 
         private static UIElement BuildConfigRow(string key, string val)
         {
@@ -970,10 +943,10 @@ namespace AVES.Cmds_Button9
             row.Children.Add(caption);
 
             var btnRow = new StackPanel { Orientation = Orientation.Horizontal };
-            _copyButton = BuildButton("⧉  Copy to clipboard", ButtonKind.Secondary, OnCopy);
+            _copyButton = AvControls.SecondaryBtn("⧉  Copy to clipboard", OnCopy);
             _copyButton.Margin = new Thickness(0, 0, 10, 0);   // gap between the two buttons
             btnRow.Children.Add(_copyButton);
-            btnRow.Children.Add(BuildButton("Close", ButtonKind.Primary, (_, _) => Close()));
+            btnRow.Children.Add(AvControls.PrimaryBtn("Close", () => Close()));
             WGrid.SetColumn(btnRow, 1);
             row.Children.Add(btnRow);
 
@@ -982,58 +955,9 @@ namespace AVES.Cmds_Button9
         }
 
         // ----------------------------------------------------------------
-        //  Button factory
-        // ----------------------------------------------------------------
-        private enum ButtonKind { Primary, Secondary, Ghost }
-
-        private static Button BuildButton(string label, ButtonKind kind, RoutedEventHandler handler)
-        {
-            (string bg, string fg, string border) = kind switch
-            {
-                ButtonKind.Primary => (AvTokens.Accent, "#FFFFFF", AvTokens.Accent),
-                ButtonKind.Secondary => (AvTokens.Surface, AvTokens.Text, AvTokens.BorderStrong),
-                _ => ("Transparent", AvTokens.TextDim, "Transparent"),
-            };
-            string hoverBg = kind == ButtonKind.Primary ? AvTokens.AccentDeep : AvTokens.Surface2;
-
-            var btn = new Button
-            {
-                Content = label,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.Br(fg),
-                Background = AvTokens.Br(bg),
-                Cursor = System.Windows.Input.Cursors.Hand,
-            };
-
-            var ct = new ControlTemplate(typeof(Button));
-            var bdF = new FrameworkElementFactory(typeof(Border));
-            bdF.Name = "bd";
-            bdF.SetValue(Border.CornerRadiusProperty, new CornerRadius(5));
-            bdF.SetValue(Border.BackgroundProperty, AvTokens.Br(bg));
-            bdF.SetValue(Border.BorderBrushProperty, AvTokens.Br(border));
-            bdF.SetValue(Border.BorderThicknessProperty, new Thickness(1));
-            var cpF = new FrameworkElementFactory(typeof(ContentPresenter));
-            cpF.SetValue(ContentPresenter.MarginProperty, new Thickness(16, 9, 16, 9));
-            cpF.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-            cpF.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-            bdF.AppendChild(cpF);
-            ct.VisualTree = bdF;
-
-            var hover = new Trigger { Property = Button.IsMouseOverProperty, Value = true };
-            hover.Setters.Add(new Setter(Border.BackgroundProperty, AvTokens.Br(hoverBg), "bd"));
-            ct.Triggers.Add(hover);
-
-            btn.Template = ct;
-            btn.Click += handler;
-            return btn;
-        }
-
-        // ----------------------------------------------------------------
         //  Copy to clipboard — TSV + 2-second "Copied!" revert
         // ----------------------------------------------------------------
-        private void OnCopy(object sender, RoutedEventArgs e)
+        private void OnCopy()
         {
             var sb = new StringBuilder();
             sb.AppendLine("Item Number\tFamily Name\tCategory\tNo. of Types\tExport Status\tFile Path / Error");
@@ -1079,59 +1003,22 @@ namespace AVES.Cmds_Button9
     /// <summary>
     /// Converts a status-kind string ("ok" | "fail" | "skip" | "warn")
     /// into a styled pill <see cref="Border"/> for use in a DataTemplate.
-    /// Mirrors the AvesUi.StatusPill factory from the design handoff.
+    /// The IValueConverter wrapper stays -- structurally required, since
+    /// this is consumed via a Binding.Converter inside a code-behind
+    /// DataTemplate (BuildPillTemplate), which a static factory method
+    /// can't be bound to. Its body now delegates to AvControls.StatusPill
+    /// for geometry, keeping only the "ok" case's existing "Exported"
+    /// wording via labelOverride (reconciliation decision: unify styling,
+    /// keep existing per-file wording; architecture stays, only the visual
+    /// construction routes to Core).
     /// </summary>
     internal sealed class StatusPillConverter : System.Windows.Data.IValueConverter
     {
-        private static readonly FontFamily UiFont = new FontFamily("Segoe UI");
-
         public object Convert(object value, Type targetType, object parameter,
                               System.Globalization.CultureInfo culture)
         {
             string kind = value as string ?? "info";
-
-            (string bg, string fg, string label) = kind switch
-            {
-                "ok" => ("#E4F3EA", "#2C7A52", "Exported"),
-                "fail" => ("#FBE3DE", "#C0381F", "Failed"),
-                "skip" => ("#EDEFF2", "#5B6573", "Skipped"),
-                "warn" => ("#FAF0DA", "#9A6B12", "Warning"),
-                _ => ("#E7EFFB", "#2E66A8", "Info"),
-            };
-
-            static SolidColorBrush Br(string h) =>
-                new SolidColorBrush((WColor)ColorConverter.ConvertFromString(h));
-
-            var dot = new WEllipse
-            {
-                Width = 7,
-                Height = 7,
-                Fill = Br(fg),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 6, 0),
-            };
-            var txt = new TextBlock
-            {
-                Text = label,
-                Foreground = Br(fg),
-                FontFamily = UiFont,
-                FontSize = 11.5,
-                FontWeight = FontWeights.SemiBold,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(dot);
-            row.Children.Add(txt);
-
-            return new Border
-            {
-                Background = Br(bg),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(8, 5, 10, 5),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = row,
-            };
+            return AvControls.StatusPill(kind, kind == "ok" ? "Exported" : null);
         }
 
         public object ConvertBack(object value, Type targetType, object parameter,
