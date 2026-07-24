@@ -1565,8 +1565,8 @@ namespace AVES.Cmds_PullDown
 
             if (sharedParamFile == null)
             {
-                TaskDialog.Show("Error",
-                    $"Could not open the shared parameter file.\n\nPath: {sharedParamPath}");
+                AvControls.ShowAlert("Error",
+                    $"Could not open the shared parameter file.\n\nPath: {sharedParamPath}", AlertSeverity.Error);
                 return Result.Cancelled;
             }
 
@@ -1578,7 +1578,7 @@ namespace AVES.Cmds_PullDown
 
             if (sortedGroupNames.Count == 0)
             {
-                TaskDialog.Show("Error", "The shared parameter file contains no groups.");
+                AvControls.ShowAlert("Error", "The shared parameter file contains no groups.", AlertSeverity.Error);
                 return Result.Cancelled;
             }
 
@@ -1599,7 +1599,7 @@ namespace AVES.Cmds_PullDown
                 var win = new SharedParamSettingsWindow(settings, sortedGroupNames, groupsByName);
                 if (win.ShowDialog() != true) return Result.Cancelled;
                 if (settings.SelectedParams.Count > 0) break;
-                TaskDialog.Show("Validation", "You must select at least one parameter before running.");
+                AvControls.ShowAlert("Validation", "You must select at least one parameter before running.", AlertSeverity.Warning);
             }
 
             ForgeTypeId targetGroup = ResolveGroupForgeTypeId(settings.RevitGroupName);
@@ -1611,8 +1611,8 @@ namespace AVES.Cmds_PullDown
             var familiesToProcess = FamilyResolver.Resolve(settings.Mode, uiDoc, doc);
             if (familiesToProcess.Count == 0)
             {
-                TaskDialog.Show("No Families Found",
-                    $"No families matched the selected mode / category:\n\"{settings.Mode}\"");
+                AvControls.ShowAlert("No Families Found",
+                    $"No families matched the selected mode / category:\n\"{settings.Mode}\"", AlertSeverity.Warning);
                 return Result.Cancelled;
             }
 
@@ -1996,9 +1996,9 @@ namespace AVES.Cmds_PullDown
                     string picked = SharedParamFileManager.PromptForFile(this);
                     if (picked == null) return;
                     SharedParamFileManager.SavePath(picked);
-                    TaskDialog.Show("Shared Parameter File Updated",
+                    AvControls.ShowAlert("Shared Parameter File Updated",
                         $"New file saved:\n{picked}\n\n" +
-                        "This will be used the next time you run this command.");
+                        "This will be used the next time you run this command.", AlertSeverity.Success);
                 };
                 var changeFileBorder = new WpfBorder
                 {
@@ -2104,14 +2104,14 @@ namespace AVES.Cmds_PullDown
                 var win = new RemoveSettingsWindow(settings, uiDoc, doc);
                 if (win.ShowDialog() != true) return Result.Cancelled;
                 if (settings.SelectedParams.Count > 0) break;
-                TaskDialog.Show("Validation", "You must select at least one parameter before running.");
+                AvControls.ShowAlert("Validation", "You must select at least one parameter before running.", AlertSeverity.Warning);
             }
 
             var familiesToProcess = FamilyResolver.Resolve(settings.Mode, uiDoc, doc);
             if (familiesToProcess.Count == 0)
             {
-                TaskDialog.Show("No Families Found",
-                    $"No families matched the selected mode / category:\n\"{settings.Mode}\"");
+                AvControls.ShowAlert("No Families Found",
+                    $"No families matched the selected mode / category:\n\"{settings.Mode}\"", AlertSeverity.Warning);
                 return Result.Cancelled;
             }
 
@@ -2387,8 +2387,8 @@ namespace AVES.Cmds_PullDown
                 var families = FamilyResolver.Resolve(_settings.Mode, _uiDoc, _doc);
                 if (families.Count == 0)
                 {
-                    TaskDialog.Show("No Families",
-                        "No families found to scan for the current mode / category.");
+                    AvControls.ShowAlert("No Families",
+                        "No families found to scan for the current mode / category.", AlertSeverity.Warning);
                     return;
                 }
 
@@ -2424,8 +2424,8 @@ namespace AVES.Cmds_PullDown
 
                 if (foundNames.Count == 0)
                 {
-                    TaskDialog.Show("No Parameters",
-                        "No user-defined parameters were found in the scanned families.");
+                    AvControls.ShowAlert("No Parameters",
+                        "No user-defined parameters were found in the scanned families.", AlertSeverity.Warning);
                     return;
                 }
 
@@ -2492,29 +2492,29 @@ namespace AVES.Cmds_PullDown
                 string hint = ex.Message.ToLower().Contains("encoding") ||
                               ex is System.Text.DecoderFallbackException
                     ? "\n\nTip: Re-export from Excel as 'CSV UTF-8 (Comma delimited)'." : string.Empty;
-                TaskDialog.Show("CSV Error", $"Error reading CSV:\n{ex.Message}{hint}");
+                AvControls.ShowAlert("CSV Error", $"Error reading CSV:\n{ex.Message}{hint}", AlertSeverity.Error);
                 return Result.Cancelled;
             }
 
             if (dataMap.Count == 0)
             {
-                TaskDialog.Show("CSV Error",
-                    "The CSV file is empty or does not contain an 'Item Number' column.");
+                AvControls.ShowAlert("CSV Error",
+                    "The CSV file is empty or does not contain an 'Item Number' column.", AlertSeverity.Error);
                 return Result.Cancelled;
             }
 
             var selectionIds = uiDoc.Selection.GetElementIds();
             if (selectionIds.Count == 0)
             {
-                TaskDialog.Show("No Selection",
-                    "Select one or more elements in the model before running this command.");
+                AvControls.ShowAlert("No Selection",
+                    "Select one or more elements in the model before running this command.", AlertSeverity.Warning);
                 return Result.Cancelled;
             }
 
             var materialCache = BuildMaterialCache(doc);
             Material defaultMaterial;
             try { defaultMaterial = GetDefaultMaterial(materialCache); }
-            catch (Exception ex) { TaskDialog.Show("Error", ex.Message); return Result.Cancelled; }
+            catch (Exception ex) { AvControls.ShowAlert("Error", ex.Message, AlertSeverity.Error); return Result.Cancelled; }
 
             var parameterLog = new List<CsvParamLogEntry>();
             var foundItemNumbers = new HashSet<string>();
@@ -2583,7 +2583,7 @@ namespace AVES.Cmds_PullDown
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Transaction Error", $"An error occurred during processing:\n{ex.Message}");
+                AvControls.ShowAlert("Transaction Error", $"An error occurred during processing:\n{ex.Message}", AlertSeverity.Error);
                 return Result.Cancelled;
             }
 
@@ -2915,12 +2915,12 @@ namespace AVES.Cmds_PullDown
                 catch (Exception ex)
                 {
                     tx.RollBack();
-                    TaskDialog.Show("Family Name Warning",
+                    AvControls.ShowAlert("Family Name Warning",
                         $"Parameter changes were applied successfully, but the family name\n" +
                         $"could not be restored to \"{originalName}\" after reload.\n\n" +
                         $"Current name: \"{reloadedFamily.Name}\"\n\n" +
                         $"Reason: {ex.Message}\n\n" +
-                        $"Please rename the family manually in the Project Browser.");
+                        $"Please rename the family manually in the Project Browser.", AlertSeverity.Warning);
                 }
             }
         }
