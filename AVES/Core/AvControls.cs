@@ -284,13 +284,13 @@ namespace AVES.Core
         /// <summary>
         /// Colored dot + label pill. kind: "ok" | "skip" | "fail" | "warn" | (default = info).
         /// Uses the majority label text (Av/T): Done / Skipped / Failed / Warning / Info.
-        /// NOTE: AvesUiHelper's (PullDown2) copy said "Completed with errors" for warn,
-        /// and AvesUI's (Pulldown3) copy said "Error" for fail -- both real text
-        /// differences, not reproduced here. Flagged in the migration summary for a
-        /// separate decision on whether to standardize wording when those two files
-        /// migrate, rather than silently resolved now.
+        /// labelOverride, when non-null, replaces the default label text while keeping
+        /// kind's color mapping -- lets callers keep their own existing wording (e.g.
+        /// "Cache mismatch", "Completed with errors", "Warn", "Error") while still
+        /// picking up this shared pill's geometry (dot size, padding, corner radius,
+        /// font size).
         /// </summary>
-        public static Border StatusPill(string kind)
+        public static Border StatusPill(string kind, string? labelOverride = null)
         {
             (string bg, string fg, string label) = kind switch
             {
@@ -300,6 +300,7 @@ namespace AVES.Core
                 "warn" => (AvTokens.WarnBg, AvTokens.WarnFg, "Warning"),
                 _ => (AvTokens.InfoBg, AvTokens.InfoFg, "Info"),
             };
+            label = labelOverride ?? label;
 
             var dot = new WpfEllipse
             {
