@@ -30,45 +30,13 @@ namespace AVES.Cmds_PullDownAutoTag
     // ============================================================
     internal static class W
     {
-        public static Border StatusPill(string kind)
-        {
-            string bg, fg, label;
-            switch (kind)
-            {
-                case "ok": bg = AvTokens.OkBg; fg = AvTokens.OkFg; label = "Done"; break;
-                case "skip": bg = AvTokens.SkipBg; fg = AvTokens.SkipFg; label = "Skipped"; break;
-                case "fail": bg = AvTokens.FailBg; fg = AvTokens.FailFg; label = "Failed"; break;
-                case "warn": bg = AvTokens.WarnBg; fg = AvTokens.WarnFg; label = "Warn"; break;
-                default: bg = AvTokens.InfoBg; fg = AvTokens.InfoFg; label = "Info"; break;
-            }
-            var dot = new WpfEllipse
-            {
-                Width = 7,
-                Height = 7,
-                Fill = AvTokens.B(fg),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 6, 0)
-            };
-            var txt = new TextBlock
-            {
-                Text = label,
-                Foreground = AvTokens.B(fg),
-                FontFamily = AvTokens.Ui,
-                FontSize = 11.5,
-                FontWeight = FontWeights.SemiBold,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(dot); row.Children.Add(txt);
-            return new Border
-            {
-                Background = AvTokens.B(bg),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(8, 5, 10, 5),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Child = row
-            };
-        }
+        // Geometry routed to AvControls.StatusPill; "warn" keeps this file's
+        // own "Warn" wording via labelOverride (reconciliation decision:
+        // unify styling, keep existing per-file wording). Also fixes the
+        // previously-flagged missing VerticalAlignment on the outer Border,
+        // for free, since Core's method sets it.
+        public static Border StatusPill(string kind) =>
+            AvControls.StatusPill(kind, kind == "warn" ? "Warn" : null);
     }
 
     // ============================================================
