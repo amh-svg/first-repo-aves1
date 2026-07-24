@@ -148,7 +148,7 @@ namespace AVES.Cmds_Button7
             });
             titleRow.Children.Add(new WpfTextBlock
             {
-                Text = "— Select Assemblies",
+                Text = "",
                 FontFamily = AvTokens.Ui,
                 FontSize = 12,
                 Foreground = AvTokens.B(AvTokens.TextFaint),
