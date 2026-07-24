@@ -278,7 +278,7 @@ namespace AVES.Cmds_Button11
                 .ThenBy(x => x.View.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            Title = "Select Assembly Views";
+            Title = "Tag Reviewer";
             Width = 520;
             Height = 640;
             MinWidth = 420;
@@ -298,7 +298,7 @@ namespace AVES.Cmds_Button11
             shell.RowDefinitions.Add(new WpfRowDef { Height = GridLength.Auto });
             Content = shell;
 
-            var titleBar = AvControls.TitleBar("Select Assembly Views");
+            var titleBar = AvControls.TitleBar("Tag Reviewer");
             WpfGrid.SetRow(titleBar, 0);
             shell.Children.Add(titleBar);
 
@@ -754,7 +754,7 @@ namespace AVES.Cmds_Button11
                 }
                 catch (Exception ex)
                 {
-                    TaskDialog.Show("Select in View", $"Could not select element {row.ExampleElementId.Value}:\n{ex.Message}");
+                    AvControls.ShowAlert("Select in View", $"Could not select element {row.ExampleElementId.Value}:\n{ex.Message}", AlertSeverity.Error);
                 }
             }
         }
@@ -799,9 +799,9 @@ namespace AVES.Cmds_Button11
                 var allAssemblyViews = TagCompletenessScanner.GetAllAssemblyViews(doc);
                 if (allAssemblyViews.Count == 0)
                 {
-                    TaskDialog.Show("Assembly Tag Completeness",
+                    AvControls.ShowAlert("Assembly Tag Completeness",
                         "No assembly views were found in this project. This tool checks tags placed in an " +
-                        "assembly's own generated views (3D, front/section, plan, etc.) -- create those first.");
+                        "assembly's own generated views (3D, front/section, plan, etc.) -- create those first.", AlertSeverity.Warning);
                     return Result.Cancelled;
                 }
 
@@ -857,7 +857,7 @@ namespace AVES.Cmds_Button11
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Assembly Tag Completeness – Error", ex.Message);
+                AvControls.ShowAlert("Assembly Tag Completeness – Error", ex.Message, AlertSeverity.Error);
                 return Result.Failed;
             }
         }
