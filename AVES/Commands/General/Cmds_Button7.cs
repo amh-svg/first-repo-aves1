@@ -1014,8 +1014,8 @@ namespace AVES.Cmds_Button7
 
                 if (allAssemblies.Count == 0)
                 {
-                    TaskDialog.Show("Part List Format",
-                        "No AssemblyInstance elements found in this document.");
+                    AvControls.ShowAlert("Part List Format",
+                        "No AssemblyInstance elements found in this document.", AlertSeverity.Warning);
                     return Result.Cancelled;
                 }
 
@@ -1198,8 +1198,8 @@ namespace AVES.Cmds_Button7
                             StatusKind = "fail",
                             Note = txEx.Message
                         });
-                        TaskDialog.Show("Part List Format — Transaction Error",
-                            $"Assembly: {assembly.Name}\n\n{txEx.Message}");
+                        AvControls.ShowAlert("Part List Format — Transaction Error",
+                            $"Assembly: {assembly.Name}\n\n{txEx.Message}", AlertSeverity.Error);
                     }
                 }
 
@@ -1218,7 +1218,7 @@ namespace AVES.Cmds_Button7
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Part List Format — Error", ex.Message);
+                AvControls.ShowAlert("Part List Format — Error", ex.Message, AlertSeverity.Error);
                 return Result.Failed;
             }
 
