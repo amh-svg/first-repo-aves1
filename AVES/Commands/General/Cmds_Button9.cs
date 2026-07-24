@@ -66,11 +66,12 @@ namespace AVES.Cmds_Button9
 
             if (selectedIds == null || selectedIds.Count == 0)
             {
-                TaskDialog.Show(
+                AvControls.ShowAlert(
                     "No Selection",
                     "Nothing is selected.\n\n" +
                     "Please select one or more family instances in the viewport first, " +
-                    "then click this button."
+                    "then click this button.",
+                    AlertSeverity.Warning
                 );
                 return Result.Cancelled;
             }
@@ -84,11 +85,12 @@ namespace AVES.Cmds_Button9
 
             if (familyMap.Count == 0)
             {
-                TaskDialog.Show(
+                AvControls.ShowAlert(
                     "No Exportable Families",
                     "None of the selected elements are exportable family instances.\n\n" +
                     "Make sure you are selecting placed families (furniture, doors, " +
-                    "equipment, etc.) and not system family geometry like walls or floors."
+                    "equipment, etc.) and not system family geometry like walls or floors.",
+                    AlertSeverity.Warning
                 );
                 return Result.Cancelled;
             }
