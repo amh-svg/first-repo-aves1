@@ -343,7 +343,7 @@ namespace AVES.Cmds_Button8
             var item = _listBox.SelectedItem as WpfListBoxItem;
             if (item == null)
             {
-                MessageBox.Show("Please select a parameter.", "Missing Selection", MessageBoxButton.OK, MessageBoxImage.Warning);
+                AvControls.ShowAlert("Missing Selection", "Please select a parameter.", AlertSeverity.Warning);
                 return;
             }
             SelectedValue = item.Tag as string;
@@ -944,12 +944,12 @@ namespace AVES.Cmds_Button8
         {
             if (string.IsNullOrEmpty(_selectedWeightParam))
             {
-                MessageBox.Show("Please select a weight parameter.", "Missing Selection", MessageBoxButton.OK, MessageBoxImage.Warning);
+                AvControls.ShowAlert("Missing Selection", "Please select a weight parameter.", AlertSeverity.Warning);
                 return;
             }
             if (string.IsNullOrEmpty(_selectedSheetParam))
             {
-                MessageBox.Show("Please select a sheet parameter.", "Missing Selection", MessageBoxButton.OK, MessageBoxImage.Warning);
+                AvControls.ShowAlert("Missing Selection", "Please select a sheet parameter.", AlertSeverity.Warning);
                 return;
             }
             SelectedWeightParamName = _selectedWeightParam;
@@ -1458,7 +1458,7 @@ namespace AVES.Cmds_Button8
 
                 if (allAssemblies.Count == 0)
                 {
-                    TaskDialog.Show("Assembly Weight", "No AssemblyInstance elements found in this document.");
+                    AvControls.ShowAlert("Assembly Weight", "No AssemblyInstance elements found in this document.", AlertSeverity.Warning);
                     return Result.Cancelled;
                 }
 
@@ -1585,7 +1585,7 @@ namespace AVES.Cmds_Button8
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Assembly Weight – Error", ex.Message);
+                AvControls.ShowAlert("Assembly Weight – Error", ex.Message, AlertSeverity.Error);
                 return Result.Failed;
             }
         }
