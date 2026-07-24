@@ -1585,7 +1585,7 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
             StatusText.Text = "Saved as new default. Preview updated.";
         };
 
-        var runBtn = AvControls.PrimaryButtonHoverLoaded("Run");
+        var runBtn = AvControls.PrimaryButtonHoverLoaded("▶  Run Script");
         runBtn.IsDefault = true;
         runBtn.Click += (_, _) =>
         {
