@@ -984,7 +984,7 @@ namespace AVES.Cmds_Button10
 
                 if (allSheets.Count == 0)
                 {
-                    TaskDialog.Show("Revisions & Title Block Fill", "No sheets found in this document.");
+                    AvControls.ShowAlert("Revisions & Title Block Fill", "No sheets found in this document.", AlertSeverity.Warning);
                     return Result.Cancelled;
                 }
 
@@ -1068,7 +1068,7 @@ namespace AVES.Cmds_Button10
             }
             catch (Exception ex)
             {
-                TaskDialog.Show("Revisions & Title Block Fill – Error", ex.Message);
+                AvControls.ShowAlert("Revisions & Title Block Fill – Error", ex.Message, AlertSeverity.Error);
                 return Result.Failed;
             }
         }
