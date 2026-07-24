@@ -1573,9 +1573,9 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
         {
             if (!AllNumericRowsValid)
             {
-                MessageBox.Show(this,
-                    "One or more values are not valid numbers. Fix the highlighted fields before saving.",
-                    "Invalid input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                AvControls.ShowAlert(
+                    "Invalid input",
+                    "One or more values are not valid numbers. Fix the highlighted fields before saving.", AlertSeverity.Warning);
                 return;
             }
             ApplyValues();
@@ -1591,9 +1591,9 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
         {
             if (!AllNumericRowsValid)
             {
-                MessageBox.Show(this,
-                    "One or more values are not valid numbers. Fix the highlighted fields before running.",
-                    "Invalid input", MessageBoxButton.OK, MessageBoxImage.Warning);
+                AvControls.ShowAlert(
+                    "Invalid input",
+                    "One or more values are not valid numbers. Fix the highlighted fields before running.", AlertSeverity.Warning);
                 return;
             }
             ApplyValues();
@@ -2054,8 +2054,8 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
             var templates = ViewUtils.GetTemplates(doc);
             if (templates.Count == 0)
             {
-                TaskDialog.Show("Vendor Automation",
-                    "No view templates found in this project.");
+                AvControls.ShowAlert("Vendor Automation",
+                    "No view templates found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
@@ -2067,15 +2067,15 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
             var assemblies = CollectAssemblies(doc);
             if (assemblies.Count == 0)
             {
-                TaskDialog.Show("Vendor Automation",
-                    "No assemblies found in this project.");
+                AvControls.ShowAlert("Vendor Automation",
+                    "No assemblies found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
             if (TitleblockUtils.FirstAvailable(doc) is not { } titleblock)
             {
-                TaskDialog.Show("Vendor Automation",
-                    "No titleblock types found in this project.");
+                AvControls.ShowAlert("Vendor Automation",
+                    "No titleblock types found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
@@ -2294,8 +2294,8 @@ public sealed class Cmd_AssemblyDrawings : IExternalCommand
 
             if (assemblies.Count == 0)
             {
-                TaskDialog.Show("Assembly Bolt Automation",
-                    "No assemblies found in the model.");
+                AvControls.ShowAlert("Assembly Bolt Automation",
+                    "No assemblies found in the model.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
@@ -2305,15 +2305,15 @@ public sealed class Cmd_AssemblyDrawings : IExternalCommand
             var viewFamilyType3d = ViewUtils.Get3DViewFamilyType(doc);
             if (viewFamilyType3d is null)
             {
-                TaskDialog.Show("Assembly Bolt Automation",
-                    "No 3D ViewFamilyType found in this project.");
+                AvControls.ShowAlert("Assembly Bolt Automation",
+                    "No 3D ViewFamilyType found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
             if (TitleblockUtils.FirstAvailable(doc) is not { } titleblock)
             {
-                TaskDialog.Show("Assembly Bolt Automation",
-                    "No title block found in this project.");
+                AvControls.ShowAlert("Assembly Bolt Automation",
+                    "No title block found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
@@ -2326,10 +2326,10 @@ public sealed class Cmd_AssemblyDrawings : IExternalCommand
 
             if (missingTemplates.Count > 0)
             {
-                TaskDialog.Show("Assembly Bolt Automation",
+                AvControls.ShowAlert("Assembly Bolt Automation",
                     "Missing view templates for these assemblies " +
                     "(create one named \"Assembly {name}...\" each):\n\n  • " +
-                    string.Join("\n  • ", missingTemplates));
+                    string.Join("\n  • ", missingTemplates), AlertSeverity.Warning);
                 return Result.Failed;
             }
 
@@ -2576,8 +2576,8 @@ public sealed class Cmd_MTDrawings : IExternalCommand
             var templates = ViewUtils.GetTemplates(doc);
             if (templates.Count == 0)
             {
-                TaskDialog.Show("Vendor Automation (Single Sheet)",
-                    "No view templates found in this project.");
+                AvControls.ShowAlert("Vendor Automation (Single Sheet)",
+                    "No view templates found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
@@ -2589,15 +2589,15 @@ public sealed class Cmd_MTDrawings : IExternalCommand
             var assemblies = Cmd_VendorDrawings.CollectAssemblies(doc);
             if (assemblies.Count == 0)
             {
-                TaskDialog.Show("Vendor Automation (Single Sheet)",
-                    "No assemblies found in this project.");
+                AvControls.ShowAlert("Vendor Automation (Single Sheet)",
+                    "No assemblies found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
             if (TitleblockUtils.FirstAvailable(doc) is not { } titleblock)
             {
-                TaskDialog.Show("Vendor Automation (Single Sheet)",
-                    "No titleblock types found in this project.");
+                AvControls.ShowAlert("Vendor Automation (Single Sheet)",
+                    "No titleblock types found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
