@@ -1004,13 +1004,6 @@ namespace AVES.Cmds_Button6
             return btn;
         }
 
-        /// <summary>Sets DockPanel.Dock=Right on a UIElement and returns it (for collection initializers).</summary>
-        private static System.Windows.UIElement DockRight(System.Windows.UIElement el)
-        {
-            System.Windows.Controls.DockPanel.SetDock(el, System.Windows.Controls.Dock.Right);
-            return el;
-        }
-
         /// <summary>
         /// Walks the visual tree to find the first child of type T.
         /// Used to locate the DataGridCellsPresenter inside a DataGridRow.
