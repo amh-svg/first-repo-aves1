@@ -1883,7 +1883,7 @@ namespace AVES.Cmds_PullDown
                 SharedParamSettings settings,
                 List<string> availableGroups,
                 Dictionary<string, DefinitionGroup> groupsByName)
-                : base("Batch Shared Parameters — Settings")
+                : base("Batch Shared Parameters")
             {
                 _settings = settings;
                 _availableGroups = availableGroups;
@@ -2301,7 +2301,7 @@ namespace AVES.Cmds_PullDown
             private readonly Button _modeBtn;
 
             public RemoveSettingsWindow(RemoveSettings settings, UIDocument uiDoc, Document doc)
-                : base("Universal Parameter Remover — Settings")
+                : base("Universal Parameter Remover")
             {
                 _settings = settings;
                 _uiDoc = uiDoc;
@@ -2348,7 +2348,7 @@ namespace AVES.Cmds_PullDown
 
                 var cancelBtn = Av.GhostButton("Cancel");
                 cancelBtn.Click += (_, __) => { DialogResult = false; };
-                var runBtn = Av.PrimaryButton("▶  Run Removal");
+                var runBtn = Av.PrimaryButton("▶  Run Script");
                 runBtn.Click += (_, __) => { DialogResult = true; };
 
                 var footerRow = new StackPanel
