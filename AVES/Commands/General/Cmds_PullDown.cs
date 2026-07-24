@@ -59,47 +59,12 @@ namespace AVES.Cmds_PullDown
         /// <summary>
         /// Renders a rounded status pill replacing the old emoji column.
         /// kind: "ok" | "skip" | "fail" | "warn" | "info"
+        /// Geometry routed to AvControls.StatusPill; "warn" keeps this file's
+        /// own "Cache mismatch" wording via labelOverride (reconciliation
+        /// decision: unify styling, keep existing per-file wording).
         /// </summary>
-        public static WpfBorder StatusPill(string kind)
-        {
-            (string bg, string fg, string label) = kind switch
-            {
-                "ok" => ("#E4F3EA", "#2C7A52", "Done"),
-                "skip" => ("#EDEFF2", "#5B6573", "Skipped"),
-                "fail" => ("#FBE3DE", "#C0381F", "Failed"),
-                "warn" => ("#FAF0DA", "#9A6B12", "Cache mismatch"),
-                _ => ("#E7EFFB", "#2E66A8", "Info"),
-            };
-            var dot = new WpfEllipse
-            {
-                Width = 6,
-                Height = 6,
-                Fill = AvTokens.Brush(fg),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 5, 0)
-            };
-            var txt = new TextBlock
-            {
-                Text = label,
-                Foreground = AvTokens.Brush(fg),
-                FontFamily = AvTokens.Ui,
-                FontSize = 11,
-                FontWeight = FontWeights.SemiBold,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(dot);
-            row.Children.Add(txt);
-            return new WpfBorder
-            {
-                Background = AvTokens.Brush(bg),
-                CornerRadius = new CornerRadius(4),
-                Padding = new Thickness(5, 2, 7, 2),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = row
-            };
-        }
+        public static WpfBorder StatusPill(string kind) =>
+            AvControls.StatusPill(kind, kind == "warn" ? "Cache mismatch" : null);
 
         public static string PillKind(string glyph) => glyph switch
         {
@@ -176,118 +141,6 @@ namespace AVES.Cmds_PullDown
             System.Windows.Media.RenderOptions.SetBitmapScalingMode(
                 img, System.Windows.Media.BitmapScalingMode.HighQuality);
             return img;
-        }
-
-        // ── Button factories ──────────────────────────────────────────────
-        public static Button PrimaryButton(string label, double width = 0)
-        {
-            var b = new Button
-            {
-                Content = label,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White,
-                Cursor = Cursors.Hand,
-                Padding = new Thickness(16, 9, 16, 9),
-                Template = PrimaryTemplate()
-            };
-            if (width > 0) b.Width = width;
-            return b;
-        }
-
-        public static Button SecondaryButton(string label, double width = 0)
-        {
-            var b = new Button
-            {
-                Content = label,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.Brush(AvTokens.Text),
-                Cursor = Cursors.Hand,
-                Padding = new Thickness(16, 9, 16, 9),
-                Template = SecondaryTemplate()
-            };
-            if (width > 0) b.Width = width;
-            return b;
-        }
-
-        public static Button GhostButton(string label, double width = 0)
-        {
-            var b = new Button
-            {
-                Content = label,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.Brush(AvTokens.TextDim),
-                Cursor = Cursors.Hand,
-                Padding = new Thickness(14, 9, 14, 9),
-                Template = GhostTemplate()
-            };
-            if (width > 0) b.Width = width;
-            return b;
-        }
-
-        // ── Control templates ─────────────────────────────────────────────
-        private static ControlTemplate PrimaryTemplate()
-        {
-            var t = new ControlTemplate(typeof(Button));
-            var bd = new FrameworkElementFactory(typeof(WpfBorder));
-            bd.Name = "bd";
-            bd.SetValue(WpfBorder.CornerRadiusProperty, new CornerRadius(5));
-            bd.SetValue(WpfBorder.BackgroundProperty, AvTokens.Brush(AvTokens.Accent));
-            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
-            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-            cp.SetValue(ContentPresenter.MarginProperty, new Thickness(16, 9, 16, 9));
-            bd.AppendChild(cp);
-            t.VisualTree = bd;
-            var hover = new WpfTrigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            hover.Setters.Add(new WpfSetter(WpfBorder.BackgroundProperty, AvTokens.Brush(AvTokens.AccentDeep), "bd"));
-            t.Triggers.Add(hover);
-            return t;
-        }
-
-        private static ControlTemplate SecondaryTemplate()
-        {
-            var t = new ControlTemplate(typeof(Button));
-            var bd = new FrameworkElementFactory(typeof(WpfBorder));
-            bd.Name = "bd";
-            bd.SetValue(WpfBorder.CornerRadiusProperty, new CornerRadius(5));
-            bd.SetValue(WpfBorder.BackgroundProperty, AvTokens.Brush(AvTokens.Surface));
-            bd.SetValue(WpfBorder.BorderBrushProperty, AvTokens.Brush(AvTokens.BorderStrong));
-            bd.SetValue(WpfBorder.BorderThicknessProperty, new Thickness(1));
-            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
-            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-            cp.SetValue(ContentPresenter.MarginProperty, new Thickness(16, 9, 16, 9));
-            bd.AppendChild(cp);
-            t.VisualTree = bd;
-            var hover = new WpfTrigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            hover.Setters.Add(new WpfSetter(WpfBorder.BackgroundProperty, AvTokens.Brush(AvTokens.Surface2), "bd"));
-            t.Triggers.Add(hover);
-            return t;
-        }
-
-        private static ControlTemplate GhostTemplate()
-        {
-            var t = new ControlTemplate(typeof(Button));
-            var bd = new FrameworkElementFactory(typeof(WpfBorder));
-            bd.Name = "bd";
-            bd.SetValue(WpfBorder.CornerRadiusProperty, new CornerRadius(5));
-            bd.SetValue(WpfBorder.BackgroundProperty, new SolidColorBrush(Colors.Transparent));
-            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
-            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
-            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-            cp.SetValue(ContentPresenter.MarginProperty, new Thickness(14, 9, 14, 9));
-            bd.AppendChild(cp);
-            t.VisualTree = bd;
-            var hover = new WpfTrigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            hover.Setters.Add(new WpfSetter(WpfBorder.BackgroundProperty, AvTokens.Brush(AvTokens.Surface2), "bd"));
-            t.Triggers.Add(hover);
-            return t;
         }
 
         // ── Picker button (replaces ComboBox — white, bordered, chevron) ──
@@ -831,9 +684,9 @@ namespace AVES.Cmds_PullDown
             BodyPanel.Children.Add(_listBox);
 
             // Footer
-            var cancelBtn = Av.GhostButton("Cancel");
+            var cancelBtn = AvControls.GhostButton("Cancel");
             cancelBtn.Click += (_, __) => { DialogResult = false; };
-            var okBtn = Av.PrimaryButton("OK");
+            var okBtn = AvControls.PrimaryButton("OK");
             okBtn.Click += (_, __) => Confirm();
 
             var footerRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
@@ -988,9 +841,9 @@ namespace AVES.Cmds_PullDown
             };
             UpdateCount();
 
-            var cancelBtn = Av.GhostButton("Cancel");
+            var cancelBtn = AvControls.GhostButton("Cancel");
             cancelBtn.Click += (_, __) => { DialogResult = false; };
-            var addBtn = Av.PrimaryButton("Add parameters");
+            var addBtn = AvControls.PrimaryButton("Add parameters");
             addBtn.Click += (_, __) =>
             {
                 SelectedValues = _checkBoxes
@@ -1333,7 +1186,7 @@ namespace AVES.Cmds_PullDown
                 VerticalAlignment = VerticalAlignment.Center
             };
 
-            var copyBtn = Av.SecondaryButton("⧉  Copy to clipboard");
+            var copyBtn = AvControls.SecondaryButton("⧉  Copy to clipboard");
             copyBtn.Click += (_, __) =>
             {
                 Clipboard.SetText(_clipboardText);
@@ -1343,7 +1196,7 @@ namespace AVES.Cmds_PullDown
                 timer.Start();
             };
 
-            var closeBtn = Av.PrimaryButton("Close");
+            var closeBtn = AvControls.PrimaryButton("Close");
             closeBtn.Click += (_, __) => Close();
 
             var footerGrid = new WpfGrid();
@@ -1990,7 +1843,7 @@ namespace AVES.Cmds_PullDown
                 toggleContainer.Margin = new Thickness(0, 0, 0, 0);
                 BodyPanel.Children.Add(toggleContainer);
 
-                var changeFileBtn = Av.GhostButton("Change Shared Parameter File");
+                var changeFileBtn = AvControls.GhostButton("Change Shared Parameter File");
                 changeFileBtn.Click += (_, __) =>
                 {
                     string picked = SharedParamFileManager.PromptForFile(this);
@@ -2008,9 +1861,9 @@ namespace AVES.Cmds_PullDown
                     Child = changeFileBtn
                 };
 
-                var cancelBtn = Av.GhostButton("Cancel");
+                var cancelBtn = AvControls.GhostButton("Cancel");
                 cancelBtn.Click += (_, __) => { DialogResult = false; };
-                var runBtn = Av.PrimaryButton("▶  Run Script");
+                var runBtn = AvControls.PrimaryButton("▶  Run Script");
                 runBtn.Click += (_, __) => { DialogResult = true; };
 
                 var footerRow = new WpfGrid();
@@ -2346,9 +2199,9 @@ namespace AVES.Cmds_PullDown
                 };
                 BodyPanel.Children.Add(_modeBtn);
 
-                var cancelBtn = Av.GhostButton("Cancel");
+                var cancelBtn = AvControls.GhostButton("Cancel");
                 cancelBtn.Click += (_, __) => { DialogResult = false; };
-                var runBtn = Av.PrimaryButton("▶  Run Script");
+                var runBtn = AvControls.PrimaryButton("▶  Run Script");
                 runBtn.Click += (_, __) => { DialogResult = true; };
 
                 var footerRow = new StackPanel
@@ -2867,29 +2720,6 @@ namespace AVES.Cmds_PullDown
             return hint;
         }
 
-        internal static StackPanel MakeButtonRow(
-            int row, params (string label, double width, RoutedEventHandler click)[] buttons)
-        {
-            var panel = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(10, 6, 10, 10)
-            };
-            bool isFirst = true;
-            foreach (var (label, width, click) in buttons)
-            {
-                var button = isFirst
-                    ? Av.GhostButton(label, width)
-                    : Av.PrimaryButton(label, width);
-                button.Margin = isFirst ? new Thickness(0) : new Thickness(8, 0, 0, 0);
-                button.Click += click;
-                panel.Children.Add(button);
-                isFirst = false;
-            }
-            WpfGrid.SetRow(panel, row);
-            return panel;
-        }
     }
 
     // ══════════════════════════════════════════════════════════════════════
