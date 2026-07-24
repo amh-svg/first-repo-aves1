@@ -1045,7 +1045,7 @@ namespace AVES.Cmds_PullDownAutoTag
             var entries = BatchViewPickerWindow.CollectEntries(doc);
             if (entries.Count == 0)
             {
-                TaskDialog.Show("Auto Tag", "No 3D views found on any sheet in this project.");
+                AvControls.ShowAlert("Auto Tag", "No 3D views found on any sheet in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
@@ -1485,7 +1485,7 @@ namespace AVES.Cmds_PullDownAutoTag
             var entries = BatchViewPickerWindow.CollectEntries(doc);
             if (entries.Count == 0)
             {
-                TaskDialog.Show("Vendor Auto Tag", "No 3D views found on any sheet in this project.");
+                AvControls.ShowAlert("Vendor Auto Tag", "No 3D views found on any sheet in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
