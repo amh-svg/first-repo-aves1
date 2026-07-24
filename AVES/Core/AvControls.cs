@@ -103,44 +103,6 @@ namespace AVES.Core
         }
 
         /// <summary>
-        /// Title bar with an optional subtitle on a second line below the title.
-        /// Matches AvesUI's (Cmds_Pulldown3.cs) implementation: Height=52.
-        /// </summary>
-        public static Border TitleBarWithSubtitle(string title, string? subtitle = null)
-        {
-            var img = new Image
-            {
-                Source = AvTokens.LogoImage,
-                Height = 28,
-                Width = double.NaN,
-                Stretch = Stretch.Uniform,
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Margin = new Thickness(0, 0, 14, 0)
-            };
-            var brand = new Border { Background = Brushes.Transparent, VerticalAlignment = VerticalAlignment.Center, Child = img };
-
-            var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            textStack.Children.Add(new TextBlock { Text = title, FontFamily = AvTokens.Ui, FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = AvTokens.B(AvTokens.Text) });
-            if (subtitle != null)
-                textStack.Children.Add(new TextBlock { Text = subtitle, FontFamily = AvTokens.Ui, FontSize = 11.5, Foreground = AvTokens.B(AvTokens.TextFaint), Margin = new Thickness(0, 1, 0, 0) });
-
-            var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(brand);
-            row.Children.Add(textStack);
-
-            return new Border
-            {
-                Background = AvTokens.B(AvTokens.Surface2),
-                BorderBrush = AvTokens.B(AvTokens.Border),
-                BorderThickness = new Thickness(0, 0, 0, 1),
-                Padding = new Thickness(20, 0, 20, 0),
-                Height = 52,
-                Child = row
-            };
-        }
-
-        /// <summary>
         /// Interior header strip (logo + title text, no trailing rule/height cap).
         /// Matches AvesUiHelper's (Cmds_PullDown2.cs) implementation.
         /// </summary>
