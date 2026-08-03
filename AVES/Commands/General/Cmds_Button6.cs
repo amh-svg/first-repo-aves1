@@ -1,4 +1,14 @@
-﻿// .NET
+﻿// -----------------------------------------------------------------------
+// Title: Family Renamer
+// Summary: Renames the Families and Types of the selected elements to a
+//          standard "{Item Number} _ {PMO_Description}" format and shows a
+//          results table of what was renamed, skipped, or errored.
+// Key logic: Reads the "Item Number" and "PMO_Description" parameters from
+//            each selected element (or its type), batches renames while
+//            detecting duplicate/conflicting target names, then applies
+//            them in a single transaction.
+// -----------------------------------------------------------------------
+// .NET
 using System;
 using System.Collections.Generic;
 using System.Text;
