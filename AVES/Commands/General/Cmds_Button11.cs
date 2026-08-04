@@ -1,7 +1,13 @@
-// ─────────────────────────────────────────────────────────────────────────────
-//  Cmds_Button11.cs
-//  Assembly Tag Completeness Checker.
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------
+// Title: Assembly Tag Completeness Checker
+// Summary: Lets the user pick assembly views, scans the assemblies shown
+//          in them for family types with untagged members, and displays a
+//          report of which types are missing tags in each view.
+// Key logic: Builds a set of already-tagged type IDs per view from all
+//            independent tags, then for each assembly in the selected
+//            views compares its distinct family types against that set to
+//            flag the untagged ones (with an example untagged member ID).
+// -----------------------------------------------------------------------
 
 using System;
 using System.Collections.Generic;
