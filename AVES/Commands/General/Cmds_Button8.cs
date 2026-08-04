@@ -1,12 +1,12 @@
-// ─────────────────────────────────────────────────────────────────────────────
-//  Cmds_Button8.cs
-//  Weight‑Only command: calculates total assembly weight and writes it to a
-//  selected sheet parameter.
-//  Optimized: pre‑computes assembly → sheets mapping for 300+ sheets performance
-//  Fixed: weight column header right‑aligned to match data
-//  Updated: Report grid with Refined Native design
-//  Updated: Notes now include family names of elements missing weight values
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------
+// Title: Assembly Weight
+// Summary: Lets the user pick assemblies and a source weight parameter,
+//          totals the weight of each assembly's members, and writes the
+//          result to a chosen parameter on that assembly's sheet(s).
+// Key logic: Pre-computes an assembly-to-sheets map for performance on
+//            large projects, sums each member's weight parameter per
+//            assembly, and reports any members missing a weight value.
+// -----------------------------------------------------------------------
 
 using System;
 using System.Collections.Generic;
