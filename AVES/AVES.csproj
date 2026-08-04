@@ -38,6 +38,16 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<!-- Design handoff bundle: reference material, not production code.
+		     It lives inside the project folder, so the SDK's default globs would
+		     otherwise compile AvesUi.cs and treat AvesTheme.xaml as a Page.
+		     AvesUi.cs does not build here (its bare `Color` is ambiguous against
+		     Autodesk.Revit.DB.Color), and its tokens duplicate AVES.Core anyway. -->
+		<Compile Remove="UI for plugins\**" />
+		<Page Remove="UI for plugins\**" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<None Remove="Resources\Icons16\*" />
 		<None Remove="Resources\Icons32\*" />
 	</ItemGroup>
