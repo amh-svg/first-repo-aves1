@@ -305,6 +305,163 @@ namespace AVES.Core
         }
 
         // ====================================================================
+        //  Field label + picker box
+        // ====================================================================
+
+        /// <summary>
+        /// Numbered field label -- step badge plus a dim title -- intended to sit
+        /// ABOVE its control rather than beside it, so the label and the thing it
+        /// labels read as two separate pieces.
+        ///
+        /// Promoted verbatim from Cmds_PullDown.cs's Av class, where this pattern
+        /// was already in production behind Batch Shared Parameters and Batch
+        /// Remove Parameters. Sizes, colours and the 8px bottom margin are
+        /// unchanged, so that window renders identically through this.
+        /// </summary>
+        public static StackPanel FieldLabel(int n, string text)
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            row.Children.Add(NumberBadge(n));
+            row.Children.Add(new TextBlock
+            {
+                Text = text,
+                FontFamily = AvTokens.Ui,
+                FontSize = 12.5,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = AvTokens.B(AvTokens.TextDim),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            return row;
+        }
+
+        /// <summary>
+        /// A clickable box showing the current value of a field, opening whatever
+        /// picker the caller wires to Click. Pairs with <see cref="FieldLabel"/>.
+        ///
+        /// Promoted from Cmds_PullDown.cs's Av class. showChevron is new and
+        /// defaults to false, so the original callers render exactly as before;
+        /// the source's own doc comment claimed a chevron but never drew one.
+        ///
+        /// Returns the Button so the caller owns Click wiring, matching the
+        /// PrimaryButton/SecondaryButton convention. The value TextBlock is
+        /// stashed in Tag so <see cref="SetPickerValue(Button, string)"/> can find
+        /// it without the caller holding a reference.
+        /// </summary>
+        public static Button PickerButton(string currentValue, bool showChevron = false)
+        {
+            var label = new TextBlock
+            {
+                Text = currentValue,
+                FontFamily = AvTokens.Ui,
+                FontSize = 13,
+                Foreground = AvTokens.B(AvTokens.Text),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+
+            object content = label;
+            if (showChevron)
+            {
+                var chevron = new TextBlock
+                {
+                    Text = "›",
+                    FontFamily = AvTokens.Ui,
+                    FontSize = 18,
+                    Foreground = AvTokens.B(AvTokens.TextFaint),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(10, 0, 0, 0)
+                };
+
+                var grid = new WpfGrid();
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                WpfGrid.SetColumn(label, 0);
+                WpfGrid.SetColumn(chevron, 1);
+                grid.Children.Add(label);
+                grid.Children.Add(chevron);
+                content = grid;
+            }
+
+            return new Button
+            {
+                Content = content,
+                Tag = label,
+                Height = 38,
+                Padding = new Thickness(10, 0, 10, 0),
+                Cursor = Cursors.Hand,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Template = PickerButtonTemplate()
+            };
+        }
+
+        /// <summary>Updates the label text inside a <see cref="PickerButton"/>.</summary>
+        public static void SetPickerValue(Button btn, string value)
+        {
+            if (btn.Tag is TextBlock lbl) lbl.Text = value;
+        }
+
+        /// <summary>
+        /// Updates a <see cref="PickerButton"/> that can be empty: null or blank
+        /// restores the placeholder wording in the faint colour, a real value
+        /// switches to the normal text colour. That colour shift is how "chosen"
+        /// reads at a glance.
+        ///
+        /// A separate overload rather than a default argument, because the
+        /// two-argument form above never touches Foreground and its existing
+        /// callers must keep that behaviour.
+        /// </summary>
+        public static void SetPickerValue(Button btn, string? value, string placeholder)
+        {
+            if (btn.Tag is not TextBlock lbl) return;
+
+            bool chosen = !string.IsNullOrWhiteSpace(value);
+            lbl.Text = chosen ? value : placeholder;
+            lbl.Foreground = AvTokens.B(chosen ? AvTokens.Text : AvTokens.TextFaint);
+        }
+
+        /// <summary>
+        /// White, bordered, rounded look for a picker box, with an accent hover.
+        ///
+        /// Promoted from Cmds_PullDown.cs. Deliberately NOT merged with
+        /// FieldButtonTemplate: that one hovers to Surface2, this one hovers to an
+        /// Accent border over AccentTint, and it pins the content margin and
+        /// stretches the presenter. Collapsing them would change the appearance of
+        /// one window or the other, so both live here as distinct templates.
+        /// </summary>
+        public static ControlTemplate PickerButtonTemplate()
+        {
+            var tpl = new ControlTemplate(typeof(Button));
+
+            var bd = new FrameworkElementFactory(typeof(Border));
+            bd.Name = "bd";
+            // Surface is #FFFFFF, the same value the source used via Brushes.White.
+            bd.SetValue(Border.BackgroundProperty, AvTokens.B(AvTokens.Surface));
+            bd.SetValue(Border.BorderBrushProperty, AvTokens.B(AvTokens.BorderStrong));
+            bd.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+            bd.SetValue(Border.CornerRadiusProperty, new CornerRadius(5));
+
+            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+            cp.SetValue(ContentPresenter.MarginProperty, new Thickness(10, 0, 10, 0));
+            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
+            bd.AppendChild(cp);
+
+            tpl.VisualTree = bd;
+
+            var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            hover.Setters.Add(new Setter(Border.BorderBrushProperty, AvTokens.B(AvTokens.Accent), "bd"));
+            hover.Setters.Add(new Setter(Border.BackgroundProperty, AvTokens.B(AvTokens.AccentTint), "bd"));
+            tpl.Triggers.Add(hover);
+
+            return tpl;
+        }
+
+        // ====================================================================
         //  Menu row
         // ====================================================================
 
