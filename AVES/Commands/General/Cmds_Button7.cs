@@ -1,4 +1,16 @@
-﻿// System
+﻿// -----------------------------------------------------------------------
+// Title: Part List Format
+// Summary: Lets the user pick one or more assemblies, then generates
+//          merged part-number/description strings and sequential row
+//          numbers for their Generic Model members, writing the results
+//          back onto the elements, and shows a report of the outcome.
+// Key logic: Groups Generic Model members within each assembly by
+//            Title/Part Number/Length (or Description for non-length
+//            parts) to assign shared row numbers, then writes
+//            "PART NUMBER MERGE", "DESCRIPTION MERGE" and "Comments"
+//            parameters per assembly inside its own transaction.
+// -----------------------------------------------------------------------
+// System
 // Autodesk
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
