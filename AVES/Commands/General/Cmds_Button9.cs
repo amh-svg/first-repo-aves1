@@ -1,4 +1,13 @@
-﻿// System
+﻿// -----------------------------------------------------------------------
+// Title: Export Families
+// Summary: Exports the parent Families of the currently selected family
+//          instances as .rfa files to a user-chosen folder, then shows a
+//          themed report of what was exported.
+// Key logic: Resolves each selected instance to its unique parent Family
+//            (deduplicating repeats), saves each one via Document.SaveAs
+//            to the target folder, and reports successes/skips/failures.
+// -----------------------------------------------------------------------
+// System
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,18 +32,6 @@ using WGrid = System.Windows.Controls.Grid;
 using WEllipse = System.Windows.Shapes.Ellipse;
 using WColor = System.Windows.Media.Color;
 using SIOPath = System.IO.Path;
-
-// ============================================================
-//  Cmds_Button9.cs — Export Families command + WPF Report
-//  ------------------------------------------------------------
-//  1. Select family instances in the Revit viewport.
-//  2. Click the button → choose a destination folder.
-//  3. Each unique parent family is exported as an .rfa file.
-//  4. A themed WPF report window shows the results.
-//
-//  Design: AVES "Refined Native / AVES Red" (see AvesTheme.xaml)
-//  Revit 2025 | .NET 8 | Visual Studio 2022
-// ============================================================
 
 namespace AVES.Cmds_Button9
 {
