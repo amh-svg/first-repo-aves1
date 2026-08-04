@@ -603,19 +603,54 @@ namespace AVES.Cmds_PullDownAutoDimension
             public static readonly double TickHalfLength = 30.0 / 304.8;
 
             /// <summary>
+            /// How far a witness line overshoots past the dimension line (ft) —
+            /// standard drafting convention, and it guarantees the dimension line
+            /// properly crosses the tick rather than merely touching its endpoint.
+            /// </summary>
+            public static readonly double TickOvershoot = 3.0 / 304.8;
+
+            /// <summary>
+            /// Gap left between the witness line and the object surface (ft),
+            /// per standard drafting convention.
+            /// </summary>
+            public static readonly double TickGap = 2.0 / 304.8;
+
+            /// <summary>
+            /// Computed witness lengths outside this range are treated as
+            /// implausible and fall back to a fixed-length centred tick. Guards
+            /// against the two coordinate spaces involved (view-origin-relative
+            /// extents vs. CropBox-relative dimension line) disagreeing in a view
+            /// we have not tested.
+            /// </summary>
+            public static readonly double MinTickLength = 5.0 / 304.8;
+            public static readonly double MaxTickLength = 2000.0 / 304.8;
+
+            /// <summary>
             /// Lines subcategory the helper detail lines are placed on, so the
             /// whole set can be switched off in one move via
             /// Visibility/Graphics → Lines.
             /// </summary>
             public const string HelperLineStyleName = "AVES_DimHelper";
 
-            // Vendor Drawing assemblies are built from Generic Model families.
-            public static readonly HashSet<int> MemberCategories =
-            [
-                (int)BuiltInCategory.OST_GenericModel,
-            ];
+            /// <summary>
+            /// Maximum family-nesting depth the geometry walker will descend to.
+            /// Purely a runaway guard — real content is only a few levels deep.
+            /// </summary>
+            public const int MaxNestingDepth = 8;
 
-            public static readonly string[] PlanKeywords = ["top", "plan", "pianta", "sopra", "roof"];
+            /// <summary>Solids below this volume are treated as degenerate and skipped.</summary>
+            public const double MinSolidVolume = 1e-9;
+
+            /// <summary>
+            /// How far short of the assembly bounding box the swept extent may
+            /// fall before the diagnostics flag it as possibly-missing geometry (ft).
+            /// </summary>
+            public static readonly double ExtentWarnTol = 10.0 / 304.8;
+
+            // "bottom" is classified as Plan: bottom views get the same treatment
+            // as top views. PlanKeywords is tested first in ClassifyView, so a view
+            // named e.g. "Bottom Elevation" resolves to Plan rather than Front.
+            public static readonly string[] PlanKeywords = ["top", "bottom", "plan", "pianta", "sopra", "roof"];
             public static readonly string[] FrontKeywords = ["front", "fronte", "elevation", "alzato"];
             public static readonly string[] BackKeywords = ["back", "retro", "rear"];
             public static readonly string[] LeftKeywords = ["left", "sinistra", "lato sx"];
@@ -625,6 +660,8 @@ namespace AVES.Cmds_PullDownAutoDimension
         private enum ViewRole { Plan, Front, Back, Left, Right, ThreeD, Other }
 
         private static double Mm(double mm) => mm / 304.8;
+
+        private static double ToMm(double ft) => ft * 304.8;
 
         // ── Execute ──────────────────────────────────────────────────────────
         public Result Execute(
@@ -698,10 +735,12 @@ namespace AVES.Cmds_PullDownAutoDimension
                         var members = GetMembers(doc, assembly);
                         if (members.Count == 0)
                         {
-                            summary.AppendLine("  No structural members found – skipped.");
+                            summary.AppendLine("  No members found – skipped.");
                             summary.AppendLine();
                             continue;
                         }
+
+                        LogExtentDiagnostics(summary, assembly, members);
 
                         var views = GetAssemblyViews(doc, assembly);
                         if (views.Count == 0)
@@ -723,9 +762,9 @@ namespace AVES.Cmds_PullDownAutoDimension
                             {
                                 int n = role switch
                                 {
-                                    ViewRole.Plan => DimensionPlanView(doc, view, members, dimType, helperStyle),
+                                    ViewRole.Plan => DimensionPlanView(doc, view, members, dimType, helperStyle, summary),
                                     ViewRole.Front or ViewRole.Back
-                                    or ViewRole.Left or ViewRole.Right => DimensionElevationView(doc, view, members, dimType, helperStyle),
+                                    or ViewRole.Left or ViewRole.Right => DimensionElevationView(doc, view, members, dimType, helperStyle, summary),
                                     _ => -1,   // skip
                                 };
 
@@ -763,16 +802,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             return anyError ? Result.Failed : Result.Succeeded;
         }
 
-        // ── Core: measure the overall silhouette extent along one axis ──────
-        //
-        // Geometry strategy is the same as Button 1 (CollectMemberFaces):
-        //   GetSymbolGeometry() + gi.Transform to get world-space positions.
-        //
-        // Differences from Button 1:
-        //   • No MaxMemberThickness upper-bound filter — Generic Model families
-        //     can span the full assembly in any direction.
-        //   • Returns only the single outermost near/far coordinate pair across
-        //     ALL members (no bay clustering needed).
+        // ── Core: measure the assembly's true model extent along one axis ───
         //
         // This no longer collects Revit References. Dimensioning straight to
         // raw geometry points was the cause of the skewed dimensions: the two
@@ -781,23 +811,96 @@ namespace AVES.Cmds_PullDownAutoDimension
         // baseline. Callers now dimension to helper detail lines built from
         // these coordinates instead — see PlaceOverallDim.
         //
-        // Two consequences of dropping references:
-        //   • ComputeReferences can be false, which is measurably cheaper.
-        //   • Every tessellation point is projected, not just the first and
-        //     last. On curved edges the extreme often lies mid-edge, which the
-        //     old first/last-only sampling silently missed.
+        // The sweep measures the TRUE MODEL EXTENT, not the view silhouette:
+        // geometry is pulled view-independently at Fine detail, including
+        // non-visible objects. A view's detail level, crop or V/G settings
+        // therefore can no longer shrink the reported size, and Width/Height/
+        // Depth stay consistent across every view of the same assembly.
+        // (Options.View and Options.DetailLevel are mutually exclusive — when
+        // View is set the view's own detail level governs and DetailLevel is
+        // ignored, which is why View is deliberately not set here.)
+        //
+        // `view` is still needed, but only for view.Origin as the projection
+        // datum — it no longer influences which geometry is returned.
+
+        /// <summary>
+        /// View-independent geometry options: the real physical envelope at
+        /// full detail, regardless of how any particular view is configured.
+        /// </summary>
+        private static Options ModelGeometryOptions() => new()
+        {
+            ComputeReferences = false,
+            IncludeNonVisibleObjects = true,
+            DetailLevel = ViewDetailLevel.Fine,
+        };
+
+        /// <summary>
+        /// Recursively walks a GeometryElement, invoking <paramref name="onPoint"/>
+        /// once per vertex of every Solid edge and every Mesh found at ANY nesting
+        /// depth, already transformed into project coordinates.
+        ///
+        /// The previous fixed two-level walk visited only direct Solid children of
+        /// a first-level GeometryInstance, so hardware nested inside a host family
+        /// (hooks, clips, brackets) was never visited at all and silently failed to
+        /// count toward the assembly's overall size. Nested families can be several
+        /// GeometryInstance levels deep, hence the recursion.
+        ///
+        /// Uses GetSymbolGeometry() with an accumulated transform rather than
+        /// GetInstanceGeometry(): the latter always returns copies, and mixing it
+        /// into a recursive walk risks double-transforming nested geometry. Symbol
+        /// geometry is safe here because this sweep no longer needs stable
+        /// References — it is pure geometric analysis.
+        ///
+        /// Curves are deliberately not walked: with IncludeNonVisibleObjects on,
+        /// families surface their reference planes and reference lines, which
+        /// would inflate the envelope well beyond the physical geometry.
+        /// </summary>
+        private static void WalkGeometry(
+            GeometryElement? ge, DBTransform xf, Action<XYZ> onPoint, int depth = 0)
+        {
+            if (ge == null || xf == null || depth > VendorConfig.MaxNestingDepth) return;
+
+            foreach (GeometryObject obj in ge)
+            {
+                switch (obj)
+                {
+                    case Solid solid when solid.Volume >= VendorConfig.MinSolidVolume:
+                        foreach (Edge edge in solid.Edges)
+                        {
+                            try
+                            {
+                                foreach (XYZ p in edge.Tessellate()) onPoint(xf.OfPoint(p));
+                            }
+                            catch { }
+                        }
+                        break;
+
+                    case Mesh mesh:
+                        try
+                        {
+                            foreach (XYZ p in mesh.Vertices) onPoint(xf.OfPoint(p));
+                        }
+                        catch { }
+                        break;
+
+                    case GeometryInstance gi:
+                        try
+                        {
+                            WalkGeometry(gi.GetSymbolGeometry(),
+                                         xf.Multiply(gi.Transform),
+                                         onPoint, depth + 1);
+                        }
+                        catch { }
+                        break;
+                }
+            }
+        }
 
         private static (double NearCoord, double FarCoord, bool Valid)
             GetOverallExtent(List<Element> members, View view, XYZ axisVec)
         {
             double originProj = view.Origin.DotProduct(axisVec);
-
-            var opts = new Options
-            {
-                View = view,
-                ComputeReferences = false,
-                IncludeNonVisibleObjects = false,
-            };
+            var opts = ModelGeometryOptions();
 
             double nearCoord = double.MaxValue;
             double farCoord = double.MinValue;
@@ -808,40 +911,207 @@ namespace AVES.Cmds_PullDownAutoDimension
                 try { geom = member.get_Geometry(opts); } catch { continue; }
                 if (geom == null) continue;
 
-                foreach (var obj in geom)
+                WalkGeometry(geom, DBTransform.Identity, p =>
                 {
-                    if (obj is not GeometryInstance gi) continue;
-
-                    DBTransform? xf;
-                    GeometryElement? symGeom;
-                    try { xf = gi.Transform; symGeom = gi.GetSymbolGeometry(); }
-                    catch { continue; }
-                    if (xf == null || symGeom == null) continue;
-
-                    foreach (var item in symGeom)
-                    {
-                        if (item is not Solid solid || solid.Volume < 1e-9) continue;
-
-                        foreach (Edge edge in solid.Edges)
-                        {
-                            try
-                            {
-                                // Positions in world space (symbol space + instance transform)
-                                foreach (XYZ p in edge.Tessellate())
-                                {
-                                    double c = xf.OfPoint(p).DotProduct(axisVec) - originProj;
-                                    if (c < nearCoord) nearCoord = c;
-                                    if (c > farCoord) farCoord = c;
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-                }
+                    double c = p.DotProduct(axisVec) - originProj;
+                    if (c < nearCoord) nearCoord = c;
+                    if (c > farCoord) farCoord = c;
+                });
             }
 
             bool valid = farCoord - nearCoord >= VendorConfig.CoordTol;
             return (nearCoord, farCoord, valid);
+        }
+
+        // ── Diagnostics ──────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Logs what the sweep actually visited for one assembly, and cross-checks
+        /// the swept envelope against an independent measure of the same members.
+        ///
+        /// The cross-check is a union of the members' own bounding boxes rather
+        /// than the assembly's. AssemblyInstance.get_BoundingBox(null) proved
+        /// unreliable here — it is documented to return null whenever the model
+        /// box "is not known", and an assembly is a logical container that may
+        /// have none. Unioning member boxes does not depend on that, and because
+        /// it uses Revit's own per-element box computation rather than this
+        /// file's tessellation walk, it is a genuinely independent check. It also
+        /// names the member responsible when the two measures disagree.
+        ///
+        /// The assembly-level box is still queried, purely so its behaviour is on
+        /// the record — null and thrown are reported distinctly.
+        /// </summary>
+        private static void LogExtentDiagnostics(
+            StringBuilder summary, AssemblyInstance assembly, List<Element> members)
+        {
+            // Settle the document first. This runs inside an open transaction that
+            // has already created a line subcategory — and, from the second
+            // assembly onward, detail lines and dimensions. Pending unregenerated
+            // changes can make geometry and bounding-box queries return null or
+            // stale results, so regenerating removes that as a variable.
+            try { assembly.Document.Regenerate(); }
+            catch (Exception ex)
+            {
+                summary.AppendLine(
+                    $"  (regenerate skipped: {ex.GetType().Name} — {ex.Message})");
+            }
+
+            var opts = ModelGeometryOptions();
+
+            int withGeometry = 0;
+            long pointCount = 0;
+
+            double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue;
+            double maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
+
+            foreach (var member in members)
+            {
+                GeometryElement? geom;
+                try { geom = member.get_Geometry(opts); } catch { continue; }
+                if (geom == null) continue;
+
+                long before = pointCount;
+                WalkGeometry(geom, DBTransform.Identity, p =>
+                {
+                    pointCount++;
+                    if (p.X < minX) minX = p.X;
+                    if (p.X > maxX) maxX = p.X;
+                    if (p.Y < minY) minY = p.Y;
+                    if (p.Y > maxY) maxY = p.Y;
+                    if (p.Z < minZ) minZ = p.Z;
+                    if (p.Z > maxZ) maxZ = p.Z;
+                });
+                if (pointCount > before) withGeometry++;
+            }
+
+            summary.AppendLine(
+                $"  Members: {members.Count} found, {withGeometry} contributing geometry " +
+                $"({pointCount:N0} points swept)");
+
+            if (pointCount == 0)
+            {
+                summary.AppendLine("  !  No geometry visited — extents cannot be computed.");
+                return;
+            }
+
+            summary.AppendLine(
+                $"  Swept extent (mm):   X {ToMm(maxX - minX),9:F1}   " +
+                $"Y {ToMm(maxY - minY),9:F1}   Z {ToMm(maxZ - minZ),9:F1}");
+
+            // ── On the record: the assembly's own box, null vs. threw ──────────
+            try
+            {
+                BoundingBoxXYZ? abb = assembly.get_BoundingBox(null);
+                summary.AppendLine(abb == null
+                    ? "  Assembly bbox:       returned null (no model box for this element)"
+                    : $"  Assembly bbox (mm):  X {ToMm(abb.Max.X - abb.Min.X),9:F1}   " +
+                      $"Y {ToMm(abb.Max.Y - abb.Min.Y),9:F1}   " +
+                      $"Z {ToMm(abb.Max.Z - abb.Min.Z),9:F1}");
+            }
+            catch (Exception ex)
+            {
+                summary.AppendLine(
+                    $"  Assembly bbox:       threw {ex.GetType().Name} — {ex.Message}");
+            }
+
+            // ── Cross-check: union of the members' own bounding boxes ─────────
+            // Axis indices: 0 = X, 1 = Y, 2 = Z.
+            double[] sMin = [minX, minY, minZ];
+            double[] sMax = [maxX, maxY, maxZ];
+            double[] uMin = [double.MaxValue, double.MaxValue, double.MaxValue];
+            double[] uMax = [double.MinValue, double.MinValue, double.MinValue];
+            double[] worstOver = [0.0, 0.0, 0.0];
+            string[] worstName = ["", "", ""];
+
+            int boxed = 0, boxNull = 0;
+            string? firstThrow = null;
+
+            foreach (var member in members)
+            {
+                BoundingBoxXYZ? mb;
+                try { mb = member.get_BoundingBox(null); }
+                catch (Exception ex)
+                {
+                    firstThrow ??= $"{ex.GetType().Name} — {ex.Message}";
+                    continue;
+                }
+
+                if (mb == null) { boxNull++; continue; }
+                boxed++;
+
+                double[] bMin = [mb.Min.X, mb.Min.Y, mb.Min.Z];
+                double[] bMax = [mb.Max.X, mb.Max.Y, mb.Max.Z];
+
+                for (int a = 0; a < 3; a++)
+                {
+                    if (bMin[a] < uMin[a]) uMin[a] = bMin[a];
+                    if (bMax[a] > uMax[a]) uMax[a] = bMax[a];
+
+                    // How far this member reaches outside the swept envelope.
+                    double over = Math.Max(sMin[a] - bMin[a], bMax[a] - sMax[a]);
+                    if (over > worstOver[a])
+                    {
+                        worstOver[a] = over;
+                        worstName[a] = DescribeMember(member);
+                    }
+                }
+            }
+
+            if (boxed == 0)
+            {
+                summary.AppendLine(firstThrow != null
+                    ? $"  (no member bounding boxes — first error: {firstThrow})"
+                    : $"  (no member bounding boxes — all {boxNull} returned null)");
+                return;
+            }
+
+            if (boxNull > 0 || firstThrow != null)
+            {
+                var notes = new List<string>();
+                if (boxNull > 0) notes.Add($"{boxNull} returned null");
+                if (firstThrow != null) notes.Add($"first error: {firstThrow}");
+                summary.AppendLine(
+                    $"  (bbox coverage: {boxed}/{members.Count} members; {string.Join("; ", notes)})");
+            }
+
+            summary.AppendLine(
+                $"  Member bbox union:   X {ToMm(uMax[0] - uMin[0]),9:F1}   " +
+                $"Y {ToMm(uMax[1] - uMin[1]),9:F1}   Z {ToMm(uMax[2] - uMin[2]),9:F1}");
+
+            WarnIfShort(summary, "X", worstOver[0], worstName[0]);
+            WarnIfShort(summary, "Y", worstOver[1], worstName[1]);
+            WarnIfShort(summary, "Z", worstOver[2], worstName[2]);
+        }
+
+        /// <summary>Short human-readable identifier for a member, for the log.</summary>
+        private static string DescribeMember(Element e)
+        {
+            try
+            {
+                string cat = e.Category?.Name ?? "?";
+                return $"{cat} \"{e.Name}\" (id {e.Id.Value})";
+            }
+            catch { return $"id {e.Id.Value}"; }
+        }
+
+        /// <summary>
+        /// Flags a member whose bounding box reaches beyond the swept envelope.
+        ///
+        /// Deliberately worded as something to check rather than as proof of a
+        /// defect: Revit's bounding boxes are documented to include symbolic
+        /// lines and other non-solid graphics that the geometry walk correctly
+        /// ignores, so a modest overshoot is expected on perfectly good content.
+        /// </summary>
+        private static void WarnIfShort(
+            StringBuilder summary, string axis, double overshootFt, string memberName)
+        {
+            if (overshootFt <= VendorConfig.ExtentWarnTol) return;
+
+            string who = string.IsNullOrWhiteSpace(memberName) ? "a member" : memberName;
+            summary.AppendLine(
+                $"  ?  {axis}: {who} reaches {ToMm(overshootFt):F1} mm beyond the swept " +
+                $"envelope — worth checking. Revit bounding boxes include symbolic lines " +
+                $"and other non-solid graphics, so this alone is not proof of missing geometry.");
         }
 
         // ── Helper line style ────────────────────────────────────────────────
@@ -887,13 +1157,40 @@ namespace AVES.Cmds_PullDownAutoDimension
         /// </summary>
         private static DetailCurve? CreateTick(
             Document doc, View view,
-            double alongCoord, double perpWorld, bool isHoriz,
-            GraphicsStyle? helperStyle)
+            double alongCoord, double perpWorld, double? perpObject, bool isHoriz,
+            GraphicsStyle? helperStyle, out bool usedFallback)
         {
-            double half = VendorConfig.TickHalfLength;
+            // Default to the previous behaviour — a short tick centred on the
+            // dimension line — and only adopt a full-length witness line if the
+            // computed geometry is plausible.
+            usedFallback = true;
+            double from = perpWorld - VendorConfig.TickHalfLength;
+            double to = perpWorld + VendorConfig.TickHalfLength;
 
-            XYZ a = WorldPt(view, alongCoord, perpWorld - half, isHoriz);
-            XYZ b = WorldPt(view, alongCoord, perpWorld + half, isHoriz);
+            if (perpObject is double po)
+            {
+                double dir = Math.Sign(po - perpWorld);
+                if (dir == 0) dir = 1;
+
+                double f = perpWorld - dir * VendorConfig.TickOvershoot;
+                double t = po - dir * VendorConfig.TickGap;
+                double len = Math.Abs(t - f);
+
+                // The extents are measured relative to view.Origin while perpWorld
+                // derives from the CropBox, so this subtraction crosses two
+                // coordinate spaces. They agree in the views tested, but an
+                // implausible length means they do not agree here — degrade to the
+                // centred tick rather than draw something absurd.
+                if (len >= VendorConfig.MinTickLength && len <= VendorConfig.MaxTickLength)
+                {
+                    from = f;
+                    to = t;
+                    usedFallback = false;
+                }
+            }
+
+            XYZ a = WorldPt(view, alongCoord, from, isHoriz);
+            XYZ b = WorldPt(view, alongCoord, to, isHoriz);
 
             try
             {
@@ -909,15 +1206,20 @@ namespace AVES.Cmds_PullDownAutoDimension
         }
 
         /// <summary>
-        /// Places one overall dimension along <paramref name="axisVec"/>.
+        /// Places one overall dimension using pre-measured extents.
         ///
-        /// Instead of dimensioning to raw geometry points, this draws two short
-        /// helper detail lines at the measured extremes and dimensions between
-        /// those. Both ticks run perpendicular to the measurement axis, so they
-        /// are parallel to each other and perpendicular to the extension line —
-        /// exactly what NewDimension documents as its requirement for the
-        /// supplied references. The dimension is therefore straight by
-        /// construction, however irregular the underlying geometry is.
+        /// Instead of dimensioning to raw geometry points, this draws two helper
+        /// detail lines at the measured extremes and dimensions between those.
+        /// Both run perpendicular to the measurement axis, so they are parallel
+        /// to each other and perpendicular to the extension line — exactly what
+        /// NewDimension documents as its requirement for the supplied references.
+        /// The dimension is therefore straight by construction, however irregular
+        /// the underlying geometry is.
+        ///
+        /// The helper lines double as witness lines: they run from just past the
+        /// dimension line back to the assembly surface, which is what
+        /// <paramref name="perpExtent"/> supplies. Extending them does not affect
+        /// the reference constraint above — that governs direction, not length.
         ///
         /// Whole-curve references (GeometryCurve.Reference) are used rather than
         /// endpoint references: endpoint-only references are documented to be
@@ -931,15 +1233,38 @@ namespace AVES.Cmds_PullDownAutoDimension
         /// </summary>
         private static bool PlaceOverallDim(
             Document doc, View view, DimensionType dimType,
-            List<Element> members, XYZ axisVec,
-            bool isHoriz, double perpWorld, GraphicsStyle? helperStyle)
+            (double NearCoord, double FarCoord, bool Valid) alongExtent,
+            (double NearCoord, double FarCoord, bool Valid) perpExtent,
+            bool isHoriz, double perpWorld, GraphicsStyle? helperStyle,
+            StringBuilder summary, string label)
         {
-            var (nearCoord, farCoord, valid) = GetOverallExtent(members, view, axisVec);
-            if (!valid) return false;
+            if (!alongExtent.Valid) return false;
 
-            DetailCurve? tickNear = CreateTick(doc, view, nearCoord, perpWorld, isHoriz, helperStyle);
-            DetailCurve? tickFar = CreateTick(doc, view, farCoord, perpWorld, isHoriz, helperStyle);
+            double nearCoord = alongExtent.NearCoord;
+            double farCoord = alongExtent.FarCoord;
+
+            // Where the witness lines should stop: whichever face of the assembly
+            // sits nearer the dimension line. Null when the perpendicular extent
+            // could not be measured, which makes CreateTick fall back and report.
+            double? perpObject = perpExtent.Valid
+                ? (Math.Abs(perpExtent.NearCoord - perpWorld)
+                       <= Math.Abs(perpExtent.FarCoord - perpWorld)
+                       ? perpExtent.NearCoord : perpExtent.FarCoord)
+                : null;
+
+            DetailCurve? tickNear = CreateTick(doc, view, nearCoord, perpWorld, perpObject,
+                                               isHoriz, helperStyle, out bool fbNear);
+            DetailCurve? tickFar = CreateTick(doc, view, farCoord, perpWorld, perpObject,
+                                              isHoriz, helperStyle, out bool fbFar);
             if (tickNear == null || tickFar == null) return false;
+
+            if (fbNear || fbFar)
+            {
+                summary.AppendLine(
+                    $"  !  {view.Name} / {label}: witness-line fallback used (short centred " +
+                    $"tick) — computed length out of range, so the view-origin and CropBox " +
+                    $"coordinate spaces may disagree in this view.");
+            }
 
             Reference? refNear = tickNear.GeometryCurve?.Reference;
             Reference? refFar = tickFar.GeometryCurve?.Reference;
@@ -963,10 +1288,24 @@ namespace AVES.Cmds_PullDownAutoDimension
 
         // ── Elevation view: Width (horiz) + Height (vert) ───────────────────
 
-        private static int DimensionElevationView(
+        /// <summary>
+        /// Places the two in-plane overall dimensions for a 2D view: one along
+        /// RightDirection (below the crop) and one along UpDirection (to its left).
+        ///
+        /// Elevation and plan views differ only in what those two axes are called
+        /// — Width/Height versus Width/Depth — so they share this implementation
+        /// and pass their own labels, following the same delegation pattern
+        /// Cmd_MTDimensions already uses for its plan views.
+        ///
+        /// Both axes are measured once and shared: the perpendicular extent of one
+        /// dimension is the along extent of the other, so giving the witness lines
+        /// something to reach costs no extra geometry sweeps — two per view.
+        /// </summary>
+        private static int DimensionTwoAxisView(
             Document doc, View view,
             List<Element> members, DimensionType dimType,
-            GraphicsStyle? helperStyle)
+            GraphicsStyle? helperStyle, StringBuilder summary,
+            string horizLabel, string vertLabel)
         {
             BoundingBoxXYZ cb = view.CropBox;
             ExpandCropBox(view, Mm(50));
@@ -974,36 +1313,45 @@ namespace AVES.Cmds_PullDownAutoDimension
             double offset = VendorConfig.Offset;
             int created = 0;
 
+            var hExtent = GetOverallExtent(members, view, view.RightDirection);
+            var vExtent = GetOverallExtent(members, view, view.UpDirection);
+
             double perpH = cb.Min.Y + offset;
-            if (PlaceOverallDim(doc, view, dimType, members,
-                    view.RightDirection, isHoriz: true, perpWorld: perpH,
-                    helperStyle: helperStyle))
+            if (PlaceOverallDim(doc, view, dimType,
+                    alongExtent: hExtent, perpExtent: vExtent,
+                    isHoriz: true, perpWorld: perpH,
+                    helperStyle: helperStyle, summary: summary, label: horizLabel))
                 created++;
 
             double perpV = cb.Min.X + offset;
-            if (PlaceOverallDim(doc, view, dimType, members,
-                    view.UpDirection, isHoriz: false, perpWorld: perpV,
-                    helperStyle: helperStyle))
+            if (PlaceOverallDim(doc, view, dimType,
+                    alongExtent: vExtent, perpExtent: hExtent,
+                    isHoriz: false, perpWorld: perpV,
+                    helperStyle: helperStyle, summary: summary, label: vertLabel))
                 created++;
 
             return created;
         }
 
-        // ── Plan / top view: Depth ───────────────────────────────────────────
+        /// <summary>Elevation views: Width across, Height up.</summary>
+        private static int DimensionElevationView(
+            Document doc, View view,
+            List<Element> members, DimensionType dimType,
+            GraphicsStyle? helperStyle, StringBuilder summary)
+            => DimensionTwoAxisView(doc, view, members, dimType, helperStyle, summary,
+                                    horizLabel: "Width", vertLabel: "Height");
 
+        /// <summary>
+        /// Plan views (top and bottom): Width across, Depth up. Previously placed
+        /// only the Depth dimension; the Width one now comes for free from the
+        /// RightDirection extent that the witness lines already need.
+        /// </summary>
         private static int DimensionPlanView(
             Document doc, View view,
             List<Element> members, DimensionType dimType,
-            GraphicsStyle? helperStyle)
-        {
-            BoundingBoxXYZ cb = view.CropBox;
-            ExpandCropBox(view, Mm(50));
-
-            double perpV = cb.Min.X + VendorConfig.Offset;
-            return PlaceOverallDim(doc, view, dimType, members,
-                view.UpDirection, isHoriz: false, perpWorld: perpV,
-                helperStyle: helperStyle) ? 1 : 0;
-        }
+            GraphicsStyle? helperStyle, StringBuilder summary)
+            => DimensionTwoAxisView(doc, view, members, dimType, helperStyle, summary,
+                                    horizLabel: "Width", vertLabel: "Depth");
 
         // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -1067,15 +1415,24 @@ namespace AVES.Cmds_PullDownAutoDimension
             return views;
         }
 
+        /// <summary>
+        /// Every member of the assembly, with no category allow-list.
+        ///
+        /// This previously admitted only OST_GenericModel, which silently dropped
+        /// hardware in other categories (hooks, clips, brackets) that legitimately
+        /// extends the assembly's physical envelope — those members were discarded
+        /// before their geometry was ever examined. Members carrying no solid or
+        /// mesh geometry (tags, annotation) contribute no points to the sweep and
+        /// so exclude themselves naturally, without needing a filter here.
+        /// </summary>
         private static List<Element> GetMembers(Document doc, AssemblyInstance assembly)
         {
             var members = new List<Element>();
             foreach (var mid in assembly.GetMemberIds())
             {
                 var elem = doc.GetElement(mid);
-                if (elem?.Category == null) continue;
-                if (VendorConfig.MemberCategories.Contains((int)elem.Category.Id.Value))
-                    members.Add(elem);
+                if (elem == null) continue;
+                members.Add(elem);
             }
             return members;
         }
@@ -1947,7 +2304,8 @@ namespace AVES.Cmds_PullDownAutoDimension
                     ));
                 }
                 else if (!string.IsNullOrWhiteSpace(line) && currentAssembly != null
-                         && (line.Contains("No structural") || line.Contains("No associated")))
+                         && (line.Contains("No structural") || line.Contains("No members")
+                             || line.Contains("No associated")))
                 {
                     rows.Add((currentAssembly, "(all views)", "—", "skip", line.Trim()));
                 }
