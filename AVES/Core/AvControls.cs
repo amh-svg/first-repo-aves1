@@ -462,103 +462,6 @@ namespace AVES.Core
         }
 
         // ====================================================================
-        //  Menu row
-        // ====================================================================
-
-        /// <summary>
-        /// A numbered menu row: step badge, title, subtitle showing the current
-        /// value (or a placeholder), and a trailing chevron. Reads as one
-        /// clickable field and opens whatever picker the caller wires to Click.
-        ///
-        /// Returns the Button so the caller owns Click wiring, matching the
-        /// convention of the PrimaryButton/SecondaryButton family. Call
-        /// <see cref="SetMenuRowValue"/> to update the subtitle after a pick --
-        /// it also switches the subtitle from the faint placeholder colour to
-        /// the normal text colour, which is how "chosen" reads at a glance.
-        ///
-        /// Uses NumberBadge for the step circle rather than a new widget: that
-        /// badge is already the shared step indicator across six command files.
-        /// </summary>
-        public static Button MenuRow(int step, string title, string placeholder)
-        {
-            var badge = NumberBadge(step);
-            badge.VerticalAlignment = VerticalAlignment.Center;
-
-            var titleText = new TextBlock
-            {
-                Text = title,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.B(AvTokens.Text)
-            };
-
-            var valueText = new TextBlock
-            {
-                Text = placeholder,
-                FontFamily = AvTokens.Ui,
-                FontSize = 12,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Margin = new Thickness(0, 2, 0, 0)
-            };
-
-            var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            textStack.Children.Add(titleText);
-            textStack.Children.Add(valueText);
-
-            var chevron = new TextBlock
-            {
-                Text = "›",
-                FontFamily = AvTokens.Ui,
-                FontSize = 18,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(10, 0, 2, 0)
-            };
-
-            var grid = new WpfGrid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            WpfGrid.SetColumn(badge, 0);
-            WpfGrid.SetColumn(textStack, 1);
-            WpfGrid.SetColumn(chevron, 2);
-            grid.Children.Add(badge);
-            grid.Children.Add(textStack);
-            grid.Children.Add(chevron);
-
-            var btn = new Button
-            {
-                Content = grid,
-                Template = FieldButtonTemplate(HorizontalAlignment.Stretch),
-                Padding = new Thickness(12, 10, 12, 10),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Cursor = Cursors.Hand,
-                Margin = new Thickness(0, 0, 0, 8)
-            };
-
-            // Stashed so SetMenuRowValue can find the subtitle without the
-            // caller having to hold a reference to it.
-            btn.Tag = valueText;
-            return btn;
-        }
-
-        /// <summary>
-        /// Updates a <see cref="MenuRow"/>'s subtitle. Passing null restores the
-        /// placeholder wording and its faint colour.
-        /// </summary>
-        public static void SetMenuRowValue(Button row, string? value, string placeholder)
-        {
-            if (row.Tag is not TextBlock valueText) return;
-
-            bool chosen = !string.IsNullOrWhiteSpace(value);
-            valueText.Text = chosen ? value : placeholder;
-            valueText.Foreground = AvTokens.B(chosen ? AvTokens.Text : AvTokens.TextFaint);
-        }
-
-        // ====================================================================
         //  Stat tile / status pill
         // ====================================================================
 
@@ -822,27 +725,22 @@ namespace AVES.Core
         /// any clickable "field" control (e.g. a picker trigger). Matches W's
         /// FieldButtonTemplate (Cmds_Pulldown4.cs).
         ///
-        /// contentAlign defaults to Center, which is what every existing caller
-        /// gets. Two other alignments of this same template exist in the tree and
-        /// are deliberately NOT collapsed into this one:
+        /// Content is centred. A Stretch variant existed briefly for MenuRow's
+        /// trailing chevron; MenuRow has since been replaced by FieldLabel plus
+        /// PickerButton, which uses PickerButtonTemplate instead, so the parameter
+        /// was removed rather than left as dead surface.
         ///
-        ///   * Cmds_Pulldown3.cs has a private copy identical but for Left
-        ///     alignment, so its dimension-type field reads as a value rather
-        ///     than a centred label.
-        ///   * MenuRow below needs Stretch, so its trailing chevron can sit at
-        ///     the right edge.
-        ///
-        /// Pulldown3's copy is a genuine drifted duplicate and a follow-up
-        /// consolidation item; it is left alone here because migrating it would
-        /// change that window's appearance in a task that is not about it.
+        /// Cmds_Pulldown3.cs still has a private copy identical but for Left
+        /// alignment, so its dimension-type field reads as a value rather than a
+        /// centred label. That is a genuine drifted duplicate and a follow-up
+        /// consolidation item; it is left alone because migrating it would change
+        /// that window's appearance in a task that is not about it.
         /// </summary>
-        public static ControlTemplate FieldButtonTemplate(
-            HorizontalAlignment contentAlign = HorizontalAlignment.Center) =>
-            FactoryBtnTemplate(AvTokens.Surface, AvTokens.Surface2, AvTokens.BorderStrong, 1, contentAlign);
+        public static ControlTemplate FieldButtonTemplate() =>
+            FactoryBtnTemplate(AvTokens.Surface, AvTokens.Surface2, AvTokens.BorderStrong, 1);
 
         private static ControlTemplate FactoryBtnTemplate(
-            string? normalBg, string hoverBg, string? borderHex, double borderPx,
-            HorizontalAlignment contentAlign = HorizontalAlignment.Center)
+            string? normalBg, string hoverBg, string? borderHex, double borderPx)
         {
             var tpl = new ControlTemplate(typeof(Button));
             var bd = new FrameworkElementFactory(typeof(Border));
@@ -856,7 +754,7 @@ namespace AVES.Core
                 bd.SetValue(Border.BorderThicknessProperty, new Thickness(borderPx));
             }
             var cp = new FrameworkElementFactory(typeof(ContentPresenter));
-            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, contentAlign);
+            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
             cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
             cp.SetBinding(ContentPresenter.MarginProperty,
                 new System.Windows.Data.Binding("Padding")

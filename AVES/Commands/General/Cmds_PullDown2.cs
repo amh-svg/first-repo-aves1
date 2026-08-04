@@ -996,10 +996,10 @@ internal sealed class TemplateMenuWindow : Window
         // in DIPs, so it adapts to display scaling, and it survives a fourth step
         // being added later.
         //
-        // Width deliberately stays fixed: the rows stretch to fill it, and
-        // MenuRow's subtitle trims with an ellipsis, which needs a bounded width
-        // to trim against. SizeToContent.WidthAndHeight would grow the window to
-        // the longest template name and the trimming would never engage.
+        // Width deliberately stays fixed: the picker boxes stretch to fill it, and
+        // their value text trims with an ellipsis, which needs a bounded width to
+        // trim against. SizeToContent.WidthAndHeight would grow the window to the
+        // longest template name and the trimming would never engage.
         SizeToContent = SizeToContent.Height;
 
         // Ceiling so a future menu with many steps cannot outgrow the display.
@@ -1072,21 +1072,30 @@ internal sealed class TemplateMenuWindow : Window
             Margin = new Thickness(0, 0, 0, 12),
         });
 
-        _row3d = AvControls.MenuRow(1, "3D View Template", Placeholder);
+        // Each step is a label ABOVE its clickable box, matching the pattern the
+        // Batch Shared Parameters window already uses. The label carries the step
+        // badge and title; only the box below it opens the picker.
+        _row3d = AvControls.PickerButton(Placeholder, showChevron: true);
         _row3d.Click += (_, _) => PickInto(
             _allTemplates, "Select 3D View Template", _row3d, v => V3d = v);
 
-        _row2d = AvControls.MenuRow(2, "2D View Template", Placeholder);
+        _row2d = AvControls.PickerButton(Placeholder, showChevron: true);
         _row2d.Click += (_, _) => PickInto(
             _allTemplates, "Select 2D View Template", _row2d, v => V2d = v);
 
-        _rowSched = AvControls.MenuRow(3, "Schedule Template", Placeholder);
+        _rowSched = AvControls.PickerButton(Placeholder, showChevron: true);
         _rowSched.Click += (_, _) => PickInto(
             _scheduleTemplates, "Select Schedule Template", _rowSched, v => Sched = v);
 
-        stack.Children.Add(_row3d);
-        stack.Children.Add(_row2d);
-        stack.Children.Add(_rowSched);
+        // Nothing is chosen yet, so start every box in the faint placeholder
+        // state rather than the normal text colour PickerButton defaults to.
+        AvControls.SetPickerValue(_row3d, null, Placeholder);
+        AvControls.SetPickerValue(_row2d, null, Placeholder);
+        AvControls.SetPickerValue(_rowSched, null, Placeholder);
+
+        AddStep(stack, 1, "3D View Template", _row3d);
+        AddStep(stack, 2, "2D View Template", _row2d);
+        AddStep(stack, 3, "Schedule Template", _rowSched);
 
         var scroller = new ScrollViewer
         {
@@ -1098,6 +1107,17 @@ internal sealed class TemplateMenuWindow : Window
         root.Children.Add(scroller);
 
         Content = root;
+    }
+
+    /// <summary>
+    /// Appends one step to the body: its numbered label, then its picker box,
+    /// then the gap before the next step.
+    /// </summary>
+    private static void AddStep(StackPanel stack, int step, string title, Button box)
+    {
+        stack.Children.Add(AvControls.FieldLabel(step, title));
+        box.Margin = new Thickness(0, 0, 0, 16);
+        stack.Children.Add(box);
     }
 
     /// <summary>
@@ -1118,7 +1138,7 @@ internal sealed class TemplateMenuWindow : Window
         }
 
         assign(picked);
-        AvControls.SetMenuRowValue(row, picked.Name, Placeholder);
+        AvControls.SetPickerValue(row, picked.Name, Placeholder);
         _runBtn.IsEnabled = V3d is not null && V2d is not null && Sched is not null;
     }
 }
