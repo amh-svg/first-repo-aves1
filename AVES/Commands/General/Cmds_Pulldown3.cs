@@ -1912,34 +1912,10 @@ namespace AVES.Cmds_PullDownAutoDimension
                     Background = Brushes.Transparent,
                     Focusable = true
                 };
-                var itemStyle = new Style(typeof(ListBoxItem));
-                itemStyle.Setters.Add(new Setter(ListBoxItem.PaddingProperty, new Thickness(12, 9, 12, 9)));
-                itemStyle.Setters.Add(new Setter(ListBoxItem.FontFamilyProperty, AvTokens.Ui));
-                itemStyle.Setters.Add(new Setter(ListBoxItem.FontSizeProperty, 13.0));
-                itemStyle.Setters.Add(new Setter(ListBoxItem.ForegroundProperty, AvTokens.B(AvTokens.Text)));
-                itemStyle.Setters.Add(new Setter(ListBoxItem.BackgroundProperty, Brushes.Transparent));
-
-                var itemTemplate = new ControlTemplate(typeof(ListBoxItem));
-                var itemBorder = new FrameworkElementFactory(typeof(System.Windows.Controls.Border));
-                itemBorder.Name = "RowBorder";
-                itemBorder.SetBinding(System.Windows.Controls.Border.BackgroundProperty,
-                    new System.Windows.Data.Binding("Background")
-                    { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
-                itemBorder.SetValue(System.Windows.Controls.Border.CornerRadiusProperty, new CornerRadius(4));
-                itemBorder.SetBinding(System.Windows.Controls.Border.PaddingProperty,
-                    new System.Windows.Data.Binding("Padding")
-                    { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
-                var itemContent = new FrameworkElementFactory(typeof(ContentPresenter));
-                itemContent.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-                itemBorder.AppendChild(itemContent);
-                itemTemplate.VisualTree = itemBorder;
-                itemStyle.Setters.Add(new Setter(ListBoxItem.TemplateProperty, itemTemplate));
-
-                var selectedTrigger = new Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
-                selectedTrigger.Setters.Add(new Setter(ListBoxItem.BackgroundProperty, AvTokens.B(AvTokens.AccentTint)));
-                selectedTrigger.Setters.Add(new Setter(ListBoxItem.ForegroundProperty, AvTokens.B(AvTokens.Accent)));
-                itemStyle.Triggers.Add(selectedTrigger);
-                _listBox.ItemContainerStyle = itemStyle;
+                // Was a local copy, byte-identical to Cmds_Pulldown4.cs's. Now the
+                // shared Core style — same padding, row template and selected
+                // treatment as before, plus a hover tint that neither copy had.
+                _listBox.ItemContainerStyle = AvControls.PickerListItemStyle();
                 _listBox.SelectionChanged += (s, e) => _selectBtn.IsEnabled = _listBox.SelectedItem != null;
                 _listBox.MouseDoubleClick += (s, e) => { if (_listBox.SelectedItem != null) OnSelect(); };
 
