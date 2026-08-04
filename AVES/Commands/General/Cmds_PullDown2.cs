@@ -987,9 +987,30 @@ internal sealed class TemplateMenuWindow : Window
 
         Title = "Drawing Automations";
         Width = 460;
-        Height = 380;
         MinWidth = 380;
-        MinHeight = 340;
+
+        // Height follows the content instead of a fixed value. A fixed height had
+        // to be guessed against the rows' measured size and was ~18px short at
+        // 100% scaling, worse as DPI rose, which pushed the last row under the
+        // ScrollViewer and read as the window being cut off. Auto-sizing measures
+        // in DIPs, so it adapts to display scaling, and it survives a fourth step
+        // being added later.
+        //
+        // Width deliberately stays fixed: the rows stretch to fill it, and
+        // MenuRow's subtitle trims with an ellipsis, which needs a bounded width
+        // to trim against. SizeToContent.WidthAndHeight would grow the window to
+        // the longest template name and the trimming would never engage.
+        SizeToContent = SizeToContent.Height;
+
+        // Ceiling so a future menu with many steps cannot outgrow the display.
+        // Auto-sizing measures with infinite available height, so the ScrollViewer
+        // below would otherwise never engage; past this height it takes over again.
+        // WorkArea reports the PRIMARY monitor, so on a mixed-DPI multi-monitor
+        // setup a window shown on a secondary display is capped by the primary's
+        // work area — an accepted approximation for what is already a pathological
+        // case.
+        MaxHeight = SystemParameters.WorkArea.Height * 0.9;
+
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ResizeMode = ResizeMode.CanResize;
         ShowInTaskbar = false;
