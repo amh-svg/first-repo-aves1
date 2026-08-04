@@ -1,8 +1,14 @@
-// ─────────────────────────────────────────────────────────────────────────────
-//  Cmds_Button10.cs
-//  Revisions, title block fill, sheet picker popup: three sub-features sharing
-//  a single sheet selection and a single main window.
-// ─────────────────────────────────────────────────────────────────────────────
+// -----------------------------------------------------------------------
+// Title: Revisions & Title Block Fill
+// Summary: Opens a sheet picker/tool window where the user selects sheets,
+//          chooses revisions to add, and resolves title block field values
+//          to apply, then writes those changes to the selected sheets and
+//          reports the outcome.
+// Key logic: One transaction per sheet adds the picked revision IDs via
+//            SetAdditionalRevisionIds and sets resolved title block shared
+//            parameters, skipping fields the user didn't confirm a value
+//            for (e.g. mixed values across sheets).
+// -----------------------------------------------------------------------
 
 using System;
 using System.Collections.Generic;
