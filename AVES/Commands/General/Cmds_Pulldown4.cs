@@ -1,4 +1,14 @@
-﻿// Autodesk
+﻿// -----------------------------------------------------------------------
+// Pulldown Title: Auto Tag
+// Sub-buttons:
+//   - MT Tag: Lets the user pick a multi-category tag family and one or
+//     more 3D views on sheets, then auto-places tags on view elements
+//     with collision-avoiding placement (edge clearance, spacing, and
+//     tall/wide element handling).
+//   - Vendor Tag: Same batch view/tag picker and auto-placement logic as
+//     MT Tag, but targets generic-model tag families instead.
+// -----------------------------------------------------------------------
+// Autodesk
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
