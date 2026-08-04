@@ -142,7 +142,7 @@ namespace AVES.Core
 
             return new Border
             {
-                Background = AvTokens.B(AvTokens.Surface),
+                Background = AvTokens.B(AvTokens.Surface2),
                 BorderBrush = AvTokens.B(AvTokens.Border),
                 BorderThickness = new Thickness(0, 0, 0, 1),
                 Padding = new Thickness(20, 10, 20, 10),
