@@ -1,7 +1,17 @@
-﻿// ============================================================
-//  Cmds_PullDown.cs  —  AVES Revit 2025 Add-In
-//  UI: "Refined Native / AVES Red" design pass
-// ============================================================
+﻿// -----------------------------------------------------------------------
+// Pulldown Title: Parameter & Data Tools
+// Sub-buttons:
+//   - Batch Shared Parameters: Adds a chosen set of shared parameters to
+//     families/categories in bulk, letting the user pick a group, the
+//     target parameters, binding type, and whether they're instance or
+//     type parameters.
+//   - Batch Remove Parameters: Removes a chosen set of parameters from
+//     families/categories in bulk and reports how many were removed per
+//     family.
+//   - CSV Importer: Imports a CSV keyed by "Item Number" and writes its
+//     columns as parameter values onto the types of the selected
+//     elements, logging matched/unmatched item numbers.
+// -----------------------------------------------------------------------
 #nullable disable
 
 // Autodesk
