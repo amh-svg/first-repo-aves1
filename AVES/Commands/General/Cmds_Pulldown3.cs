@@ -589,8 +589,18 @@ namespace AVES.Cmds_PullDownAutoDimension
         // ── Configuration ────────────────────────────────────────────────────
         private static class VendorConfig
         {
-            /// <summary>Dimension line offset outward from the crop box edge (ft).</summary>
-            public static readonly double Offset = -200.0 / 304.8;
+            /// <summary>
+            /// How far outside the assembly's own silhouette the dimension line
+            /// sits (ft).
+            ///
+            /// Measured from the geometry, not the crop box. Crops are routinely
+            /// far larger than their content, so anchoring to the crop put the
+            /// dimension line a metre or more from the object in some views — with
+            /// no witness line able to bridge the gap — and it forced the
+            /// placement, the surface probe and the stubs into two different
+            /// coordinate spaces. Anchoring to geometry keeps them all in one.
+            /// </summary>
+            public static readonly double DimLineOffset = 200.0 / 304.8;
 
             public static readonly double CoordTol = 5.0 / 304.8;
             public static readonly double MaxMemberThickness = 300.0 / 304.8;
@@ -603,26 +613,39 @@ namespace AVES.Cmds_PullDownAutoDimension
             public static readonly double TickHalfLength = 30.0 / 304.8;
 
             /// <summary>
-            /// How far a witness line overshoots past the dimension line (ft) —
-            /// standard drafting convention, and it guarantees the dimension line
-            /// properly crosses the tick rather than merely touching its endpoint.
+            /// Gap left between the stub and the object surface (ft). Zero by
+            /// design: the DimensionType's own "Gap to Element" setting supplies
+            /// the visual gap, and adding one here would stack on top of it.
             /// </summary>
-            public static readonly double TickOvershoot = 3.0 / 304.8;
+            public static readonly double TickGap = 0.0;
 
             /// <summary>
-            /// Gap left between the witness line and the object surface (ft),
-            /// per standard drafting convention.
+            /// Half-length of the surface stub along the measurement axis (ft).
+            /// The stub only has to be a valid, stable curve for Revit to
+            /// reference — Revit draws the visible witness line itself.
             /// </summary>
-            public static readonly double TickGap = 2.0 / 304.8;
+            public static readonly double StubHalfLength = 8.0 / 304.8;
 
             /// <summary>
-            /// Computed witness lengths outside this range are treated as
-            /// implausible and fall back to a fixed-length centred tick. Guards
-            /// against the two coordinate spaces involved (view-origin-relative
-            /// extents vs. CropBox-relative dimension line) disagreeing in a view
-            /// we have not tested.
+            /// A local surface probe searches for geometry within this band of the
+            /// tick's along-coordinate (ft). Wide enough to find a surface on a
+            /// tessellated edge, narrow enough that the result is genuinely local
+            /// to that position rather than the assembly's global extreme.
             /// </summary>
-            public static readonly double MinTickLength = 5.0 / 304.8;
+            public static readonly double ProbeBand = 15.0 / 304.8;
+
+            /// <summary>
+            /// Last-resort crash guard (ft), used only when the perpendicular
+            /// extent is unmeasurable and no assembly-relative limit can be
+            /// derived. Normally the guard is scaled to the assembly's own
+            /// perpendicular span instead — an absolute limit vetoed witness lines
+            /// that were legitimately long on stepped geometry.
+            ///
+            /// Deliberately NOT a correctness signal: it was previously used as
+            /// one, and as a hard threshold on a continuous quantity it flagged
+            /// two identically-broken views differently depending on which side of
+            /// the limit they fell. LogTick reports the actual numbers instead.
+            /// </summary>
             public static readonly double MaxTickLength = 2000.0 / 304.8;
 
             /// <summary>
@@ -923,6 +946,63 @@ namespace AVES.Cmds_PullDownAutoDimension
             return (nearCoord, farCoord, valid);
         }
 
+        /// <summary>
+        /// Finds the assembly surface local to one witness-line position: the
+        /// perpendicular coordinate nearest <paramref name="perpWorld"/> among
+        /// geometry lying within a narrow band of <paramref name="atAlongCoord"/>.
+        ///
+        /// The global perpendicular extreme is the wrong answer here. On an
+        /// assembly whose profile steps in and out — around a hook bracket, say —
+        /// the global extreme occurs at one specific position along the
+        /// measurement axis. A witness line drawn at a different position would
+        /// reach out to that coordinate and stop in mid-air, short of the surface
+        /// actually beneath it. Probing locally puts each stub on the surface it
+        /// is meant to mark.
+        ///
+        /// Selects the MINIMUM perpendicular coordinate in the band — the near
+        /// face at this position. It previously selected the point nearest the
+        /// dimension line, which produced identical results (the dimension line is
+        /// by construction outside the object, so "nearest" always resolved to
+        /// "minimum") while forcing a comparison between the view-origin-relative
+        /// probe and the CropBox-relative dimension line. Stating the intent
+        /// directly removes the last place the two coordinate spaces met, and
+        /// breaks the circular dependency that would otherwise exist now that the
+        /// dimension line is placed from these results.
+        ///
+        /// Returns null when no geometry falls in the band.
+        /// </summary>
+        private static double? ProbeLocalSurface(
+            List<Element> members, View view,
+            XYZ axisVec, XYZ perpVec, double atAlongCoord)
+        {
+            double alongOrigin = view.Origin.DotProduct(axisVec);
+            double perpOrigin = view.Origin.DotProduct(perpVec);
+            double band = VendorConfig.ProbeBand;
+
+            var opts = ModelGeometryOptions();
+
+            bool found = false;
+            double bestPerp = double.MaxValue;
+
+            foreach (var member in members)
+            {
+                GeometryElement? geom;
+                try { geom = member.get_Geometry(opts); } catch { continue; }
+                if (geom == null) continue;
+
+                WalkGeometry(geom, DBTransform.Identity, p =>
+                {
+                    double along = p.DotProduct(axisVec) - alongOrigin;
+                    if (Math.Abs(along - atAlongCoord) > band) return;
+
+                    double perp = p.DotProduct(perpVec) - perpOrigin;
+                    if (perp < bestPerp) { bestPerp = perp; found = true; }
+                });
+            }
+
+            return found ? bestPerp : null;
+        }
+
         // ── Diagnostics ──────────────────────────────────────────────────────
 
         /// <summary>
@@ -1083,6 +1163,55 @@ namespace AVES.Cmds_PullDownAutoDimension
             WarnIfShort(summary, "Z", worstOver[2], worstName[2]);
         }
 
+        /// <summary>
+        /// Reports one stub numerically: which source supplied the surface
+        /// position, the coordinate itself, and how far the stub ended up from the
+        /// dimension line.
+        ///
+        /// This replaces the old pass/fail fallback flag, which turned out not to
+        /// be a correctness signal at all. A probe could return a wrong but
+        /// plausible-looking coordinate, or be silently replaced by the global
+        /// extreme, and still report success while rendering visibly disconnected —
+        /// two views could look identical with only one of them flagged. Printing
+        /// the numbers makes both silent paths visible and lets results be checked
+        /// against expected geometry rather than by eye.
+        ///
+        /// Sources: "local" = probe found a surface at this tick's own position;
+        /// "GLOBAL-SUB" = probe found nothing, the assembly's global extreme was
+        /// substituted; "FALLBACK" = no usable position, stub sits on the
+        /// dimension line.
+        ///
+        /// Invariant: gap >= DimLineOffset on every tick. The dimension line is
+        /// offset from the global perpendicular extreme, so no surface can be
+        /// closer to it than that; a smaller gap means the line has crossed into
+        /// the silhouette. gap MINUS DimLineOffset is how far this tick's local
+        /// surface is set back from the assembly's outermost face, so equality
+        /// means flush rather than meaning "correct" — an earlier revision
+        /// anchored to the local surfaces and did make it exact, which is why the
+        /// invariant is now an inequality.
+        /// </summary>
+        private static void LogTick(
+            StringBuilder summary, View view, string label, string side,
+            double? local, double? global, double? used, double perpWorld, bool fellBack)
+        {
+            string source = fellBack ? "FALLBACK"
+                          : local.HasValue ? "local"
+                          : global.HasValue ? "GLOBAL-SUB"
+                          : "none";
+
+            string perpTxt = used.HasValue
+                ? ToMm(used.Value).ToString("F1").PadLeft(10)
+                : "n/a".PadLeft(10);
+            string gapTxt = used.HasValue
+                ? ToMm(Math.Abs(used.Value - perpWorld)).ToString("F1").PadLeft(9)
+                : "n/a".PadLeft(9);
+
+            summary.AppendLine(
+                $"  tick  {view.Name} / {label} {side}: {source,-10} " +
+                $"perp={perpTxt}  dimLine={ToMm(perpWorld).ToString("F1").PadLeft(10)}  " +
+                $"gap={gapTxt}");
+        }
+
         /// <summary>Short human-readable identifier for a member, for the log.</summary>
         private static string DescribeMember(Element e)
         {
@@ -1158,39 +1287,49 @@ namespace AVES.Cmds_PullDownAutoDimension
         private static DetailCurve? CreateTick(
             Document doc, View view,
             double alongCoord, double perpWorld, double? perpObject, bool isHoriz,
-            GraphicsStyle? helperStyle, out bool usedFallback)
+            double maxGap, GraphicsStyle? helperStyle, out bool usedFallback)
         {
-            // Default to the previous behaviour — a short tick centred on the
-            // dimension line — and only adopt a full-length witness line if the
-            // computed geometry is plausible.
+            // Fallback: a short tick straddling the dimension line, as before.
+            // Only adopted if the surface position is missing or implausible.
+            //
+            // The stub keeps the orientation the working version had — running
+            // PERPENDICULAR to the measurement axis — because that is what makes
+            // the two references parallel to each other and perpendicular to the
+            // dimension direction, as NewDimension requires. Only its position
+            // changes: it now sits on the surface instead of on the dimension
+            // line. Rotating it to lie along the measurement axis would break the
+            // reference constraint and the dimensions with it.
             usedFallback = true;
-            double from = perpWorld - VendorConfig.TickHalfLength;
-            double to = perpWorld + VendorConfig.TickHalfLength;
+            double perpCentre = perpWorld;
+            double half = VendorConfig.TickHalfLength;
 
             if (perpObject is double po)
             {
                 double dir = Math.Sign(po - perpWorld);
                 if (dir == 0) dir = 1;
 
-                double f = perpWorld - dir * VendorConfig.TickOvershoot;
-                double t = po - dir * VendorConfig.TickGap;
-                double len = Math.Abs(t - f);
+                // Sit on the surface. Revit draws the visible witness line from
+                // here out to the dimension line, honouring the DimensionType's
+                // Gap to Element and Witness Line Extension — so this stub only
+                // has to mark the spot, not span the distance. TickGap is zero by
+                // design; the visual gap comes from the dimension type.
+                double perpAt = po - dir * VendorConfig.TickGap;
 
-                // The extents are measured relative to view.Origin while perpWorld
-                // derives from the CropBox, so this subtraction crosses two
-                // coordinate spaces. They agree in the views tested, but an
-                // implausible length means they do not agree here — degrade to the
-                // centred tick rather than draw something absurd.
-                if (len >= VendorConfig.MinTickLength && len <= VendorConfig.MaxTickLength)
+                // Crash guard only. maxGap is derived from the assembly's own
+                // perpendicular span, so a witness line reaching right across a
+                // stepped profile is allowed — that is correct geometry, not an
+                // error — while a genuinely nonsensical coordinate still degrades
+                // to a centred tick rather than being drawn.
+                if (Math.Abs(perpAt - perpWorld) <= maxGap)
                 {
-                    from = f;
-                    to = t;
+                    perpCentre = perpAt;
+                    half = VendorConfig.StubHalfLength;
                     usedFallback = false;
                 }
             }
 
-            XYZ a = WorldPt(view, alongCoord, from, isHoriz);
-            XYZ b = WorldPt(view, alongCoord, to, isHoriz);
+            XYZ a = WorldPt(view, alongCoord, perpCentre - half, isHoriz);
+            XYZ b = WorldPt(view, alongCoord, perpCentre + half, isHoriz);
 
             try
             {
@@ -1216,10 +1355,12 @@ namespace AVES.Cmds_PullDownAutoDimension
         /// The dimension is therefore straight by construction, however irregular
         /// the underlying geometry is.
         ///
-        /// The helper lines double as witness lines: they run from just past the
-        /// dimension line back to the assembly surface, which is what
-        /// <paramref name="perpExtent"/> supplies. Extending them does not affect
-        /// the reference constraint above — that governs direction, not length.
+        /// The helper lines double as witness lines, each reaching the surface
+        /// local to its own position, so lengths differ wherever the profile steps.
+        /// <paramref name="perpExtent"/> anchors the dimension LINE clear of the
+        /// whole silhouette; the per-tick probes supply the ENDPOINTS. Neither
+        /// affects the reference constraint above — that governs direction, not
+        /// length.
         ///
         /// Whole-curve references (GeometryCurve.Reference) are used rather than
         /// endpoint references: endpoint-only references are documented to be
@@ -1233,9 +1374,10 @@ namespace AVES.Cmds_PullDownAutoDimension
         /// </summary>
         private static bool PlaceOverallDim(
             Document doc, View view, DimensionType dimType,
+            List<Element> members, XYZ axisVec,
             (double NearCoord, double FarCoord, bool Valid) alongExtent,
             (double NearCoord, double FarCoord, bool Valid) perpExtent,
-            bool isHoriz, double perpWorld, GraphicsStyle? helperStyle,
+            bool isHoriz, double cropMin, GraphicsStyle? helperStyle,
             StringBuilder summary, string label)
         {
             if (!alongExtent.Valid) return false;
@@ -1243,28 +1385,66 @@ namespace AVES.Cmds_PullDownAutoDimension
             double nearCoord = alongExtent.NearCoord;
             double farCoord = alongExtent.FarCoord;
 
-            // Where the witness lines should stop: whichever face of the assembly
-            // sits nearer the dimension line. Null when the perpendicular extent
-            // could not be measured, which makes CreateTick fall back and report.
-            double? perpObject = perpExtent.Valid
-                ? (Math.Abs(perpExtent.NearCoord - perpWorld)
-                       <= Math.Abs(perpExtent.FarCoord - perpWorld)
-                       ? perpExtent.NearCoord : perpExtent.FarCoord)
-                : null;
+            // Placement and witness endpoints are separate concerns:
+            //
+            //   • The dimension LINE is anchored to the assembly's global
+            //     perpendicular extreme, so it clears the entire 2D silhouette.
+            //   • Each witness ENDPOINT is probed locally, so every stub reaches
+            //     the surface directly beneath its own position.
+            //
+            // Anchoring placement to the local surfaces instead bounded the witness
+            // lengths nicely, but only guaranteed clearance at the two along-extreme
+            // positions — anything protruding further at some other along-coordinate
+            // ended up underneath the dimension line. Because NearCoord is the
+            // minimum over every swept point, offsetting from it cannot overlap any
+            // geometry anywhere. The cost is longer witness lines wherever the
+            // profile steps, which is correct and is why the crash guard below is
+            // scaled to the assembly rather than fixed.
+            XYZ perpVec = isHoriz ? view.UpDirection : view.RightDirection;
 
-            DetailCurve? tickNear = CreateTick(doc, view, nearCoord, perpWorld, perpObject,
-                                               isHoriz, helperStyle, out bool fbNear);
-            DetailCurve? tickFar = CreateTick(doc, view, farCoord, perpWorld, perpObject,
-                                              isHoriz, helperStyle, out bool fbFar);
-            if (tickNear == null || tickFar == null) return false;
+            double? localNear = ProbeLocalSurface(members, view, axisVec, perpVec, nearCoord);
+            double? localFar = ProbeLocalSurface(members, view, axisVec, perpVec, farCoord);
 
-            if (fbNear || fbFar)
+            double? globalPerp = perpExtent.Valid ? perpExtent.NearCoord : null;
+
+            double? perpNearUsed = localNear ?? globalPerp;
+            double? perpFarUsed = localFar ?? globalPerp;
+
+            double perpWorld;
+            if (perpExtent.Valid)
+            {
+                perpWorld = perpExtent.NearCoord - VendorConfig.DimLineOffset;
+                summary.AppendLine(
+                    $"  anchor  {view.Name} / {label}: " +
+                    $"globalNear={ToMm(perpExtent.NearCoord).ToString("F1").PadLeft(10)}  " +
+                    $"dimLine={ToMm(perpWorld).ToString("F1").PadLeft(10)}  " +
+                    $"(clearance {ToMm(VendorConfig.DimLineOffset):F1})");
+            }
+            else
             {
                 summary.AppendLine(
-                    $"  !  {view.Name} / {label}: witness-line fallback used (short centred " +
-                    $"tick) — computed length out of range, so the view-origin and CropBox " +
-                    $"coordinate spaces may disagree in this view.");
+                    $"  !  {view.Name} / {label}: perpendicular extent unmeasurable — " +
+                    $"dimension line falls back to crop-box placement.");
+                perpWorld = cropMin - VendorConfig.DimLineOffset;
             }
+
+            // Guard scaled to the assembly rather than an absolute limit: a witness
+            // line legitimately spans up to the full perpendicular extent plus the
+            // offsets at either end.
+            double maxGap = perpExtent.Valid
+                ? (perpExtent.FarCoord - perpExtent.NearCoord) + 2.0 * VendorConfig.DimLineOffset
+                : VendorConfig.MaxTickLength;
+
+            DetailCurve? tickNear = CreateTick(doc, view, nearCoord, perpWorld, perpNearUsed,
+                                               isHoriz, maxGap, helperStyle, out bool fbNear);
+            DetailCurve? tickFar = CreateTick(doc, view, farCoord, perpWorld, perpFarUsed,
+                                              isHoriz, maxGap, helperStyle, out bool fbFar);
+            if (tickNear == null || tickFar == null) return false;
+
+            // Logged per tick, with coordinates rather than a pass/fail flag — see
+            // LogTick for why the flag alone proved untrustworthy.
+            LogTick(summary, view, label, "near", localNear, globalPerp, perpNearUsed, perpWorld, fbNear);
+            LogTick(summary, view, label, "far ", localFar, globalPerp, perpFarUsed, perpWorld, fbFar);
 
             Reference? refNear = tickNear.GeometryCurve?.Reference;
             Reference? refFar = tickFar.GeometryCurve?.Reference;
@@ -1310,23 +1490,23 @@ namespace AVES.Cmds_PullDownAutoDimension
             BoundingBoxXYZ cb = view.CropBox;
             ExpandCropBox(view, Mm(50));
 
-            double offset = VendorConfig.Offset;
             int created = 0;
 
             var hExtent = GetOverallExtent(members, view, view.RightDirection);
             var vExtent = GetOverallExtent(members, view, view.UpDirection);
 
-            double perpH = cb.Min.Y + offset;
-            if (PlaceOverallDim(doc, view, dimType,
+            // Dimension line placement now happens inside PlaceOverallDim, after
+            // the local surfaces have been probed — only the crop-box coordinate
+            // is passed, for the last-resort fallback.
+            if (PlaceOverallDim(doc, view, dimType, members, view.RightDirection,
                     alongExtent: hExtent, perpExtent: vExtent,
-                    isHoriz: true, perpWorld: perpH,
+                    isHoriz: true, cropMin: cb.Min.Y,
                     helperStyle: helperStyle, summary: summary, label: horizLabel))
                 created++;
 
-            double perpV = cb.Min.X + offset;
-            if (PlaceOverallDim(doc, view, dimType,
+            if (PlaceOverallDim(doc, view, dimType, members, view.UpDirection,
                     alongExtent: vExtent, perpExtent: hExtent,
-                    isHoriz: false, perpWorld: perpV,
+                    isHoriz: false, cropMin: cb.Min.X,
                     helperStyle: helperStyle, summary: summary, label: vertLabel))
                 created++;
 
