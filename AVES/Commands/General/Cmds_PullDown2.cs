@@ -1,5 +1,5 @@
 ﻿// -----------------------------------------------------------------------
-// Pulldown Title: Vendor Drawing Automation
+// Pulldown Title: Drawing Automations
 // Sub-buttons:
 //   - Vendor Drawings: Auto-generates a two-sheet (A3) vendor drawing set
 //     per assembly, with 3D and orthographic detail views placed from
