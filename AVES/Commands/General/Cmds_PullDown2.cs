@@ -1,39 +1,15 @@
-﻿// =============================================================================
-// AVES Vendor Drawing Automation — Single-File Edition
-// Target: Autodesk Revit 2025 (.NET 8) | C# 12
-// Namespace: AVES.Cmds_PullDownCreateSheets
-// =============================================================================
-//
-// UI REDESIGN — AVES Refined Native / AVES Red
-// Changes applied:
-//   • AvesUiHelper static class added (buttons, section headers, brand tile,
-//     status pill, stat tile, hover wiring).
-//   • FormHelpers.SectionHeader replaced with accent-stripe variant.
-//   • NumericRow TextBox styled with token borders, invalid = AccentTint bg.
-//   • LayoutSettingsDialogBase: window backdrop, Segoe UI, UseLayoutRounding,
-//     interior header strip (brand tile + title), footer strip with
-//     Ghost/Secondary/Primary buttons replacing old inline buttons.
-//   • StatusText repositioned to right column, styled Text Faint 10pt.
-//   • ReportWindow: backdrop + font, interior header strip, stat tiles,
-//     status pill, styled body TextBox, token footer with Secondary + Primary.
-//   • TemplatePickerWindow: minimal token styling.
-//   • LayoutPreviewCanvas colour constants updated to new palette.
-//   No business logic, Revit API calls, settings models, or command flow changed.
-//
-// CONTENTS (in order)
-//   1. AvesUiHelper            — design-system factory methods
-//   2. Shared core             — RevitConstants, GeometryUtils, ViewUtils,
-//                                TitleblockUtils, NameRegistry, FailureHandling,
-//                                Reporting, TemplatePickerWindow, TemplatePicker.
-//   3. Settings models         — VendorDrawingsSettings, AssemblyDrawingsSettings,
-//                                MTDrawingsSettings
-//   4. Persistence             — SettingsStore
-//   5. UI building blocks      — NumericRow, BoolRow, FormHelpers,
-//                                LayoutPreviewCanvas, dialog base, three dialogs.
-//   6. SettingsGate
-//   7. Commands                — Cmd_VendorDrawings, Cmd_AssemblyDrawings,
-//                                Cmd_MTDrawings.
-// =============================================================================
+﻿// -----------------------------------------------------------------------
+// Pulldown Title: Vendor Drawing Automation
+// Sub-buttons:
+//   - Vendor Drawings: Auto-generates a two-sheet (A3) vendor drawing set
+//     per assembly, with 3D and orthographic detail views placed from
+//     user-picked view templates and a titleblock.
+//   - Assembly Drawings: Auto-generates a one-sheet vendor drawing per
+//     assembly that additionally clusters and calls out bolts by family
+//     and direction.
+//   - MT Drawings: Auto-generates a single-sheet (A1) vendor drawing per
+//     assembly with a condensed set of 3D/orthographic views.
+// -----------------------------------------------------------------------
 
 // Autodesk
 using Autodesk.Revit.Attributes;
