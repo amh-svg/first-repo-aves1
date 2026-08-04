@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AVES — Refined Native</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="aves-themes.css" />
+<style>
+  html, body { margin: 0; background: #efece6; color: #1f2329;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
+  .page { max-width: 1080px; margin: 0 auto; padding: 40px 28px 120px; }
+  .page-head { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .page-head .tile { width: 30px; height: 30px; border-radius: 8px; background: var(--accent, #E64A2E);
+    display: flex; align-items: center; justify-content: center; }
+  .page-head .tile i { width: 36%; height: 36%; border-radius: 50%; background: rgba(255,255,255,.92); }
+  .page-head h1 { font-size: 19px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+  .page-head h1 span { color: #8b9099; font-weight: 600; }
+  .page-sub { font-size: 13.5px; color: #5a6069; margin: 0 0 36px 44px; max-width: 640px; line-height: 1.5; }
+  .group-label { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: #9aa0a8; margin: 38px 0 16px; }
+  .frames { display: flex; flex-wrap: wrap; gap: 26px 28px; align-items: flex-start; }
+  .frame { display: flex; flex-direction: column; gap: 9px; }
+  .frame > .cap { font-size: 12px; font-weight: 600; color: #6a7078; display: flex; align-items: center; gap: 7px; }
+  .frame > .cap b { color: #1f2329; font-weight: 600; }
+  .frame > .box { flex: 0 0 auto; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" fill="#f4f4f6"/>
+    <rect x="30" y="26" width="40" height="40" rx="10" fill="#E64A2E"/>
+    <circle cx="50" cy="46" r="7" fill="#fff"/>
+    <rect x="24" y="74" width="52" height="6" rx="3" fill="#c9cdd4"/>
+  </svg>
+</template>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="aves-windows.jsx"></script>
+<script type="text/babel" src="aves-report.jsx"></script>
+
+<script type="text/babel">
+const { useState } = React;
+
+// Accent palettes — semantic status colours stay fixed; only the accent
+// (buttons, focus, selection, brand tile, progress, chips) changes.
+const PALETTES = [
+  { id: "red",      name: "AVES Red",   note: "brand colour", accent: "#E64A2E", deep: "#C2402A", tint: "#FBE9E4" },
+  { id: "slate",    name: "Slate Blue", note: "engineering",  accent: "#3E63C9", deep: "#2F4DA3", tint: "#E8EDFB" },
+  { id: "teal",     name: "Teal",       note: "calm",         accent: "#0E8C84", deep: "#0A6E68", tint: "#DCF0EE" },
+  { id: "indigo",   name: "Indigo",     note: "modern",       accent: "#5B4BC4", deep: "#45389C", tint: "#ECE9FA" },
+  { id: "amber",    name: "Amber",      note: "warm neutral", accent: "#B5742A", deep: "#8F5A1C", tint: "#F8EEDC" },
+  { id: "graphite", name: "Graphite",   note: "monochrome",   accent: "#3C424B", deep: "#2A2F37", tint: "#EAECEF" },
+];
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "palette": "red",
+  "showMark": true
+}/*EDITMODE-END*/;
+
+function Frame({ label, sub, w, h, children }) {
+  return (
+    <div className="frame">
+      <div className="cap"><b>{label}</b>{sub && <span>· {sub}</span>}</div>
+      <div className="box" style={{ width: w, height: h }}>{children}</div>
+    </div>
+  );
+}
+
+function PalettePicker({ value, onChange }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+      {PALETTES.map(p => {
+        const on = p.id === value;
+        return (
+          <button key={p.id} onClick={() => onChange(p.id)}
+            style={{
+              display: "flex", alignItems: "center", gap: 9, cursor: "pointer", textAlign: "left",
+              padding: "8px 9px", borderRadius: 9, background: on ? "#fff" : "transparent",
+              border: on ? "1.5px solid " + p.accent : "1.5px solid rgba(0,0,0,.08)",
+              boxShadow: on ? "0 1px 3px rgba(0,0,0,.08)" : "none",
+            }}>
+            <span style={{ display: "flex", flex: "0 0 auto" }}>
+              <span style={{ width: 16, height: 16, borderRadius: "50% 0 0 50%", background: p.accent }} />
+              <span style={{ width: 16, height: 16, borderRadius: "0 50% 50% 0", background: p.tint }} />
+            </span>
+            <span style={{ lineHeight: 1.15, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#1f2329" }}>{p.name}</span>
+              <span style={{ display: "block", fontSize: 10.5, color: "#9aa0a8" }}>{p.note}</span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const pal = PALETTES.find(p => p.id === t.palette) || PALETTES[0];
+  window.AVES_HIDE_MARK = !t.showMark;
+
+  const vars = {
+    "--accent": pal.accent,
+    "--accent-deep": pal.deep,
+    "--p-coral-bg": pal.tint,
+  };
+
+  return (
+    <div className="v-native" style={vars}>
+      <div className="page">
+        <div className="page-head">
+          {t.showMark && <span className="tile"><i /></span>}
+          <h1>AVES <span>— Refined Native</span></h1>
+        </div>
+        <p className="page-sub">
+          Final spec — Refined Native, AVES Red, inline settings controls. Status colours
+          (green / red / amber) stay semantic; the accent drives buttons, focus, selection,
+          progress and the brand tile. Palette is still adjustable under <b>Tweaks</b>.
+        </p>
+
+        <div className="group-label">The report — most-seen window</div>
+        <div className="frames">
+          <Frame label="Unified report" w={900} h={612}><Report v="native" /></Frame>
+        </div>
+
+        <div className="group-label">Settings — inline controls</div>
+        <div className="frames">
+          <Frame label="Batch shared parameters" sub="settings" w={490} h={500}><SettingsInline v="native" /></Frame>
+        </div>
+
+        <div className="group-label">Supporting windows</div>
+        <div className="frames">
+          <Frame label="Multi-select picker" w={420} h={470}><MultiPicker v="native" /></Frame>
+          <Frame label="Progress" w={470} h={200}><Progress v="native" /></Frame>
+        </div>
+      </div>
+
+      <TweaksPanel>
+        <TweakSection label="Accent palette" />
+        <PalettePicker value={t.palette} onChange={(v) => setTweak("palette", v)} />
+        <TweakSection label="Brand" />
+        <TweakToggle label="Show brand tile" value={t.showMark} onChange={(v) => setTweak("showMark", v)} />
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
