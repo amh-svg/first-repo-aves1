@@ -756,12 +756,19 @@ internal sealed class TemplatePickerWindow : Window
         Height = 580;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         ResizeMode = ResizeMode.CanResize;      // allow resize so long lists work
+        // ToolWindow gives a close-only title bar while KEEPING resize.
+        // ResizeMode.NoResize would also hide minimize/maximize but takes resizing
+        // with it, which the list needs.
+        WindowStyle = WindowStyle.ToolWindow;
         MinWidth = 340;
         MinHeight = 340;
         ShowInTaskbar = false;
         UseLayoutRounding = true;
         FontFamily = AvTokens.Ui;
-        Background = AvTokens.Br(AvTokens.Backdrop);
+        // Surface, not Backdrop. Backdrop is for the area BEHIND a window's
+        // content when using custom chrome — not the body itself, which the
+        // Refined Native token table puts on Surface.
+        Background = AvTokens.Br(AvTokens.Surface);
 
         if (revitHandle != IntPtr.Zero)
             _ = new WindowInteropHelper(this) { Owner = revitHandle };
@@ -776,20 +783,22 @@ internal sealed class TemplatePickerWindow : Window
         // ── Footer ────────────────────────────────────────────────────────────
         var okBtn = AvControls.PrimaryButtonHoverLoaded("OK");
         okBtn.IsDefault = true;
-        okBtn.Margin = new Thickness(0, 0, 8, 0);
         okBtn.Click += (_, _) => Confirm();
 
         var cancelBtn = AvControls.GhostButtonHoverLoaded("Cancel");
         cancelBtn.IsCancel = true;
+        cancelBtn.Margin = new Thickness(0, 0, 8, 0);
         cancelBtn.Click += (_, _) => { DialogResult = false; Close(); };
 
+        // Cancel left, primary right — matches LayoutSettingsDialogBase in this
+        // file and TemplateMenuWindow, so the whole flow reads the same way.
         var btnRow = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
         };
-        btnRow.Children.Add(okBtn);
         btnRow.Children.Add(cancelBtn);
+        btnRow.Children.Add(okBtn);
 
         var footer = new Border
         {
@@ -805,19 +814,7 @@ internal sealed class TemplatePickerWindow : Window
         // ── Body — DockPanel so ListBox fills all remaining height ────────────
         var body = new DockPanel { Margin = new Thickness(20, 16, 20, 16) };
 
-        // Hint label
-        var hint = new TextBlock
-        {
-            Text = "Select a template, then click OK.",
-            FontSize = 12,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = AvTokens.Br(AvTokens.TextDim),
-            Margin = new Thickness(0, 0, 0, 10),
-        };
-        DockPanel.SetDock(hint, Dock.Top);
-        body.Children.Add(hint);
-
-        // ── Search box ────────────────────────────────────────────────────────
+        // ── Search box — sits directly under the header, no instruction bar ───
         // Container: Surface2 bg, 1px BorderStrong border, radius-5 look via
         // inner padding. Icon drawn as a TextBlock glyph (🔍 or plain text).
         var searchIcon = new TextBlock
@@ -902,6 +899,9 @@ internal sealed class TemplatePickerWindow : Window
             BorderThickness = new Thickness(1),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
+        // Shared row styling: generous padding, rounded rows, hover tint and
+        // accent-coloured selection, same as the other AVES pickers.
+        _listBox.ItemContainerStyle = AvControls.PickerListItemStyle();
         // Attached properties must be set via SetValue, not in the initializer.
         // Vertical scroll always on so mouse-wheel is captured by the ListBox
         // itself rather than bubbling to the window.
@@ -946,6 +946,162 @@ internal sealed class TemplatePickerWindow : Window
     }
 }
 
+/// <summary>
+/// Main menu for the three template selections. Three numbered rows, each
+/// opening the existing TemplatePickerWindow as its own popup, plus a Run button
+/// that stays disabled until all three are chosen.
+///
+/// Replaces a forced sequential wizard: the three picks were previously three
+/// showings of the same window, in fixed order, with no way to revisit an earlier
+/// one. Selections are now made in any order and remain visible on the menu.
+///
+/// Cancel semantics are deliberately unchanged — cancelling ANY popup aborts the
+/// whole flow, matching the previous all-or-nothing contract that both callers
+/// rely on. A popup's Cancel does not merely return to the menu.
+/// </summary>
+internal sealed class TemplateMenuWindow : Window
+{
+    private const string Placeholder = "Not selected";
+
+    public View? V3d { get; private set; }
+    public View? V2d { get; private set; }
+    public View? Sched { get; private set; }
+
+    private readonly IReadOnlyDictionary<string, View> _allTemplates;
+    private readonly IReadOnlyDictionary<string, View> _scheduleTemplates;
+    private readonly IntPtr _revitHandle;
+
+    private readonly Button _row3d;
+    private readonly Button _row2d;
+    private readonly Button _rowSched;
+    private readonly Button _runBtn;
+
+    public TemplateMenuWindow(
+        IReadOnlyDictionary<string, View> allTemplates,
+        IReadOnlyDictionary<string, View> scheduleTemplates,
+        IntPtr revitHandle = default)
+    {
+        _allTemplates = allTemplates;
+        _scheduleTemplates = scheduleTemplates;
+        _revitHandle = revitHandle;
+
+        Title = "Drawing Automations";
+        Width = 460;
+        Height = 380;
+        MinWidth = 380;
+        MinHeight = 340;
+        WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        ResizeMode = ResizeMode.CanResize;
+        ShowInTaskbar = false;
+        UseLayoutRounding = true;
+        SnapsToDevicePixels = true;
+        FontFamily = AvTokens.Ui;
+        // Surface, not Backdrop — see TemplatePickerWindow for the reasoning.
+        Background = AvTokens.Br(AvTokens.Surface);
+
+        if (revitHandle != IntPtr.Zero)
+            _ = new WindowInteropHelper(this) { Owner = revitHandle };
+
+        var root = new DockPanel();
+
+        var header = AvControls.HeaderStrip("Select Templates");
+        DockPanel.SetDock(header, Dock.Top);
+        root.Children.Add(header);
+
+        // ── Footer ────────────────────────────────────────────────────────────
+        _runBtn = AvControls.PrimaryButtonHoverLoaded("Run");
+        _runBtn.IsDefault = true;
+        _runBtn.IsEnabled = false;
+        _runBtn.Click += (_, _) => { DialogResult = true; Close(); };
+
+        var cancelBtn = AvControls.GhostButtonHoverLoaded("Cancel");
+        cancelBtn.IsCancel = true;
+        cancelBtn.Margin = new Thickness(0, 0, 8, 0);
+        cancelBtn.Click += (_, _) => { DialogResult = false; Close(); };
+
+        // Cancel left, primary right — matches LayoutSettingsDialogBase in this
+        // file and TemplatePickerWindow, so the whole flow reads the same way.
+        var btnRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        btnRow.Children.Add(cancelBtn);
+        btnRow.Children.Add(_runBtn);
+
+        var footer = new Border
+        {
+            Background = AvTokens.Br(AvTokens.Surface2),
+            BorderBrush = AvTokens.Br(AvTokens.Border),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(20, 14, 20, 14),
+            Child = btnRow,
+        };
+        DockPanel.SetDock(footer, Dock.Bottom);
+        root.Children.Add(footer);
+
+        // ── Body — the three numbered rows, scrollable ────────────────────────
+        var stack = new StackPanel();
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Choose a template for each step, then click Run.",
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = AvTokens.Br(AvTokens.TextDim),
+            Margin = new Thickness(0, 0, 0, 12),
+        });
+
+        _row3d = AvControls.MenuRow(1, "3D View Template", Placeholder);
+        _row3d.Click += (_, _) => PickInto(
+            _allTemplates, "Select 3D View Template", _row3d, v => V3d = v);
+
+        _row2d = AvControls.MenuRow(2, "2D View Template", Placeholder);
+        _row2d.Click += (_, _) => PickInto(
+            _allTemplates, "Select 2D View Template", _row2d, v => V2d = v);
+
+        _rowSched = AvControls.MenuRow(3, "Schedule Template", Placeholder);
+        _rowSched.Click += (_, _) => PickInto(
+            _scheduleTemplates, "Select Schedule Template", _rowSched, v => Sched = v);
+
+        stack.Children.Add(_row3d);
+        stack.Children.Add(_row2d);
+        stack.Children.Add(_rowSched);
+
+        var scroller = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Padding = new Thickness(20, 16, 20, 16),
+            Content = stack,
+        };
+        root.Children.Add(scroller);
+
+        Content = root;
+    }
+
+    /// <summary>
+    /// Opens the section popup. Cancelling it aborts the entire flow rather than
+    /// returning to the menu — see the class remarks on preserved cancel
+    /// semantics.
+    /// </summary>
+    private void PickInto(
+        IReadOnlyDictionary<string, View> source, string title,
+        Button row, Action<View?> assign)
+    {
+        var picked = TemplatePicker.Pick(source, title, _revitHandle);
+        if (picked is null)
+        {
+            DialogResult = false;
+            Close();
+            return;
+        }
+
+        assign(picked);
+        AvControls.SetMenuRowValue(row, picked.Name, Placeholder);
+        _runBtn.IsEnabled = V3d is not null && V2d is not null && Sched is not null;
+    }
+}
+
 internal static class TemplatePicker
 {
     public static View? Pick(IReadOnlyDictionary<string, View> templates, string title,
@@ -958,16 +1114,48 @@ internal static class TemplatePicker
         return templates[dialog.SelectedTemplateName];
     }
 
+    /// <summary>
+    /// The subset of <paramref name="templates"/> that can actually be applied to
+    /// a schedule.
+    ///
+    /// The schedule step previously received the same unfiltered template list as
+    /// the 3D and 2D steps, so it offered 3D and 2D view templates as schedule
+    /// templates. Those are not merely inappropriate — the result is assigned to
+    /// a ViewSchedule's ViewTemplateId, which Revit rejects, so picking one failed
+    /// at apply time after the user had already made two other selections.
+    ///
+    /// Filtered from the dictionary rather than re-collected from the document, so
+    /// PickTriple keeps its signature and both call sites stay untouched.
+    /// </summary>
+    private static IReadOnlyDictionary<string, View> ScheduleTemplatesOf(
+        IReadOnlyDictionary<string, View> templates) =>
+        templates
+            .Where(kv => kv.Value.ViewType == ViewType.Schedule)
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
     public static (View? V3d, View? V2d, View? Sched) PickTriple(
         IReadOnlyDictionary<string, View> templates, IntPtr revitHandle = default)
     {
-        var v3d = Pick(templates, "Select 3D View Template", revitHandle);
-        if (v3d is null) return (null, null, null);
-        var v2d = Pick(templates, "Select 2D View Template", revitHandle);
-        if (v2d is null) return (null, null, null);
-        var sched = Pick(templates, "Select Schedule Template", revitHandle);
-        if (sched is null) return (null, null, null);
-        return (v3d, v2d, sched);
+        var scheduleTemplates = ScheduleTemplatesOf(templates);
+        if (scheduleTemplates.Count == 0)
+        {
+            AvControls.ShowAlert("Vendor Automation",
+                "No schedule view templates found in this project.\n\n" +
+                "A schedule template is required for the part list. Create one, " +
+                "then run this command again.",
+                AlertSeverity.Warning);
+            return (null, null, null);
+        }
+
+        var menu = new TemplateMenuWindow(templates, scheduleTemplates, revitHandle);
+        if (menu.ShowDialog() != true) return (null, null, null);
+
+        // Belt-and-braces: Run is only enabled once all three are set, but the
+        // tuple contract is all-or-nothing, so anything missing here is a cancel.
+        if (menu.V3d is null || menu.V2d is null || menu.Sched is null)
+            return (null, null, null);
+
+        return (menu.V3d, menu.V2d, menu.Sched);
     }
 }
 
