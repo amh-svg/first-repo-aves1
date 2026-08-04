@@ -105,6 +105,12 @@ namespace AVES.Core
         /// <summary>
         /// Interior header strip (logo + title text, no trailing rule/height cap).
         /// Matches AvesUiHelper's (Cmds_PullDown2.cs) implementation.
+        ///
+        /// Background is Surface2, per the Refined Native token table which scopes
+        /// Surface-2 to "footers, header strips, inset panels, table header". This
+        /// was Surface until the design handoff settled it; the change reaches all
+        /// four callers in Cmds_PullDown2.cs, ReportWindow and
+        /// LayoutSettingsDialogBase included, since the strip is shared.
         /// </summary>
         public static Border HeaderStrip(string titleText)
         {
@@ -224,6 +230,176 @@ namespace AVES.Core
 
         /// <summary>1px horizontal divider. Matches T's and AvesUI's HDivider.</summary>
         public static Border HDivider() => new Border { Height = 1, Background = AvTokens.B(AvTokens.Border) };
+
+        // ====================================================================
+        //  Picker list rows
+        // ====================================================================
+
+        /// <summary>
+        /// Row styling for a single-select picker list: generous padding, rounded
+        /// row, tinted hover, accent-coloured selection.
+        ///
+        /// Consolidated from two byte-identical copies in Cmds_Pulldown3.cs
+        /// (DimTypePickerWindow) and Cmds_Pulldown4.cs (BatchViewPickerWindow).
+        /// Two independent identical implementations is the strongest available
+        /// signal of the intended design, so that shape won.
+        ///
+        /// The hover trigger is NEW -- neither source had one. It is added here
+        /// rather than locally so every picker gains it together instead of a
+        /// fourth variant appearing.
+        ///
+        /// Third and fourth copies exist in Cmds_Button7.cs and Cmds_Button8.cs
+        /// and are deliberately NOT migrated. Button7's diverges: it tints the
+        /// selected background but never sets the foreground, so its selected rows
+        /// do not go accent-coloured. Adopting this style there would change that
+        /// window's appearance, which belongs in its own task -- it joins the
+        /// follow-up backlog alongside Button8's CreateParamField, Pulldown3's
+        /// Left-aligned FieldButtonTemplate copy, and the StatusPill / StatTile /
+        /// button-technique items.
+        ///
+        /// Returns a fresh Style per call: WPF seals a Style once it is applied,
+        /// so a shared static instance could not be reused across windows.
+        /// </summary>
+        public static Style PickerListItemStyle()
+        {
+            var style = new Style(typeof(ListBoxItem));
+            style.Setters.Add(new Setter(ListBoxItem.PaddingProperty, new Thickness(12, 9, 12, 9)));
+            style.Setters.Add(new Setter(ListBoxItem.FontFamilyProperty, AvTokens.Ui));
+            style.Setters.Add(new Setter(ListBoxItem.FontSizeProperty, 13.0));
+            style.Setters.Add(new Setter(ListBoxItem.ForegroundProperty, AvTokens.B(AvTokens.Text)));
+            style.Setters.Add(new Setter(ListBoxItem.BackgroundProperty, Brushes.Transparent));
+
+            // A plain ListBoxItem's default chrome uses the OS/theme highlight for
+            // the selected state and ignores a Background setter, so supply a
+            // Border-based template bound to Background/Padding.
+            var tpl = new ControlTemplate(typeof(ListBoxItem));
+            var bd = new FrameworkElementFactory(typeof(Border));
+            bd.Name = "RowBorder";
+            bd.SetBinding(Border.BackgroundProperty,
+                new System.Windows.Data.Binding("Background")
+                { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            bd.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+            bd.SetBinding(Border.PaddingProperty,
+                new System.Windows.Data.Binding("Padding")
+                { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            bd.AppendChild(cp);
+            tpl.VisualTree = bd;
+            style.Setters.Add(new Setter(ListBoxItem.TemplateProperty, tpl));
+
+            // Order matters: when several triggers set the same property, the last
+            // active one wins. Hover is registered first so a row that is both
+            // selected and hovered keeps its accent treatment rather than
+            // flickering back to the hover tint under the cursor.
+            var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            hover.Setters.Add(new Setter(ListBoxItem.BackgroundProperty, AvTokens.B(AvTokens.Zebra)));
+            style.Triggers.Add(hover);
+
+            var selected = new Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
+            selected.Setters.Add(new Setter(ListBoxItem.BackgroundProperty, AvTokens.B(AvTokens.AccentTint)));
+            selected.Setters.Add(new Setter(ListBoxItem.ForegroundProperty, AvTokens.B(AvTokens.Accent)));
+            style.Triggers.Add(selected);
+
+            return style;
+        }
+
+        // ====================================================================
+        //  Menu row
+        // ====================================================================
+
+        /// <summary>
+        /// A numbered menu row: step badge, title, subtitle showing the current
+        /// value (or a placeholder), and a trailing chevron. Reads as one
+        /// clickable field and opens whatever picker the caller wires to Click.
+        ///
+        /// Returns the Button so the caller owns Click wiring, matching the
+        /// convention of the PrimaryButton/SecondaryButton family. Call
+        /// <see cref="SetMenuRowValue"/> to update the subtitle after a pick --
+        /// it also switches the subtitle from the faint placeholder colour to
+        /// the normal text colour, which is how "chosen" reads at a glance.
+        ///
+        /// Uses NumberBadge for the step circle rather than a new widget: that
+        /// badge is already the shared step indicator across six command files.
+        /// </summary>
+        public static Button MenuRow(int step, string title, string placeholder)
+        {
+            var badge = NumberBadge(step);
+            badge.VerticalAlignment = VerticalAlignment.Center;
+
+            var titleText = new TextBlock
+            {
+                Text = title,
+                FontFamily = AvTokens.Ui,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = AvTokens.B(AvTokens.Text)
+            };
+
+            var valueText = new TextBlock
+            {
+                Text = placeholder,
+                FontFamily = AvTokens.Ui,
+                FontSize = 12,
+                Foreground = AvTokens.B(AvTokens.TextFaint),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+
+            var textStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            textStack.Children.Add(titleText);
+            textStack.Children.Add(valueText);
+
+            var chevron = new TextBlock
+            {
+                Text = "›",
+                FontFamily = AvTokens.Ui,
+                FontSize = 18,
+                Foreground = AvTokens.B(AvTokens.TextFaint),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 2, 0)
+            };
+
+            var grid = new WpfGrid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            WpfGrid.SetColumn(badge, 0);
+            WpfGrid.SetColumn(textStack, 1);
+            WpfGrid.SetColumn(chevron, 2);
+            grid.Children.Add(badge);
+            grid.Children.Add(textStack);
+            grid.Children.Add(chevron);
+
+            var btn = new Button
+            {
+                Content = grid,
+                Template = FieldButtonTemplate(HorizontalAlignment.Stretch),
+                Padding = new Thickness(12, 10, 12, 10),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Cursor = Cursors.Hand,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            // Stashed so SetMenuRowValue can find the subtitle without the
+            // caller having to hold a reference to it.
+            btn.Tag = valueText;
+            return btn;
+        }
+
+        /// <summary>
+        /// Updates a <see cref="MenuRow"/>'s subtitle. Passing null restores the
+        /// placeholder wording and its faint colour.
+        /// </summary>
+        public static void SetMenuRowValue(Button row, string? value, string placeholder)
+        {
+            if (row.Tag is not TextBlock valueText) return;
+
+            bool chosen = !string.IsNullOrWhiteSpace(value);
+            valueText.Text = chosen ? value : placeholder;
+            valueText.Foreground = AvTokens.B(chosen ? AvTokens.Text : AvTokens.TextFaint);
+        }
 
         // ====================================================================
         //  Stat tile / status pill
@@ -488,12 +664,28 @@ namespace AVES.Core
         /// Rounded, bordered, hover-highlighted look shared by SecondaryButton and
         /// any clickable "field" control (e.g. a picker trigger). Matches W's
         /// FieldButtonTemplate (Cmds_Pulldown4.cs).
+        ///
+        /// contentAlign defaults to Center, which is what every existing caller
+        /// gets. Two other alignments of this same template exist in the tree and
+        /// are deliberately NOT collapsed into this one:
+        ///
+        ///   * Cmds_Pulldown3.cs has a private copy identical but for Left
+        ///     alignment, so its dimension-type field reads as a value rather
+        ///     than a centred label.
+        ///   * MenuRow below needs Stretch, so its trailing chevron can sit at
+        ///     the right edge.
+        ///
+        /// Pulldown3's copy is a genuine drifted duplicate and a follow-up
+        /// consolidation item; it is left alone here because migrating it would
+        /// change that window's appearance in a task that is not about it.
         /// </summary>
-        public static ControlTemplate FieldButtonTemplate() =>
-            FactoryBtnTemplate(AvTokens.Surface, AvTokens.Surface2, AvTokens.BorderStrong, 1);
+        public static ControlTemplate FieldButtonTemplate(
+            HorizontalAlignment contentAlign = HorizontalAlignment.Center) =>
+            FactoryBtnTemplate(AvTokens.Surface, AvTokens.Surface2, AvTokens.BorderStrong, 1, contentAlign);
 
         private static ControlTemplate FactoryBtnTemplate(
-            string? normalBg, string hoverBg, string? borderHex, double borderPx)
+            string? normalBg, string hoverBg, string? borderHex, double borderPx,
+            HorizontalAlignment contentAlign = HorizontalAlignment.Center)
         {
             var tpl = new ControlTemplate(typeof(Button));
             var bd = new FrameworkElementFactory(typeof(Border));
@@ -507,7 +699,7 @@ namespace AVES.Core
                 bd.SetValue(Border.BorderThicknessProperty, new Thickness(borderPx));
             }
             var cp = new FrameworkElementFactory(typeof(ContentPresenter));
-            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, contentAlign);
             cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
             cp.SetBinding(ContentPresenter.MarginProperty,
                 new System.Windows.Data.Binding("Padding")
