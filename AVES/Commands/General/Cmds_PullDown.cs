@@ -153,81 +153,15 @@ namespace AVES.Cmds_PullDown
             return img;
         }
 
-        // ── Picker button (replaces ComboBox — white, bordered, chevron) ──
-        public static Button PickerButton(string currentValue)
-        {
-            var label = new TextBlock
-            {
-                Text = currentValue,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                Foreground = AvTokens.Brush(AvTokens.Text),
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                TextTrimming = TextTrimming.CharacterEllipsis
-            };
-
-            var btn = new Button
-            {
-                Content = label,
-                Tag = label,
-                Height = 38,
-                Padding = new Thickness(10, 0, 10, 0),
-                Cursor = Cursors.Hand,
-                HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Template = PickerButtonTemplate()
-            };
-            return btn;
-        }
-
-        private static ControlTemplate PickerButtonTemplate()
-        {
-            var t = new ControlTemplate(typeof(Button));
-            var bd = new FrameworkElementFactory(typeof(WpfBorder));
-            bd.Name = "bd";
-            bd.SetValue(WpfBorder.BackgroundProperty, Brushes.White);
-            bd.SetValue(WpfBorder.BorderBrushProperty, AvTokens.Brush(AvTokens.BorderStrong));
-            bd.SetValue(WpfBorder.BorderThicknessProperty, new Thickness(1));
-            bd.SetValue(WpfBorder.CornerRadiusProperty, new CornerRadius(5));
-            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
-            cp.SetValue(ContentPresenter.MarginProperty, new Thickness(10, 0, 10, 0));
-            cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Stretch);
-            bd.AppendChild(cp);
-            t.VisualTree = bd;
-            var hover = new WpfTrigger { Property = UIElement.IsMouseOverProperty, Value = true };
-            hover.Setters.Add(new WpfSetter(WpfBorder.BorderBrushProperty, AvTokens.Brush(AvTokens.Accent), "bd"));
-            hover.Setters.Add(new WpfSetter(WpfBorder.BackgroundProperty, AvTokens.Brush(AvTokens.AccentTint), "bd"));
-            t.Triggers.Add(hover);
-            return t;
-        }
-
-        /// <summary>Updates the label text inside a PickerButton after selection.</summary>
-        public static void SetPickerValue(Button btn, string value)
-        {
-            if (btn.Tag is TextBlock lbl) lbl.Text = value;
-        }
-
-        // ── Field label row (badge + label) ───────────────────────────────
-        public static StackPanel FieldLabel(int n, string text)
-        {
-            var row = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Margin = new Thickness(0, 0, 0, 8)
-            };
-            row.Children.Add(AvControls.NumberBadge(n));
-            row.Children.Add(new TextBlock
-            {
-                Text = text,
-                FontFamily = AvTokens.Ui,
-                FontSize = 12.5,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.Brush(AvTokens.TextDim),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            return row;
-        }
+        // ── Picker button + field label ───────────────────────────────────
+        //  Moved to AvControls: PickerButton, PickerButtonTemplate,
+        //  SetPickerValue and FieldLabel. Promoted unchanged, and the call sites
+        //  in this file now go straight to AvControls rather than through a
+        //  forwarder here, so there is one definition rather than two names for
+        //  the same widget.
+        //
+        //  AvControls.PickerButton gained an opt-in chevron for a new caller in
+        //  Cmds_PullDown2.cs; it defaults to off, so these windows are unaffected.
 
         // ── Styled DataGrid ───────────────────────────────────────────────
         public static DataGrid StyledDataGrid()
@@ -1756,8 +1690,8 @@ namespace AVES.Cmds_PullDown
                 WindowStartupLocation = WindowStartupLocation.CenterScreen;
                 ResizeMode = ResizeMode.NoResize;
 
-                BodyPanel.Children.Add(Av.FieldLabel(1, "Shared parameter group"));
-                _groupBtn = Av.PickerButton(_settings.GroupName);
+                BodyPanel.Children.Add(AvControls.FieldLabel(1, "Shared parameter group"));
+                _groupBtn = AvControls.PickerButton(_settings.GroupName);
                 _groupBtn.Margin = new Thickness(0, 0, 0, 16);
                 _groupBtn.Click += (s, e) =>
                 {
@@ -1767,13 +1701,13 @@ namespace AVES.Cmds_PullDown
                     {
                         _settings.GroupName = picked;
                         _settings.SelectedParams.Clear();
-                        Av.SetPickerValue(_groupBtn, picked);
+                        AvControls.SetPickerValue(_groupBtn, picked);
                         RefreshChips();
                     }
                 };
                 BodyPanel.Children.Add(_groupBtn);
 
-                BodyPanel.Children.Add(Av.FieldLabel(2, "Parameters to inject"));
+                BodyPanel.Children.Add(AvControls.FieldLabel(2, "Parameters to inject"));
                 _chipsPanel = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
                 BodyPanel.Children.Add(_chipsPanel);
 
@@ -1806,8 +1740,8 @@ namespace AVES.Cmds_PullDown
                 twoCol.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
                 var leftStack = new StackPanel();
-                leftStack.Children.Add(Av.FieldLabel(3, "Target Revit group"));
-                _revitGroupBtn = Av.PickerButton(_settings.RevitGroupName);
+                leftStack.Children.Add(AvControls.FieldLabel(3, "Target Revit group"));
+                _revitGroupBtn = AvControls.PickerButton(_settings.RevitGroupName);
                 _revitGroupBtn.Click += (s, e) =>
                 {
                     string picked = SinglePickerWindow.Show(
@@ -1816,7 +1750,7 @@ namespace AVES.Cmds_PullDown
                     if (picked != null)
                     {
                         _settings.RevitGroupName = picked;
-                        Av.SetPickerValue(_revitGroupBtn, picked);
+                        AvControls.SetPickerValue(_revitGroupBtn, picked);
                     }
                 };
                 leftStack.Children.Add(_revitGroupBtn);
@@ -1824,8 +1758,8 @@ namespace AVES.Cmds_PullDown
                 twoCol.Children.Add(leftStack);
 
                 var rightStack = new StackPanel();
-                rightStack.Children.Add(Av.FieldLabel(4, "Mode / category"));
-                _modeBtn = Av.PickerButton(_settings.Mode);
+                rightStack.Children.Add(AvControls.FieldLabel(4, "Mode / category"));
+                _modeBtn = AvControls.PickerButton(_settings.Mode);
                 _modeBtn.Click += (s, e) =>
                 {
                     string picked = SinglePickerWindow.Show(
@@ -1834,7 +1768,7 @@ namespace AVES.Cmds_PullDown
                     if (picked != null)
                     {
                         _settings.Mode = picked;
-                        Av.SetPickerValue(_modeBtn, picked);
+                        AvControls.SetPickerValue(_modeBtn, picked);
                     }
                 };
                 rightStack.Children.Add(_modeBtn);
@@ -1843,7 +1777,7 @@ namespace AVES.Cmds_PullDown
 
                 BodyPanel.Children.Add(twoCol);
 
-                BodyPanel.Children.Add(Av.FieldLabel(5, "Parameter scope"));
+                BodyPanel.Children.Add(AvControls.FieldLabel(5, "Parameter scope"));
                 var (toggleContainer, instanceBtn, typeBtn) =
                     Av.SegmentedToggle("Instance", "Type", _settings.IsInstance);
                 _instanceBtn = instanceBtn;
@@ -2174,7 +2108,7 @@ namespace AVES.Cmds_PullDown
                 WindowStartupLocation = WindowStartupLocation.CenterScreen;
                 ResizeMode = ResizeMode.NoResize;
 
-                BodyPanel.Children.Add(Av.FieldLabel(1, "Parameters to remove"));
+                BodyPanel.Children.Add(AvControls.FieldLabel(1, "Parameters to remove"));
                 _chipsPanel = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
                 BodyPanel.Children.Add(_chipsPanel);
 
@@ -2191,8 +2125,8 @@ namespace AVES.Cmds_PullDown
                 addChipBtn.Click += (s, e) => ScanAndPickParameters();
                 BodyPanel.Children.Add(addChipBtn);
 
-                BodyPanel.Children.Add(Av.FieldLabel(2, "Mode / category"));
-                _modeBtn = Av.PickerButton(_settings.Mode);
+                BodyPanel.Children.Add(AvControls.FieldLabel(2, "Mode / category"));
+                _modeBtn = AvControls.PickerButton(_settings.Mode);
                 _modeBtn.Margin = new Thickness(0, 0, 0, 16);
                 _modeBtn.Click += (s, e) =>
                 {
@@ -2203,7 +2137,7 @@ namespace AVES.Cmds_PullDown
                     {
                         _settings.Mode = picked;
                         _settings.SelectedParams.Clear();
-                        Av.SetPickerValue(_modeBtn, picked);
+                        AvControls.SetPickerValue(_modeBtn, picked);
                         RefreshChips();
                     }
                 };
