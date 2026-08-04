@@ -595,6 +595,20 @@ namespace AVES.Cmds_PullDownAutoDimension
             public static readonly double CoordTol = 5.0 / 304.8;
             public static readonly double MaxMemberThickness = 300.0 / 304.8;
 
+            /// <summary>
+            /// Half-length of the helper "tick" detail lines (ft). The ticks are
+            /// centred on the dimension line, so this is how far they stick out
+            /// each side of it.
+            /// </summary>
+            public static readonly double TickHalfLength = 30.0 / 304.8;
+
+            /// <summary>
+            /// Lines subcategory the helper detail lines are placed on, so the
+            /// whole set can be switched off in one move via
+            /// Visibility/Graphics → Lines.
+            /// </summary>
+            public const string HelperLineStyleName = "AVES_DimHelper";
+
             // Vendor Drawing assemblies are built from Generic Model families.
             public static readonly HashSet<int> MemberCategories =
             [
@@ -609,16 +623,6 @@ namespace AVES.Cmds_PullDownAutoDimension
         }
 
         private enum ViewRole { Plan, Front, Back, Left, Right, ThreeD, Other }
-
-        private struct AxisExtent
-        {
-            public double NearCoord;
-            public Reference? NearRef;
-            public double FarCoord;
-            public Reference? FarRef;
-            public bool Valid => NearRef != null && FarRef != null
-                                      && FarCoord - NearCoord > VendorConfig.CoordTol;
-        }
 
         private static double Mm(double mm) => mm / 304.8;
 
@@ -683,6 +687,10 @@ namespace AVES.Cmds_PullDownAutoDimension
                 {
                     t.Start();
 
+                    // Resolved once per run — every helper detail line shares this
+                    // line style so the whole set can be hidden in one move.
+                    GraphicsStyle? helperStyle = EnsureHelperLineStyle(doc);
+
                     foreach (var assembly in assemblies)
                     {
                         summary.AppendLine($"Assembly: {assembly.Name}");
@@ -715,9 +723,9 @@ namespace AVES.Cmds_PullDownAutoDimension
                             {
                                 int n = role switch
                                 {
-                                    ViewRole.Plan => DimensionPlanView(doc, view, members, dimType),
+                                    ViewRole.Plan => DimensionPlanView(doc, view, members, dimType, helperStyle),
                                     ViewRole.Front or ViewRole.Back
-                                    or ViewRole.Left or ViewRole.Right => DimensionElevationView(doc, view, members, dimType),
+                                    or ViewRole.Left or ViewRole.Right => DimensionElevationView(doc, view, members, dimType, helperStyle),
                                     _ => -1,   // skip
                                 };
 
@@ -755,36 +763,44 @@ namespace AVES.Cmds_PullDownAutoDimension
             return anyError ? Result.Failed : Result.Succeeded;
         }
 
-        // ── Core: collect outermost face references along one axis ──────────
+        // ── Core: measure the overall silhouette extent along one axis ──────
         //
-        // Uses the IDENTICAL geometry strategy as Button 1 (CollectMemberFaces):
-        //   GetSymbolGeometry() + gi.Transform for accurate face normals and coords,
-        //   gi.Transform applied to get world-space positions.
+        // Geometry strategy is the same as Button 1 (CollectMemberFaces):
+        //   GetSymbolGeometry() + gi.Transform to get world-space positions.
         //
-        // The only differences from Button 1:
+        // Differences from Button 1:
         //   • No MaxMemberThickness upper-bound filter — Generic Model families
         //     can span the full assembly in any direction.
-        //   • Returns only the single outermost near/far reference pair across
+        //   • Returns only the single outermost near/far coordinate pair across
         //     ALL members (no bay clustering needed).
+        //
+        // This no longer collects Revit References. Dimensioning straight to
+        // raw geometry points was the cause of the skewed dimensions: the two
+        // winning edge endpoints sit at unrelated perpendicular positions on
+        // irregular geometry, so Revit drew the witness lines off a crooked
+        // baseline. Callers now dimension to helper detail lines built from
+        // these coordinates instead — see PlaceOverallDim.
+        //
+        // Two consequences of dropping references:
+        //   • ComputeReferences can be false, which is measurably cheaper.
+        //   • Every tessellation point is projected, not just the first and
+        //     last. On curved edges the extreme often lies mid-edge, which the
+        //     old first/last-only sampling silently missed.
 
-        private static (double NearCoord, Reference? NearRef,
-                         double FarCoord, Reference? FarRef)
+        private static (double NearCoord, double FarCoord, bool Valid)
             GetOverallExtent(List<Element> members, View view, XYZ axisVec)
         {
-            double tol = VendorConfig.CoordTol;
             double originProj = view.Origin.DotProduct(axisVec);
 
             var opts = new Options
             {
                 View = view,
-                ComputeReferences = true,
+                ComputeReferences = false,
                 IncludeNonVisibleObjects = false,
             };
 
             double nearCoord = double.MaxValue;
-            Reference? nearRef = null;
             double farCoord = double.MinValue;
-            Reference? farRef = null;
 
             foreach (var member in members)
             {
@@ -810,20 +826,13 @@ namespace AVES.Cmds_PullDownAutoDimension
                         {
                             try
                             {
-                                // Endpoint positions in world space (symbol space + instance transform)
-                                IList<XYZ> pts = edge.Tessellate();
-                                XYZ p0 = xf.OfPoint(pts.First());
-                                XYZ p1 = xf.OfPoint(pts.Last());
-                                double c0 = p0.DotProduct(axisVec) - originProj;
-                                double c1 = p1.DotProduct(axisVec) - originProj;
-
-                                // GetEndPointReference on symbol-geometry edges returns a
-                                // PointOnEdge reference that Revit resolves through the
-                                // GeometryInstance to the placed instance — valid for NewDimension.
-                                if (c0 < nearCoord) { var r = edge.GetEndPointReference(0); if (r != null) { nearCoord = c0; nearRef = r; } }
-                                if (c1 < nearCoord) { var r = edge.GetEndPointReference(1); if (r != null) { nearCoord = c1; nearRef = r; } }
-                                if (c0 > farCoord) { var r = edge.GetEndPointReference(0); if (r != null) { farCoord = c0; farRef = r; } }
-                                if (c1 > farCoord) { var r = edge.GetEndPointReference(1); if (r != null) { farCoord = c1; farRef = r; } }
+                                // Positions in world space (symbol space + instance transform)
+                                foreach (XYZ p in edge.Tessellate())
+                                {
+                                    double c = xf.OfPoint(p).DotProduct(axisVec) - originProj;
+                                    if (c < nearCoord) nearCoord = c;
+                                    if (c > farCoord) farCoord = c;
+                                }
                             }
                             catch { }
                         }
@@ -831,25 +840,110 @@ namespace AVES.Cmds_PullDownAutoDimension
                 }
             }
 
-            if (farCoord - nearCoord < tol) return (nearCoord, null, farCoord, null);
-            return (nearCoord, nearRef, farCoord, farRef);
+            bool valid = farCoord - nearCoord >= VendorConfig.CoordTol;
+            return (nearCoord, farCoord, valid);
+        }
+
+        // ── Helper line style ────────────────────────────────────────────────
+
+        /// <summary>
+        /// Gets (or creates) the "AVES_DimHelper" Lines subcategory used for the
+        /// dimension helper detail lines, so the whole set can be switched off
+        /// per view via Visibility/Graphics → Lines → AVES_DimHelper.
+        /// Must be called inside an open transaction. Returns null if the
+        /// subcategory can't be resolved — callers then just leave the helper
+        /// lines on the default line style rather than failing the run.
+        /// </summary>
+        private static GraphicsStyle? EnsureHelperLineStyle(Document doc)
+        {
+            try
+            {
+                Category lines = doc.Settings.Categories.get_Item(BuiltInCategory.OST_Lines);
+                if (lines == null) return null;
+
+                Category? sub = null;
+                foreach (Category c in lines.SubCategories)
+                {
+                    if (string.Equals(c.Name, VendorConfig.HelperLineStyleName,
+                                      StringComparison.OrdinalIgnoreCase))
+                    {
+                        sub = c;
+                        break;
+                    }
+                }
+
+                sub ??= doc.Settings.Categories.NewSubcategory(
+                            lines, VendorConfig.HelperLineStyleName);
+
+                return sub?.GetGraphicsStyle(GraphicsStyleType.Projection);
+            }
+            catch { return null; }
         }
 
         /// <summary>
-        /// Places one overall dimension between the outermost face references
-        /// along <paramref name="axisVec"/>.  Uses Button 1's proven WorldPt
-        /// helper for dimension-line placement.
+        /// Draws one short "tick" detail line perpendicular to the measurement
+        /// axis at <paramref name="alongCoord"/>, centred on the dimension line
+        /// so the witness lines stay short and even.
+        /// </summary>
+        private static DetailCurve? CreateTick(
+            Document doc, View view,
+            double alongCoord, double perpWorld, bool isHoriz,
+            GraphicsStyle? helperStyle)
+        {
+            double half = VendorConfig.TickHalfLength;
+
+            XYZ a = WorldPt(view, alongCoord, perpWorld - half, isHoriz);
+            XYZ b = WorldPt(view, alongCoord, perpWorld + half, isHoriz);
+
+            try
+            {
+                Line seg = Line.CreateBound(a, b);
+                DetailCurve dc = doc.Create.NewDetailCurve(view, seg);
+                if (helperStyle != null)
+                {
+                    try { dc.LineStyle = helperStyle; } catch { }
+                }
+                return dc;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Places one overall dimension along <paramref name="axisVec"/>.
+        ///
+        /// Instead of dimensioning to raw geometry points, this draws two short
+        /// helper detail lines at the measured extremes and dimensions between
+        /// those. Both ticks run perpendicular to the measurement axis, so they
+        /// are parallel to each other and perpendicular to the extension line —
+        /// exactly what NewDimension documents as its requirement for the
+        /// supplied references. The dimension is therefore straight by
+        /// construction, however irregular the underlying geometry is.
+        ///
+        /// Whole-curve references (GeometryCurve.Reference) are used rather than
+        /// endpoint references: endpoint-only references are documented to be
+        /// re-oriented parallel to their source curve on transaction commit,
+        /// which is the instability this change exists to avoid.
+        ///
+        /// Trade-off: the dimension now measures the helper lines, not the
+        /// model, so it is NOT associative — it will not update when the
+        /// assembly geometry changes and the command must be re-run. The helper
+        /// lines must also stay in place; deleting them deletes the dimension.
         /// </summary>
         private static bool PlaceOverallDim(
             Document doc, View view, DimensionType dimType,
             List<Element> members, XYZ axisVec,
-            bool isHoriz, double perpWorld)
+            bool isHoriz, double perpWorld, GraphicsStyle? helperStyle)
         {
-            var (nearCoord, nearRef, farCoord, farRef) =
-                GetOverallExtent(members, view, axisVec);
+            var (nearCoord, farCoord, valid) = GetOverallExtent(members, view, axisVec);
+            if (!valid) return false;
 
-            if (nearRef == null || farRef == null) return false;
-            if (farCoord - nearCoord < VendorConfig.CoordTol) return false;
+            DetailCurve? tickNear = CreateTick(doc, view, nearCoord, perpWorld, isHoriz, helperStyle);
+            DetailCurve? tickFar = CreateTick(doc, view, farCoord, perpWorld, isHoriz, helperStyle);
+            if (tickNear == null || tickFar == null) return false;
+
+            Reference? refNear = tickNear.GeometryCurve?.Reference;
+            Reference? refFar = tickFar.GeometryCurve?.Reference;
+            if (refNear == null || refFar == null) return false;
 
             double pad = Mm(20);
             XYZ ptS = WorldPt(view, nearCoord - pad, perpWorld, isHoriz);
@@ -860,8 +954,8 @@ namespace AVES.Cmds_PullDownAutoDimension
             catch { return false; }
 
             var refs = new ReferenceArray();
-            refs.Append(nearRef);
-            refs.Append(farRef);
+            refs.Append(refNear);
+            refs.Append(refFar);
 
             try { doc.Create.NewDimension(view, line, refs, dimType); return true; }
             catch { return false; }
@@ -871,7 +965,8 @@ namespace AVES.Cmds_PullDownAutoDimension
 
         private static int DimensionElevationView(
             Document doc, View view,
-            List<Element> members, DimensionType dimType)
+            List<Element> members, DimensionType dimType,
+            GraphicsStyle? helperStyle)
         {
             BoundingBoxXYZ cb = view.CropBox;
             ExpandCropBox(view, Mm(50));
@@ -881,12 +976,14 @@ namespace AVES.Cmds_PullDownAutoDimension
 
             double perpH = cb.Min.Y + offset;
             if (PlaceOverallDim(doc, view, dimType, members,
-                    view.RightDirection, isHoriz: true, perpWorld: perpH))
+                    view.RightDirection, isHoriz: true, perpWorld: perpH,
+                    helperStyle: helperStyle))
                 created++;
 
             double perpV = cb.Min.X + offset;
             if (PlaceOverallDim(doc, view, dimType, members,
-                    view.UpDirection, isHoriz: false, perpWorld: perpV))
+                    view.UpDirection, isHoriz: false, perpWorld: perpV,
+                    helperStyle: helperStyle))
                 created++;
 
             return created;
@@ -896,14 +993,16 @@ namespace AVES.Cmds_PullDownAutoDimension
 
         private static int DimensionPlanView(
             Document doc, View view,
-            List<Element> members, DimensionType dimType)
+            List<Element> members, DimensionType dimType,
+            GraphicsStyle? helperStyle)
         {
             BoundingBoxXYZ cb = view.CropBox;
             ExpandCropBox(view, Mm(50));
 
             double perpV = cb.Min.X + VendorConfig.Offset;
             return PlaceOverallDim(doc, view, dimType, members,
-                view.UpDirection, isHoriz: false, perpWorld: perpV) ? 1 : 0;
+                view.UpDirection, isHoriz: false, perpWorld: perpV,
+                helperStyle: helperStyle) ? 1 : 0;
         }
 
         // ── Helpers ──────────────────────────────────────────────────────────
