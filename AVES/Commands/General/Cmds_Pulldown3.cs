@@ -1,25 +1,12 @@
-﻿// ============================================================================
-//  Auto-Dimension PullDown  –  Revit 2025 / C#
-//
-//  Button 1 – MT Drawings  (Cmd_MtDimension)
-//    Full chain dimensioning: bay segments + overall for each 2D view
-//    associated with selected AssemblyInstance elements.
-//    Identical behaviour to the original Cmds_Button7 (MT) command.
-//
-//  Button 2 – Vendor Drawings  (Cmd_VendorDimension)
-//    Simplified dimensioning: ONE overall dimension per axis per view.
-//    Outputs exactly 3 numbers across all 2D views of an assembly:
-//      • Width  – horizontal span (RightDirection axis)
-//      • Height – vertical span  (UpDirection axis)
-//      • Depth  – out-of-plane span (derived from the plan/top view,
-//                 or from the bounding box when no plan view exists)
-//    No bay / segment chains are created – only the outermost face-to-face
-//    overall dimension on each axis.
-//
-//  Required project references:
-//    RevitAPI.dll, RevitAPIUI.dll
-//    PresentationCore, PresentationFramework, WindowsBase, System.Xaml  (WPF)
-// ============================================================================
+﻿// -----------------------------------------------------------------------
+// Pulldown Title: Auto-Dimension
+// Sub-buttons:
+//   - MT Drawings: Adds full chain dimensioning (bay segments + overall)
+//     to each 2D view associated with the selected assemblies.
+//   - Vendor Drawings: Adds simplified dimensioning — one overall
+//     Width/Height/Depth dimension per axis per view, with no bay/segment
+//     chains.
+// -----------------------------------------------------------------------
 
 #nullable enable
 
