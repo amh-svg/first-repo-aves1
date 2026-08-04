@@ -649,6 +649,24 @@ namespace AVES.Cmds_PullDownAutoDimension
             public static readonly double MaxTickLength = 2000.0 / 304.8;
 
             /// <summary>
+            /// Emits the per-tick and anchor diagnostics that were used to track
+            /// down the witness-line and dimension-placement bugs: probe source,
+            /// surface coordinate, resulting gap, and the anchor line per
+            /// dimension.
+            ///
+            /// Off for day-to-day runs — the routine summary is the member counts,
+            /// extents and per-view dimension counts. The logic behind these lines
+            /// stays live regardless, so flipping this to true is all that is
+            /// needed to get the full picture back if that area ever needs
+            /// investigating again.
+            ///
+            /// Deliberately static readonly rather than const: a const false would
+            /// let the compiler fold the guarded blocks away and warn about
+            /// unreachable code.
+            /// </summary>
+            public static readonly bool VerboseLogging = false;
+
+            /// <summary>
             /// Lines subcategory the helper detail lines are placed on, so the
             /// whole set can be switched off in one move via
             /// Visibility/Graphics → Lines.
@@ -1079,19 +1097,25 @@ namespace AVES.Cmds_PullDownAutoDimension
                 $"Y {ToMm(maxY - minY),9:F1}   Z {ToMm(maxZ - minZ),9:F1}");
 
             // ── On the record: the assembly's own box, null vs. threw ──────────
-            try
+            // Added to settle why AssemblyInstance.get_BoundingBox(null) was coming
+            // back unusable. That question is answered and the member-box union
+            // below is the cross-check now, so this is verbose-only.
+            if (VendorConfig.VerboseLogging)
             {
-                BoundingBoxXYZ? abb = assembly.get_BoundingBox(null);
-                summary.AppendLine(abb == null
-                    ? "  Assembly bbox:       returned null (no model box for this element)"
-                    : $"  Assembly bbox (mm):  X {ToMm(abb.Max.X - abb.Min.X),9:F1}   " +
-                      $"Y {ToMm(abb.Max.Y - abb.Min.Y),9:F1}   " +
-                      $"Z {ToMm(abb.Max.Z - abb.Min.Z),9:F1}");
-            }
-            catch (Exception ex)
-            {
-                summary.AppendLine(
-                    $"  Assembly bbox:       threw {ex.GetType().Name} — {ex.Message}");
+                try
+                {
+                    BoundingBoxXYZ? abb = assembly.get_BoundingBox(null);
+                    summary.AppendLine(abb == null
+                        ? "  Assembly bbox:       returned null (no model box for this element)"
+                        : $"  Assembly bbox (mm):  X {ToMm(abb.Max.X - abb.Min.X),9:F1}   " +
+                          $"Y {ToMm(abb.Max.Y - abb.Min.Y),9:F1}   " +
+                          $"Z {ToMm(abb.Max.Z - abb.Min.Z),9:F1}");
+                }
+                catch (Exception ex)
+                {
+                    summary.AppendLine(
+                        $"  Assembly bbox:       threw {ex.GetType().Name} — {ex.Message}");
+                }
             }
 
             // ── Cross-check: union of the members' own bounding boxes ─────────
@@ -1414,11 +1438,14 @@ namespace AVES.Cmds_PullDownAutoDimension
             if (perpExtent.Valid)
             {
                 perpWorld = perpExtent.NearCoord - VendorConfig.DimLineOffset;
-                summary.AppendLine(
-                    $"  anchor  {view.Name} / {label}: " +
-                    $"globalNear={ToMm(perpExtent.NearCoord).ToString("F1").PadLeft(10)}  " +
-                    $"dimLine={ToMm(perpWorld).ToString("F1").PadLeft(10)}  " +
-                    $"(clearance {ToMm(VendorConfig.DimLineOffset):F1})");
+                if (VendorConfig.VerboseLogging)
+                {
+                    summary.AppendLine(
+                        $"  anchor  {view.Name} / {label}: " +
+                        $"globalNear={ToMm(perpExtent.NearCoord).ToString("F1").PadLeft(10)}  " +
+                        $"dimLine={ToMm(perpWorld).ToString("F1").PadLeft(10)}  " +
+                        $"(clearance {ToMm(VendorConfig.DimLineOffset):F1})");
+                }
             }
             else
             {
@@ -1443,8 +1470,11 @@ namespace AVES.Cmds_PullDownAutoDimension
 
             // Logged per tick, with coordinates rather than a pass/fail flag — see
             // LogTick for why the flag alone proved untrustworthy.
-            LogTick(summary, view, label, "near", localNear, globalPerp, perpNearUsed, perpWorld, fbNear);
-            LogTick(summary, view, label, "far ", localFar, globalPerp, perpFarUsed, perpWorld, fbFar);
+            if (VendorConfig.VerboseLogging)
+            {
+                LogTick(summary, view, label, "near", localNear, globalPerp, perpNearUsed, perpWorld, fbNear);
+                LogTick(summary, view, label, "far ", localFar, globalPerp, perpFarUsed, perpWorld, fbFar);
+            }
 
             Reference? refNear = tickNear.GeometryCurve?.Reference;
             Reference? refFar = tickFar.GeometryCurve?.Reference;
