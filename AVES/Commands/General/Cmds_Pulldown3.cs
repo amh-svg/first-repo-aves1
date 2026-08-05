@@ -1881,8 +1881,11 @@ namespace AVES.Cmds_PullDownAutoDimension
 
                 Title = title;
                 Width = 420; Height = 520;
-                WindowStyle = WindowStyle.SingleBorderWindow;
-                ResizeMode = ResizeMode.NoResize;
+                // ToolWindow gives a close-only title bar while KEEPING resize.
+                // ResizeMode.NoResize also hides minimize/maximize but takes
+                // resizing with it, which a long scrolling list needs.
+                WindowStyle = WindowStyle.ToolWindow;
+                ResizeMode = ResizeMode.CanResize;
                 WindowStartupLocation = WindowStartupLocation.CenterScreen;
                 Background = AvTokens.B(AvTokens.Surface); FontFamily = AvTokens.Ui;
                 UseLayoutRounding = true; SnapsToDevicePixels = true;
@@ -1890,7 +1893,9 @@ namespace AVES.Cmds_PullDownAutoDimension
 
                 var root = new DockPanel();
 
-                var tb = AvControls.TitleBar(title);
+                // HeaderStrip, not TitleBar: matches TemplatePickerWindow, which is
+                // the reference for this popup's styling.
+                var tb = AvControls.HeaderStrip(title);
                 DockPanel.SetDock(tb, Dock.Top);
                 root.Children.Add(tb);
 
