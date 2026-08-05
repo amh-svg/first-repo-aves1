@@ -423,23 +423,22 @@ internal sealed class ReportWindow : Window
             Margin = new Thickness(20, 16, 20, 12),
         };
 
-        // ── Top strip: status pill + stat tiles ───────────────────────────────
+        // ── Top strip: stat tiles ─────────────────────────────────────────────
         var topStrip = new DockPanel { Margin = new Thickness(0, 0, 0, 14) };
         DockPanel.SetDock(topStrip, Dock.Top);
 
-        string pillKind = bad == 0 ? "ok" : (ok == 0 ? "fail" : "warn");
-        var pill = AvesUiHelper.StatusPill(pillKind);
-        pill.VerticalAlignment = VerticalAlignment.Center;
-        DockPanel.SetDock(pill, Dock.Left);
-        topStrip.Children.Add(pill);
-
-        // Stat tiles — fill the rest of the top strip.
+        // Stat tiles — span the full width of the top strip.
         //
         // A UniformGrid, matching every other report window in the add-in: the
         // tiles stretch to equal widths across the row, which is also what the
         // design spec's `.stats { display: grid }` describes. This used to be a
         // right-aligned horizontal StackPanel, so the tiles shrink-wrapped their
         // text and clustered at the right edge instead.
+        //
+        // An overall status pill used to sit to their left. It was removed: the
+        // counts it summarised are already carried by the Failed tile, whose
+        // value turns red when non-zero, and by the footer's
+        // "N succeeded · N failed · N total" caption.
         //
         // Spacing is a right margin on all but the last tile. The other windows
         // use (0,0,8,8); the bottom 8 is omitted here because topStrip already
