@@ -967,7 +967,10 @@ internal sealed class TemplateMenuWindow : Window
     public View? V2d { get; private set; }
     public View? Sched { get; private set; }
 
-    private readonly IReadOnlyDictionary<string, View> _allTemplates;
+    // One pre-filtered list per step, so each picker offers only templates that
+    // can actually be applied to the view that step creates.
+    private readonly IReadOnlyDictionary<string, View> _view3dTemplates;
+    private readonly IReadOnlyDictionary<string, View> _view2dTemplates;
     private readonly IReadOnlyDictionary<string, View> _scheduleTemplates;
     private readonly IntPtr _revitHandle;
 
@@ -977,11 +980,13 @@ internal sealed class TemplateMenuWindow : Window
     private readonly Button _continueBtn;
 
     public TemplateMenuWindow(
-        IReadOnlyDictionary<string, View> allTemplates,
+        IReadOnlyDictionary<string, View> view3dTemplates,
+        IReadOnlyDictionary<string, View> view2dTemplates,
         IReadOnlyDictionary<string, View> scheduleTemplates,
         IntPtr revitHandle = default)
     {
-        _allTemplates = allTemplates;
+        _view3dTemplates = view3dTemplates;
+        _view2dTemplates = view2dTemplates;
         _scheduleTemplates = scheduleTemplates;
         _revitHandle = revitHandle;
 
@@ -1079,11 +1084,11 @@ internal sealed class TemplateMenuWindow : Window
         // badge and title; only the box below it opens the picker.
         _row3d = AvControls.PickerButton(Placeholder, showChevron: true);
         _row3d.Click += (_, _) => PickInto(
-            _allTemplates, "Select 3D View Template", _row3d, v => V3d = v);
+            _view3dTemplates, "Select 3D View Template", _row3d, v => V3d = v);
 
         _row2d = AvControls.PickerButton(Placeholder, showChevron: true);
         _row2d.Click += (_, _) => PickInto(
-            _allTemplates, "Select 2D View Template", _row2d, v => V2d = v);
+            _view2dTemplates, "Select 2D View Template", _row2d, v => V2d = v);
 
         _rowSched = AvControls.PickerButton(Placeholder, showChevron: true);
         _rowSched.Click += (_, _) => PickInto(
@@ -1157,28 +1162,78 @@ internal static class TemplatePicker
         return templates[dialog.SelectedTemplateName];
     }
 
+    // ── Per-step template filtering ──────────────────────────────────────────
+    //
+    // Every step used to receive the same unfiltered list, so each one offered
+    // the other kinds' templates. That is not merely untidy: a template can only
+    // be applied to a view whose ViewType it matches, so picking the wrong kind
+    // failed at apply time, after the user had already made the other choices.
+    //
+    // All three filter the existing dictionary rather than re-collecting from the
+    // document, which is what lets PickTriple keep its signature and both call
+    // sites stay untouched.
+
+    /// <summary>Templates applicable to the orthographic 3D view.</summary>
+    private static IReadOnlyDictionary<string, View> View3dTemplatesOf(
+        IReadOnlyDictionary<string, View> templates) =>
+        FilterByType(templates, ViewType.ThreeD);
+
     /// <summary>
-    /// The subset of <paramref name="templates"/> that can actually be applied to
-    /// a schedule.
+    /// Templates applicable to the assembly detail views.
     ///
-    /// The schedule step previously received the same unfiltered template list as
-    /// the 3D and 2D steps, so it offered 3D and 2D view templates as schedule
-    /// templates. Those are not merely inappropriate — the result is assigned to
-    /// a ViewSchedule's ViewTemplateId, which Revit rejects, so picking one failed
-    /// at apply time after the user had already made two other selections.
+    /// Elevation, Section and Detail are one interchangeable group, not three
+    /// separate cases: Revit's own View Template "View Type Filter" lists them
+    /// together as "Elevations, Sections, Detail Views", and that grouping is
+    /// exactly the span of the ViewSection class the API returns here
+    /// (AssemblyViewUtils.CreateDetailSection). So there is no need to pin down
+    /// which single ViewType an assembly detail view reports as — any template
+    /// from this group applies to all three.
     ///
-    /// Filtered from the dictionary rather than re-collected from the document, so
-    /// PickTriple keeps its signature and both call sites stay untouched.
+    /// Plan-family types (FloorPlan, CeilingPlan, AreaPlan, EngineeringPlan) and
+    /// DraftingView belong to different filter groups and are deliberately
+    /// excluded, even though they are "2D" in the loose sense.
     /// </summary>
+    private static IReadOnlyDictionary<string, View> View2dTemplatesOf(
+        IReadOnlyDictionary<string, View> templates) =>
+        FilterByType(templates, ViewType.Elevation, ViewType.Section, ViewType.Detail);
+
+    /// <summary>Templates applicable to the part-list schedule.</summary>
     private static IReadOnlyDictionary<string, View> ScheduleTemplatesOf(
         IReadOnlyDictionary<string, View> templates) =>
+        FilterByType(templates, ViewType.Schedule);
+
+    private static IReadOnlyDictionary<string, View> FilterByType(
+        IReadOnlyDictionary<string, View> templates, params ViewType[] kinds) =>
         templates
-            .Where(kv => kv.Value.ViewType == ViewType.Schedule)
+            .Where(kv => Array.IndexOf(kinds, kv.Value.ViewType) >= 0)
             .ToDictionary(kv => kv.Key, kv => kv.Value);
 
     public static (View? V3d, View? V2d, View? Sched) PickTriple(
         IReadOnlyDictionary<string, View> templates, IntPtr revitHandle = default)
     {
+        var view3dTemplates = View3dTemplatesOf(templates);
+        if (view3dTemplates.Count == 0)
+        {
+            AvControls.ShowAlert("Vendor Automation",
+                "No 3D view templates found in this project.\n\n" +
+                "A 3D view template is required for the assembly's 3D view. " +
+                "Create one, then run this command again.",
+                AlertSeverity.Warning);
+            return (null, null, null);
+        }
+
+        var view2dTemplates = View2dTemplatesOf(templates);
+        if (view2dTemplates.Count == 0)
+        {
+            AvControls.ShowAlert("Vendor Automation",
+                "No 2D view templates found in this project.\n\n" +
+                "An elevation, section or detail view template is required for " +
+                "the assembly's detail views. Create one, then run this command " +
+                "again.",
+                AlertSeverity.Warning);
+            return (null, null, null);
+        }
+
         var scheduleTemplates = ScheduleTemplatesOf(templates);
         if (scheduleTemplates.Count == 0)
         {
@@ -1190,7 +1245,8 @@ internal static class TemplatePicker
             return (null, null, null);
         }
 
-        var menu = new TemplateMenuWindow(templates, scheduleTemplates, revitHandle);
+        var menu = new TemplateMenuWindow(
+            view3dTemplates, view2dTemplates, scheduleTemplates, revitHandle);
         if (menu.ShowDialog() != true) return (null, null, null);
 
         // Belt-and-braces: Continue is only enabled once all three are set, but the
