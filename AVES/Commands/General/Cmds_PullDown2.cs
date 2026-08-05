@@ -433,24 +433,37 @@ internal sealed class ReportWindow : Window
         DockPanel.SetDock(pill, Dock.Left);
         topStrip.Children.Add(pill);
 
-        // Stat tiles — right side of the top strip
-        var tiles = new StackPanel
+        // Stat tiles — fill the rest of the top strip.
+        //
+        // A UniformGrid, matching every other report window in the add-in: the
+        // tiles stretch to equal widths across the row, which is also what the
+        // design spec's `.stats { display: grid }` describes. This used to be a
+        // right-aligned horizontal StackPanel, so the tiles shrink-wrapped their
+        // text and clustered at the right edge instead.
+        //
+        // Spacing is a right margin on all but the last tile. The other windows
+        // use (0,0,8,8); the bottom 8 is omitted here because topStrip already
+        // carries its own bottom margin and would otherwise double up.
+        var tiles = new UniformGrid
         {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
+            Columns = 3,
+            Rows = 1,
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        Border MakeTile(string val, string lbl, string accent)
-        {
-            var t = AvControls.StatTile(val, lbl, accent);
-            t.Margin = new Thickness(8, 0, 0, 0);
-            return t;
-        }
+        Border MakeTile(string val, string lbl, string accent) =>
+            AvControls.StatTile(val, lbl, accent);
 
-        tiles.Children.Add(MakeTile(ok.ToString(), "Succeeded", ok > 0 ? "ok" : ""));
-        tiles.Children.Add(MakeTile(bad.ToString(), "Failed", bad > 0 ? "fail" : ""));
-        tiles.Children.Add(MakeTile((ok + bad).ToString(), "Total", ""));
+        var tileOk = MakeTile(ok.ToString(), "Succeeded", ok > 0 ? "ok" : "");
+        var tileBad = MakeTile(bad.ToString(), "Failed", bad > 0 ? "fail" : "");
+        var tileTotal = MakeTile((ok + bad).ToString(), "Total", "");
+
+        tileOk.Margin = new Thickness(0, 0, 8, 0);
+        tileBad.Margin = new Thickness(0, 0, 8, 0);
+
+        tiles.Children.Add(tileOk);
+        tiles.Children.Add(tileBad);
+        tiles.Children.Add(tileTotal);
 
         topStrip.Children.Add(tiles);
         outer.Children.Add(topStrip);
@@ -685,7 +698,7 @@ internal sealed class ReportWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        _copyBtn = AvControls.SecondaryButtonHoverLoaded("Copy as TSV");
+        _copyBtn = AvControls.SecondaryButtonHoverLoaded("⧉  Copy to clipboard");
         _copyBtn.Margin = new Thickness(0, 0, 8, 0);
         _copyBtn.Click += OnCopy;
 
@@ -728,10 +741,10 @@ internal sealed class ReportWindow : Window
                 sb.AppendLine($"{r.Index}\t{r.Name}\t{r.Status}\t{r.Details}");
 
             Clipboard.SetText(sb.ToString());
-            _copyBtn.Content = "Copied!";
+            _copyBtn.Content = "✓  Copied!";
             var timer = new System.Windows.Threading.DispatcherTimer
-            { Interval = TimeSpan.FromMilliseconds(1500) };
-            timer.Tick += (_, _) => { _copyBtn.Content = "Copy as TSV"; timer.Stop(); };
+            { Interval = TimeSpan.FromSeconds(2) };
+            timer.Tick += (_, _) => { _copyBtn.Content = "⧉  Copy to clipboard"; timer.Stop(); };
             timer.Start();
         }
         catch { }
