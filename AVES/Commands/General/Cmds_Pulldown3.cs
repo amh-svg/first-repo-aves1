@@ -2530,7 +2530,7 @@ namespace AVES.Cmds_PullDownAutoDimension
             };
 
             Button? copyBtn = null;
-            copyBtn = SecondaryButton("⧉  Copy log");
+            copyBtn = SecondaryButton("⧉  Copy to clipboard");
             copyBtn.Margin = new Thickness(0, 0, 10, 0);
             System.Windows.Threading.DispatcherTimer? copyTimer = null;
             string logText = summaryText;
@@ -2540,7 +2540,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                 copyBtn!.Content = "✓  Copied!"; copyBtn.IsEnabled = false;
                 copyTimer?.Stop();
                 copyTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-                copyTimer.Tick += (ts, te) => { copyTimer.Stop(); copyBtn!.Content = "⧉  Copy log"; copyBtn.IsEnabled = true; };
+                copyTimer.Tick += (ts, te) => { copyTimer.Stop(); copyBtn!.Content = "⧉  Copy to clipboard"; copyBtn.IsEnabled = true; };
                 copyTimer.Start();
             };
 
