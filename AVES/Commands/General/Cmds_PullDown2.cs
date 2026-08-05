@@ -974,7 +974,7 @@ internal sealed class TemplateMenuWindow : Window
     private readonly Button _row3d;
     private readonly Button _row2d;
     private readonly Button _rowSched;
-    private readonly Button _runBtn;
+    private readonly Button _continueBtn;
 
     public TemplateMenuWindow(
         IReadOnlyDictionary<string, View> allTemplates,
@@ -1030,10 +1030,12 @@ internal sealed class TemplateMenuWindow : Window
         root.Children.Add(header);
 
         // ── Footer ────────────────────────────────────────────────────────────
-        _runBtn = AvControls.PrimaryButtonHoverLoaded("Run");
-        _runBtn.IsDefault = true;
-        _runBtn.IsEnabled = false;
-        _runBtn.Click += (_, _) => { DialogResult = true; Close(); };
+        // "Continue", not "Run": this menu only advances to the settings dialog,
+        // which carries the actual "▶  Run Script" button.
+        _continueBtn = AvControls.PrimaryButtonHoverLoaded("Continue");
+        _continueBtn.IsDefault = true;
+        _continueBtn.IsEnabled = false;
+        _continueBtn.Click += (_, _) => { DialogResult = true; Close(); };
 
         var cancelBtn = AvControls.GhostButtonHoverLoaded("Cancel");
         cancelBtn.IsCancel = true;
@@ -1048,7 +1050,7 @@ internal sealed class TemplateMenuWindow : Window
             HorizontalAlignment = HorizontalAlignment.Right,
         };
         btnRow.Children.Add(cancelBtn);
-        btnRow.Children.Add(_runBtn);
+        btnRow.Children.Add(_continueBtn);
 
         var footer = new Border
         {
@@ -1139,7 +1141,7 @@ internal sealed class TemplateMenuWindow : Window
 
         assign(picked);
         AvControls.SetPickerValue(row, picked.Name, Placeholder);
-        _runBtn.IsEnabled = V3d is not null && V2d is not null && Sched is not null;
+        _continueBtn.IsEnabled = V3d is not null && V2d is not null && Sched is not null;
     }
 }
 
@@ -1191,7 +1193,7 @@ internal static class TemplatePicker
         var menu = new TemplateMenuWindow(templates, scheduleTemplates, revitHandle);
         if (menu.ShowDialog() != true) return (null, null, null);
 
-        // Belt-and-braces: Run is only enabled once all three are set, but the
+        // Belt-and-braces: Continue is only enabled once all three are set, but the
         // tuple contract is all-or-nothing, so anything missing here is a cancel.
         if (menu.V3d is null || menu.V2d is null || menu.Sched is null)
             return (null, null, null);
