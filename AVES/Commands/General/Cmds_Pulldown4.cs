@@ -759,6 +759,31 @@ namespace AVES.Cmds_PullDownAutoTag
         public int Created { get; set; }
         public int Skipped { get; set; }
         public string Notes { get; set; } = "";
+
+        /// <summary>
+        /// Owning assembly's instance name, or empty for a 3D view that is not an
+        /// assembly view. Captured while the command loop still has the Document
+        /// in scope: this row keeps only the view's NAME, so there is no way back
+        /// to the View element later to ask.
+        /// </summary>
+        public string AssemblyName { get; set; } = "";
+    }
+
+    /// <summary>
+    /// One grid row per assembly, aggregated from that assembly's ViewLogRows.
+    ///
+    /// Display model only. ViewLogRow stays the source of truth, and the
+    /// clipboard payload is still built from the per-view list, so nothing is
+    /// lost -- it is just not all visible in the grid at once.
+    /// </summary>
+    internal sealed class AssemblyLogRow
+    {
+        public string AssemblyName { get; set; } = "";
+        public string Status { get; set; } = "";
+        public int ViewCount { get; set; }
+        public int Created { get; set; }
+        public int Skipped { get; set; }
+        public string Notes { get; set; } = "";
     }
 
     // ============================================================
@@ -845,12 +870,91 @@ namespace AVES.Cmds_PullDownAutoTag
             Content = root;
         }
 
-        private static Border BuildResultsTable(List<ViewLogRow> rows)
+        /// <summary>Label for 3D views that belong to no assembly.</summary>
+        private const string NoAssemblyBucket = "(Non-assembly 3D views)";
+
+        /// <summary>
+        /// Collapses the per-view rows into one row per assembly.
+        ///
+        /// Status takes the worst case, where only "warn" demotes: any warn makes
+        /// the assembly warn; otherwise an assembly whose views ALL skipped is
+        /// skip; otherwise ok. A single empty view therefore does not drag down
+        /// an otherwise clean assembly -- "skip" means nothing to do, not
+        /// something failed -- and the Notes column records it either way.
+        ///
+        /// Created and Skipped are summed, matching how the stat tiles above the
+        /// grid already compute their totals.
+        ///
+        /// Views with no assembly collapse into one bucket row, sorted last. Their
+        /// per-view detail, and every per-view exception message that cannot
+        /// survive aggregation, remains in the clipboard payload.
+        /// </summary>
+        private static List<AssemblyLogRow> GroupByAssembly(List<ViewLogRow> rows)
         {
+            var grouped = rows
+                .GroupBy(r => string.IsNullOrWhiteSpace(r.AssemblyName)
+                    ? NoAssemblyBucket
+                    : r.AssemblyName)
+                .Select(g =>
+                {
+                    int warnCount = g.Count(r => r.Status == "warn");
+                    bool allSkipped = g.All(r => r.Status == "skip");
+
+                    string status = warnCount > 0 ? "warn"
+                                  : allSkipped ? "skip"
+                                  : "ok";
+
+                    string notes;
+                    if (warnCount > 0)
+                        notes = string.Format("{0} of {1} views had skips", warnCount, g.Count());
+                    else if (allSkipped)
+                        notes = g.Select(r => r.Notes)
+                                 .FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? "";
+                    else
+                        notes = "";
+
+                    return new AssemblyLogRow
+                    {
+                        AssemblyName = g.Key,
+                        Status = status,
+                        ViewCount = g.Count(),
+                        Created = g.Sum(r => r.Created),
+                        Skipped = g.Sum(r => r.Skipped),
+                        Notes = notes,
+                    };
+                })
+                .ToList();
+
+            // Assemblies alphabetically, the no-assembly bucket last.
+            return grouped
+                .OrderBy(r => r.AssemblyName == NoAssemblyBucket ? 1 : 0)
+                .ThenBy(r => r.AssemblyName, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Resolves a view's owning assembly instance name, or empty when the view
+        /// is not an assembly view.
+        /// </summary>
+        internal static string ResolveAssemblyName(Document doc, View view)
+        {
+            try
+            {
+                ElementId id = view.AssemblyInstanceId;
+                if (id == null || id == ElementId.InvalidElementId) return "";
+                return doc.GetElement(id) is AssemblyInstance asm ? asm.Name : "";
+            }
+            catch { return ""; }
+        }
+
+        private static Border BuildResultsTable(List<ViewLogRow> viewRows)
+        {
+            var rows = GroupByAssembly(viewRows);
+
             var headerGrid = new WpfGrid { Background = AvTokens.B(AvTokens.Surface2) };
             DefineTableColumns(headerGrid);
 
-            string[] headers = { "Status", "View", "Sheet", "Created", "Skipped", "Notes" };
+            string[] headers = { "Status", "Assembly", "Views", "Created", "Skipped", "Notes" };
             for (int i = 0; i < headers.Length; i++)
             {
                 var hdr = new TextBlock
@@ -878,11 +982,11 @@ namespace AVES.Cmds_PullDownAutoTag
                 pill.VerticalAlignment = VerticalAlignment.Center;
                 WpfGrid.SetColumn(pill, 0); rowGrid.Children.Add(pill);
 
-                var nameCell = MakeCell(r.ViewName, AvTokens.Ui, 12.5, AvTokens.Text, bold: true);
+                var nameCell = MakeCell(r.AssemblyName, AvTokens.Ui, 12.5, AvTokens.Text, bold: true);
                 WpfGrid.SetColumn(nameCell, 1); rowGrid.Children.Add(nameCell);
 
-                var sheetCell = MakeCell(r.SheetNum, AvTokens.Mono, 11.5, AvTokens.TextDim);
-                WpfGrid.SetColumn(sheetCell, 2); rowGrid.Children.Add(sheetCell);
+                var viewsCell = MakeCell(r.ViewCount.ToString(), AvTokens.Mono, 11.5, AvTokens.TextDim, centre: true);
+                WpfGrid.SetColumn(viewsCell, 2); rowGrid.Children.Add(viewsCell);
 
                 string createdFg = r.Created > 0 ? AvTokens.OkFg : AvTokens.TextFaint;
                 var createdCell = MakeCell(r.Created > 0 ? r.Created.ToString() : "\u2014", AvTokens.Mono, 11.5, createdFg, centre: true);
@@ -1037,7 +1141,10 @@ namespace AVES.Cmds_PullDownAutoTag
                 var row = new ViewLogRow
                 {
                     ViewName = view.Name,
-                    SheetNum = sheetNum ?? "\u2014"
+                    SheetNum = sheetNum ?? "\u2014",
+                    // Captured here because this is the last point at which the
+                    // Document is in scope; the row itself keeps only the name.
+                    AssemblyName = AutoTagResultsWindow.ResolveAssemblyName(doc, view)
                 };
 
                 List<Element> modelElements = CollectModelElements(doc, view);
@@ -1477,7 +1584,10 @@ namespace AVES.Cmds_PullDownAutoTag
                 var row = new ViewLogRow
                 {
                     ViewName = view.Name,
-                    SheetNum = sheetNum ?? "\u2014"
+                    SheetNum = sheetNum ?? "\u2014",
+                    // Captured here because this is the last point at which the
+                    // Document is in scope; the row itself keeps only the name.
+                    AssemblyName = AutoTagResultsWindow.ResolveAssemblyName(doc, view)
                 };
 
                 List<Element> modelElements = CollectModelElements(doc, view);
