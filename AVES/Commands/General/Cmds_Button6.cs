@@ -786,7 +786,7 @@ namespace AVES.Cmds_Button6
             footerDock.Children.Add(closeBtn);
 
             // Right: Copy to clipboard button (secondary), left of Close
-            var copyBtn = MakeSecondaryButton("⧉  Copy to Clipboard");
+            var copyBtn = MakeSecondaryButton("⧉  Copy to clipboard");
             copyBtn.Margin = new System.Windows.Thickness(0, 0, 8, 0);
             System.Windows.Controls.DockPanel.SetDock(copyBtn, System.Windows.Controls.Dock.Right);
             footerDock.Children.Add(copyBtn);
@@ -842,7 +842,7 @@ namespace AVES.Cmds_Button6
                 timer.Tick += (ts, te) =>
                 {
                     timer.Stop();
-                    copyBtn.Content = "⧉  Copy to Clipboard";
+                    copyBtn.Content = "⧉  Copy to clipboard";
                     copyBtn.IsEnabled = true;
                 };
                 timer.Start();
