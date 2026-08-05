@@ -237,7 +237,7 @@ namespace AVES.Core
 
         /// <summary>
         /// Row styling for a single-select picker list: generous padding, rounded
-        /// row, tinted hover, accent-coloured selection.
+        /// row, tinted hover, accent-coloured and bold selection.
         ///
         /// Consolidated from two byte-identical copies in Cmds_Pulldown3.cs
         /// (DimTypePickerWindow) and Cmds_Pulldown4.cs (BatchViewPickerWindow).
@@ -299,6 +299,7 @@ namespace AVES.Core
             var selected = new Trigger { Property = ListBoxItem.IsSelectedProperty, Value = true };
             selected.Setters.Add(new Setter(ListBoxItem.BackgroundProperty, AvTokens.B(AvTokens.AccentTint)));
             selected.Setters.Add(new Setter(ListBoxItem.ForegroundProperty, AvTokens.B(AvTokens.Accent)));
+            selected.Setters.Add(new Setter(ListBoxItem.FontWeightProperty, FontWeights.SemiBold));
             style.Triggers.Add(selected);
 
             return style;
