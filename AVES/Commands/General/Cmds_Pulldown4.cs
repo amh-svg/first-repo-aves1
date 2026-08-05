@@ -123,15 +123,20 @@ namespace AVES.Cmds_PullDownAutoTag
 
             Title = title;
             Width = 480; Height = 560;
-            WindowStyle = WindowStyle.SingleBorderWindow;
-            ResizeMode = ResizeMode.NoResize;
+            // ToolWindow gives a close-only title bar while KEEPING resize.
+            // ResizeMode.NoResize also hides minimize/maximize but takes resizing
+            // with it, which a long scrolling list needs.
+            WindowStyle = WindowStyle.ToolWindow;
+            ResizeMode = ResizeMode.CanResize;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             Background = AvTokens.B(AvTokens.Surface); FontFamily = AvTokens.Ui;
             UseLayoutRounding = true; SnapsToDevicePixels = true;
 
             var root = new DockPanel();
 
-            var tb = AvControls.TitleBar(title);
+            // HeaderStrip, not TitleBar: matches TemplatePickerWindow, which is
+            // the reference for this popup's styling.
+            var tb = AvControls.HeaderStrip(title);
             DockPanel.SetDock(tb, Dock.Top);
             root.Children.Add(tb);
 
@@ -463,7 +468,10 @@ namespace AVES.Cmds_PullDownAutoTag
                 Cursor = System.Windows.Input.Cursors.Hand,
                 Content = hasFamilies ? "Select Tag Family\u2026" : "No tag families of this type are loaded in the project.",
                 IsEnabled = hasFamilies,
-                Template = AvControls.FieldButtonTemplate(),
+                // Left, explicitly: the template's ContentPresenter alignment
+                // overrides the button's own HorizontalContentAlignment above, so
+                // taking the Center default here silently centred the selection.
+                Template = AvControls.FieldButtonTemplate(HorizontalAlignment.Left),
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
 
