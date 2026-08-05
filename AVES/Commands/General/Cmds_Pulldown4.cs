@@ -816,7 +816,7 @@ namespace AVES.Cmds_PullDownAutoTag
             var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(10, 14, 20, 14) };
             DockPanel.SetDock(btnPanel, Dock.Right);
 
-            var copyBtn = AvControls.SecondaryButton("\u29c9  Copy table");
+            var copyBtn = AvControls.SecondaryButton("\u29c9  Copy to clipboard");
             copyBtn.Margin = new Thickness(0, 0, 10, 0);
             DispatcherTimer? copyTimer = null;
             copyBtn.Click += (s, e) =>
@@ -826,7 +826,7 @@ namespace AVES.Cmds_PullDownAutoTag
                 copyTimer?.Stop();
                 copyTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
                 copyTimer.Tick += (ts, te) =>
-                { copyTimer.Stop(); copyBtn.Content = "\u29c9  Copy table"; copyBtn.IsEnabled = true; };
+                { copyTimer.Stop(); copyBtn.Content = "\u29c9  Copy to clipboard"; copyBtn.IsEnabled = true; };
                 copyTimer.Start();
             };
             var closeBtn = AvControls.PrimaryButton("Close");
