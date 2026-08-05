@@ -726,22 +726,25 @@ namespace AVES.Core
         /// any clickable "field" control (e.g. a picker trigger). Matches W's
         /// FieldButtonTemplate (Cmds_Pulldown4.cs).
         ///
-        /// Content is centred. A Stretch variant existed briefly for MenuRow's
-        /// trailing chevron; MenuRow has since been replaced by FieldLabel plus
-        /// PickerButton, which uses PickerButtonTemplate instead, so the parameter
-        /// was removed rather than left as dead surface.
+        /// contentAlign defaults to Center, which is what the template has always
+        /// produced. It matters because the template's ContentPresenter alignment
+        /// OVERRIDES a Button's own HorizontalContentAlignment -- a caller that
+        /// sets Left on the button and takes the default here silently gets
+        /// centred content, which is exactly what happened in Cmds_Pulldown4.cs.
         ///
         /// Cmds_Pulldown3.cs still has a private copy identical but for Left
-        /// alignment, so its dimension-type field reads as a value rather than a
-        /// centred label. That is a genuine drifted duplicate and a follow-up
-        /// consolidation item; it is left alone because migrating it would change
-        /// that window's appearance in a task that is not about it.
+        /// alignment, predating this parameter. That is a genuine drifted
+        /// duplicate and a follow-up consolidation item; it is left alone because
+        /// migrating it would change that window's appearance in a task that is
+        /// not about it.
         /// </summary>
-        public static ControlTemplate FieldButtonTemplate() =>
-            FactoryBtnTemplate(AvTokens.Surface, AvTokens.Surface2, AvTokens.BorderStrong, 1);
+        public static ControlTemplate FieldButtonTemplate(
+            HorizontalAlignment contentAlign = HorizontalAlignment.Center) =>
+            FactoryBtnTemplate(AvTokens.Surface, AvTokens.Surface2, AvTokens.BorderStrong, 1, contentAlign);
 
         private static ControlTemplate FactoryBtnTemplate(
-            string? normalBg, string hoverBg, string? borderHex, double borderPx)
+            string? normalBg, string hoverBg, string? borderHex, double borderPx,
+            HorizontalAlignment contentAlign = HorizontalAlignment.Center)
         {
             var tpl = new ControlTemplate(typeof(Button));
             var bd = new FrameworkElementFactory(typeof(Border));
@@ -755,7 +758,7 @@ namespace AVES.Core
                 bd.SetValue(Border.BorderThicknessProperty, new Thickness(borderPx));
             }
             var cp = new FrameworkElementFactory(typeof(ContentPresenter));
-            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, contentAlign);
             cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
             cp.SetBinding(ContentPresenter.MarginProperty,
                 new System.Windows.Data.Binding("Padding")
