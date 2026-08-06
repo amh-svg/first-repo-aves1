@@ -676,9 +676,11 @@ namespace AVES.Cmds_Button11
             cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.PaddingProperty, new WpfThickness(12, 8, 12, 8)));
             cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.BackgroundProperty, WpfBrushes.Transparent));
             cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.ForegroundProperty, AvTokens.B(AvTokens.Text)));
-            // Without this the cell inherits Stretch, which renders text at the
-            // top of the fixed 40px row.
-            cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+            // The stock DataGridCell template consumes VerticalContentAlignment
+            // nowhere, so setting it here did nothing. These four text columns
+            // carry no ElementStyle at all, which made this grid the clean proof
+            // that the failure was never an ElementStyle override.
+            cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.TemplateProperty, AvControls.DataGridCellTemplate()));
             grid.CellStyle = cellStyle;
 
             grid.Columns.Add(new WpfDataGridTextColumn { Header = "VIEW", Binding = new System.Windows.Data.Binding("ViewName"), Width = new System.Windows.Controls.DataGridLength(1, System.Windows.Controls.DataGridLengthUnitType.Star) });
