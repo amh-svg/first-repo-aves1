@@ -458,21 +458,8 @@ namespace AVES.Cmds_Button8
             shell.Children.Add(body);
 
             // ── Section 1: Weight parameters ────────────────────────────────
-            var weightSectionLabel = new WpfStackPanel
-            {
-                Orientation = WpfOrientation.Horizontal,
-                Margin = new WpfThickness(0, 0, 0, 10)
-            };
-            weightSectionLabel.Children.Add(AvControls.NumberBadge(1));
-            weightSectionLabel.Children.Add(new WpfTextBlock
-            {
-                Text = "Select Weight Parameters",
-                FontFamily = AvTokens.Ui,
-                FontSize = 12.5,
-                FontWeight = WpfFontWeights.SemiBold,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center
-            });
+            var weightSectionLabel = AvControls.FieldLabel(1, "Select Weight Parameters");
+            weightSectionLabel.Margin = new WpfThickness(0, 0, 0, 10);
             WpfGrid.SetRow(weightSectionLabel, 0);
             body.Children.Add(weightSectionLabel);
 
@@ -529,21 +516,8 @@ namespace AVES.Cmds_Button8
             body.Children.Add(sheetParamRow);
 
             // ── Section 2: Select assemblies ────────────────────────────────
-            var sectionLabel = new WpfStackPanel
-            {
-                Orientation = WpfOrientation.Horizontal,
-                Margin = new WpfThickness(0, 12, 0, 10)
-            };
-            sectionLabel.Children.Add(AvControls.NumberBadge(2));
-            sectionLabel.Children.Add(new WpfTextBlock
-            {
-                Text = "Select Assemblies",
-                FontFamily = AvTokens.Ui,
-                FontSize = 12.5,
-                FontWeight = WpfFontWeights.SemiBold,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center
-            });
+            var sectionLabel = AvControls.FieldLabel(2, "Select Assemblies");
+            sectionLabel.Margin = new WpfThickness(0, 12, 0, 10);
             WpfGrid.SetRow(sectionLabel, 3);
             body.Children.Add(sectionLabel);
 
