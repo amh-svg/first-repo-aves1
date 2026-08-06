@@ -798,7 +798,9 @@ namespace AVES.Cmds_Button10
             MinHeight = 380;
             ResizeMode = ResizeMode.CanResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            Background = AvTokens.B(AvTokens.Surface2);
+            // Surface: the token table scopes Surface-2 to footers, header strips
+            // and inset panels, not to a window body.
+            Background = AvTokens.B(AvTokens.Surface);
             FontFamily = AvTokens.Ui;
             UseLayoutRounding = true;
             SnapsToDevicePixels = true;
