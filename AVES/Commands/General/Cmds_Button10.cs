@@ -789,8 +789,12 @@ namespace AVES.Cmds_Button10
 
     internal class TbReportWindow : Window
     {
+        private readonly List<TbFillReportRow> _rows;
+
         public TbReportWindow(List<TbFillReportRow> rows, int processed, int skipped, int failed, string docTitle)
         {
+            _rows = rows;
+
             Title = "Revisions & Title Block Fill — Report";
             Width = 720;
             Height = 560;
@@ -872,6 +876,10 @@ namespace AVES.Cmds_Button10
             DockPanel.SetDock(caption, Dock.Left);
             footerInner.Children.Add(caption);
             var footerRow = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, HorizontalAlignment = WpfHAlign.Right };
+            var copyBtn = AvControls.SecondaryBtn("⧉  Copy to clipboard", () => { });
+            copyBtn.Margin = new WpfThickness(0, 0, 10, 0);
+            copyBtn.Click += (s, e) => OnCopyToClipboard(copyBtn);
+            footerRow.Children.Add(copyBtn);
             var closeBtn = AvControls.PrimaryBtn("Close", () => Close());
             footerRow.Children.Add(closeBtn);
             DockPanel.SetDock(footerRow, Dock.Right);
@@ -879,6 +887,36 @@ namespace AVES.Cmds_Button10
             footer.Child = footerInner;
             WpfGrid.SetRow(footer, 2);
             root.Children.Add(footer);
+        }
+
+        /// <summary>
+        /// Copies the report as TSV, then flashes the button for two seconds.
+        ///
+        /// StatusKind is written raw ("ok" / "skip" / "fail" / "warn"), matching
+        /// what the other report windows put on the clipboard rather than the
+        /// pill's display wording.
+        /// </summary>
+        private void OnCopyToClipboard(WpfButton sourceBtn)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("Sheet Number\tSheet Name\tStatus\tNote");
+            foreach (var r in _rows)
+                sb.AppendLine(string.Join("\t", r.SheetNumber, r.SheetName, r.StatusKind, r.Note));
+
+            try
+            {
+                System.Windows.Clipboard.SetText(sb.ToString());
+                if (sourceBtn != null)
+                {
+                    var original = sourceBtn.Content;
+                    sourceBtn.Content = "✓  Copied!";
+                    var timer = new System.Windows.Threading.DispatcherTimer
+                    { Interval = TimeSpan.FromSeconds(2) };
+                    timer.Tick += (s, e) => { sourceBtn.Content = original; timer.Stop(); };
+                    timer.Start();
+                }
+            }
+            catch { /* clipboard may be locked by another process */ }
         }
 
         private WpfDataGrid BuildResultsGrid(List<TbFillReportRow> rows)
