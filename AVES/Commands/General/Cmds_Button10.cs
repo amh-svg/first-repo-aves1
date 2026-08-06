@@ -443,18 +443,7 @@ namespace AVES.Cmds_Button10
             shell.Children.Add(bodyScroll);
 
             // ── Section 1: Sheets ──
-            var sheetsHeader = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, Margin = new WpfThickness(0, 0, 0, 10) };
-            sheetsHeader.Children.Add(AvControls.NumberBadge(1));
-            sheetsHeader.Children.Add(new WpfTextBlock
-            {
-                Text = "Sheets",
-                FontFamily = AvTokens.Ui,
-                FontSize = 12.5,
-                FontWeight = WpfFontWeights.SemiBold,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            body.Children.Add(sheetsHeader);
+            body.Children.Add(AvControls.FieldLabel(1, "Sheets"));
 
             var sheetsRow = new WpfGrid { Margin = new WpfThickness(0, 0, 0, 20) };
             sheetsRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -475,18 +464,7 @@ namespace AVES.Cmds_Button10
             body.Children.Add(sheetsRow);
 
             // ── Section 2: Revisions ──
-            var revHeader = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, Margin = new WpfThickness(0, 0, 0, 10) };
-            revHeader.Children.Add(AvControls.NumberBadge(2));
-            revHeader.Children.Add(new WpfTextBlock
-            {
-                Text = "Revisions to Add",
-                FontFamily = AvTokens.Ui,
-                FontSize = 12.5,
-                FontWeight = WpfFontWeights.SemiBold,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            body.Children.Add(revHeader);
+            body.Children.Add(AvControls.FieldLabel(2, "Revisions to Add"));
 
             var revRow = new WpfGrid { Margin = new WpfThickness(0, 0, 0, 20) };
             revRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -507,18 +485,7 @@ namespace AVES.Cmds_Button10
             body.Children.Add(revRow);
 
             // ── Section 3: Title block parameters (populated dynamically) ──
-            var tbHeader = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, Margin = new WpfThickness(0, 0, 0, 10) };
-            tbHeader.Children.Add(AvControls.NumberBadge(3));
-            tbHeader.Children.Add(new WpfTextBlock
-            {
-                Text = "Title Block Parameters",
-                FontFamily = AvTokens.Ui,
-                FontSize = 12.5,
-                FontWeight = WpfFontWeights.SemiBold,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            body.Children.Add(tbHeader);
+            body.Children.Add(AvControls.FieldLabel(3, "Title Block Parameters"));
 
             _tbSection = new WpfStackPanel();
             body.Children.Add(_tbSection);
