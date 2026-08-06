@@ -135,6 +135,10 @@ namespace AVES.Cmds_Button8
             MinWidth = 300;
             MinHeight = 320;
             ResizeMode = ResizeMode.CanResize;
+            // Close-only title bar that still resizes. ResizeMode.NoResize also
+            // hides minimize/maximize but takes resizing with it, which a long
+            // scrolling list needs.
+            WindowStyle = WindowStyle.ToolWindow;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             Background = AvTokens.B(AvTokens.Surface);
             FontFamily = AvTokens.Ui;
@@ -395,6 +399,7 @@ namespace AVES.Cmds_Button8
             MinWidth = 420;
             MinHeight = 420;
             ResizeMode = ResizeMode.CanResize;
+            WindowStyle = WindowStyle.ToolWindow;   // close-only, still resizable
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Background = AvTokens.B(AvTokens.Surface);
             FontFamily = AvTokens.Ui;
@@ -1001,7 +1006,7 @@ namespace AVES.Cmds_Button8
             MinHeight = 420;
             ResizeMode = ResizeMode.CanResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            Background = AvTokens.B(AvTokens.Surface2);
+            Background = AvTokens.B(AvTokens.Surface);
             FontFamily = AvTokens.Ui;
             UseLayoutRounding = true;
             SnapsToDevicePixels = true;
