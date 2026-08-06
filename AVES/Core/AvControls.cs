@@ -571,6 +571,72 @@ namespace AVES.Core
             };
         }
 
+        // ====================================================================
+        //  DataGrid cell template
+        // ====================================================================
+
+        /// <summary>
+        /// Replacement ControlTemplate for DataGridCell, whose only job is to
+        /// make cell content sit vertically centred in its row.
+        ///
+        /// It exists because DataGridCell.VerticalContentAlignment does not work.
+        /// The stock DataGridCell template is a Border wrapping a bare
+        /// ContentPresenter, and -- unlike Button or ListBoxItem, whose default
+        /// templates bind it -- nothing in that template consumes
+        /// VerticalContentAlignment. Setting it compiles, looks correct in
+        /// source, and changes nothing on screen. Five report grids across the
+        /// plugin were top-aligned for exactly that reason.
+        ///
+        /// Centring the ContentPresenter directly is the approach Cmds_Button9.cs
+        /// arrived at independently and is the one confirmed to render correctly.
+        /// It also covers DataGridTemplateColumn cells, not just text ones, and
+        /// does not depend on each column's ElementStyle remembering to set
+        /// VerticalAlignment on its TextBlock -- the per-column gap that left
+        /// Cmds_Button8.cs's Assembly column misaligned while its neighbours
+        /// looked fine.
+        ///
+        /// Background, BorderBrush, BorderThickness and Padding are template-bound
+        /// so each grid's existing DataGridCell setters keep working. Note that
+        /// Padding likely had no effect before this, for the same reason
+        /// VerticalContentAlignment had none: adopting this template is what makes
+        /// those already-declared paddings real.
+        ///
+        /// The trade-off is that the stock template's cell-level focus and
+        /// selection chrome goes away. Every caller is a read-only report with a
+        /// transparent cell background that stripes at the DataGridRow level, so
+        /// nothing visible is lost; row selection and zebra banding are unaffected.
+        ///
+        /// Returns a fresh template per call, matching PickerListItemStyle: a
+        /// template is sealed once applied, so a shared static instance would be
+        /// a trap for any future caller that wanted to tweak one.
+        /// </summary>
+        public static ControlTemplate DataGridCellTemplate()
+        {
+            var tpl = new ControlTemplate(typeof(DataGridCell));
+
+            var bd = new FrameworkElementFactory(typeof(Border));
+            bd.SetBinding(Border.BackgroundProperty,
+                new System.Windows.Data.Binding("Background")
+                { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            bd.SetBinding(Border.BorderBrushProperty,
+                new System.Windows.Data.Binding("BorderBrush")
+                { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            bd.SetBinding(Border.BorderThicknessProperty,
+                new System.Windows.Data.Binding("BorderThickness")
+                { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            bd.SetBinding(Border.PaddingProperty,
+                new System.Windows.Data.Binding("Padding")
+                { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            bd.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
+
+            var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+            cp.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            bd.AppendChild(cp);
+
+            tpl.VisualTree = bd;
+            return tpl;
+        }
+
         /// <summary>
         /// StatusPill as a DataTemplate, for DataGridTemplateColumn cells.
         ///
