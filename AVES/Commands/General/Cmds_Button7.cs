@@ -866,8 +866,12 @@ namespace AVES.Cmds_Button7
                 WpfDataGridCell.BackgroundProperty, WpfBrushes.Transparent));
             cellStyle.Setters.Add(new System.Windows.Setter(
                 WpfDataGridCell.ForegroundProperty, AvTokens.B(AvTokens.Text)));
+            // VerticalContentAlignment was set here and did nothing: the stock
+            // DataGridCell template consumes it nowhere. Both text columns carry
+            // an ElementStyle that omits TextBlock.VerticalAlignment, so nothing
+            // else was centring them either.
             cellStyle.Setters.Add(new System.Windows.Setter(
-                WpfDataGridCell.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+                WpfDataGridCell.TemplateProperty, AvControls.DataGridCellTemplate()));
             grid.CellStyle = cellStyle;
 
             // Column: Assembly name — SemiBold
