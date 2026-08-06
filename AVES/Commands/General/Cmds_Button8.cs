@@ -227,39 +227,10 @@ namespace AVES.Cmds_Button8
                 Margin = new WpfThickness(16, 0, 16, 10)
             };
 
-            var itemStyle = new System.Windows.Style(typeof(WpfListBoxItem));
-            itemStyle.Setters.Add(new System.Windows.Setter(WpfListBoxItem.PaddingProperty, new WpfThickness(12, 0, 12, 0)));
-            itemStyle.Setters.Add(new System.Windows.Setter(WpfListBoxItem.HeightProperty, 34.0));
-            itemStyle.Setters.Add(new System.Windows.Setter(WpfListBoxItem.FontFamilyProperty, AvTokens.Ui));
-            itemStyle.Setters.Add(new System.Windows.Setter(WpfListBoxItem.FontSizeProperty, 13.0));
-            itemStyle.Setters.Add(new System.Windows.Setter(WpfListBoxItem.ForegroundProperty, AvTokens.B(AvTokens.Text)));
-            itemStyle.Setters.Add(new System.Windows.Setter(WpfListBoxItem.BackgroundProperty, System.Windows.Media.Brushes.Transparent));
-
-            var itemTemplate = new System.Windows.Controls.ControlTemplate(typeof(WpfListBoxItem));
-            var itemBorder = new System.Windows.FrameworkElementFactory(typeof(System.Windows.Controls.Border));
-            itemBorder.Name = "RowBorder";
-            itemBorder.SetBinding(System.Windows.Controls.Border.BackgroundProperty,
-                new System.Windows.Data.Binding("Background")
-                { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
-            itemBorder.SetValue(System.Windows.Controls.Border.CornerRadiusProperty, new CornerRadius(4));
-            itemBorder.SetBinding(System.Windows.Controls.Border.PaddingProperty,
-                new System.Windows.Data.Binding("Padding")
-                { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
-            var itemContent = new System.Windows.FrameworkElementFactory(typeof(System.Windows.Controls.ContentPresenter));
-            itemContent.SetValue(System.Windows.Controls.ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
-            itemBorder.AppendChild(itemContent);
-            itemTemplate.VisualTree = itemBorder;
-            itemStyle.Setters.Add(new System.Windows.Setter(WpfListBoxItem.TemplateProperty, itemTemplate));
-
-            var selectedTrigger = new System.Windows.Trigger
-            {
-                Property = WpfListBoxItem.IsSelectedProperty,
-                Value = true
-            };
-            selectedTrigger.Setters.Add(new System.Windows.Setter(WpfListBoxItem.BackgroundProperty, AvTokens.B(AvTokens.AccentTint)));
-            selectedTrigger.Setters.Add(new System.Windows.Setter(WpfListBoxItem.ForegroundProperty, AvTokens.B(AvTokens.Accent)));
-            itemStyle.Triggers.Add(selectedTrigger);
-            _listBox.ItemContainerStyle = itemStyle;
+            // Rows are built by RefreshList as bare ListBoxItems whose Content is a
+            // plain string, so the style's FontWeight reaches the text with nothing
+            // local to override it.
+            _listBox.ItemContainerStyle = AvControls.PickerListItemStyle();
             _listBox.PreviewMouseWheel += ListBox_PreviewMouseWheel;
 
             _listBox.MouseDoubleClick += (s, e) => { if (_listBox.SelectedItem != null) OnOk(); };
