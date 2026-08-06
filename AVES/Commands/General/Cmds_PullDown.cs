@@ -509,6 +509,7 @@ namespace AVES.Cmds_PullDown
     {
         protected readonly StackPanel BodyPanel;
         private readonly WpfGrid _rootGrid;
+        private readonly ScrollViewer _bodyScroll;
 
         protected AvesBaseWindow(string windowTitle)
         {
@@ -560,16 +561,42 @@ namespace AVES.Cmds_PullDown
 
             // ── Body scroll area ──────────────────────────────────────────
             BodyPanel = new StackPanel { Margin = new Thickness(20) };
-            var scroll = new ScrollViewer
+            _bodyScroll = new ScrollViewer
             {
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 Content = BodyPanel
             };
-            WpfGrid.SetRow(scroll, 1);
-            _rootGrid.Children.Add(scroll);
+            WpfGrid.SetRow(_bodyScroll, 1);
+            _rootGrid.Children.Add(_bodyScroll);
 
             base.Content = _rootGrid;
+        }
+
+        /// <summary>
+        /// Grows the window by however much this body ScrollViewer is currently
+        /// short, and does nothing when it already fits.
+        ///
+        /// The body sits in the Star row of a 3-row Grid, so its viewport is
+        /// whatever the header and footer leave over. A window height that
+        /// under-provisions that row by even a few pixels puts a scrollbar down
+        /// the side of the body -- visually adjacent to any list inside it, which
+        /// is how SinglePickerWindow's outer scrollbar was mistaken for its
+        /// ListBox's through three rounds of fixes aimed at the wrong element.
+        ///
+        /// Asking the layout how short it is beats predicting it: the chrome is
+        /// an aggregate of non-client frame, header, footer, margins and whatever
+        /// each window puts above its list, and any of those changing silently
+        /// reintroduces the overflow.
+        ///
+        /// Call from Loaded at ContextIdle, once layout has settled. Converges in
+        /// one pass -- growing the window grows the viewport while the content
+        /// stays put.
+        /// </summary>
+        protected void TopUpResidualHeight()
+        {
+            double residual = _bodyScroll.ScrollableHeight;
+            if (residual > 1) Height += residual;
         }
 
         protected void SetFooter(UIElement footerContent)
@@ -593,12 +620,56 @@ namespace AVES.Cmds_PullDown
         public string SelectedValue { get; private set; }
 
         /// <summary>
-        /// Header + footer + body margins + the search row, subtracted from the
-        /// window height to size the list. Approximate on purpose: AvesBaseWindow
-        /// owns that chrome and is deliberately not being restructured here, so
-        /// the list is clamped rather than measured exactly.
+        /// False until Loaded has measured the list and pinned the window height.
+        /// The SizeChanged handler is gated on it: that handler assigns an
+        /// explicit ListBox height, and the layout passes that run while the
+        /// window is opening would otherwise do so BEFORE the measurement, which
+        /// is precisely what would destroy the auto-sizing it needs to read.
         /// </summary>
-        private const double ChromeAllowance = 214;
+        private bool _measured;
+
+        /// <summary>
+        /// Everything in the window that is not the list: non-client chrome, the
+        /// 52px header, the footer, the 20px body margins and the search row.
+        /// AvesBaseWindow owns most of that and is deliberately not restructured
+        /// here, so this stands in for the lot.
+        ///
+        /// Calibrated, not estimated. At 214 the body overflowed AvesBaseWindow's
+        /// own ScrollViewer by a measured 30.4px -- constant across list lengths,
+        /// because the shortfall is in the chrome rather than the rows. That
+        /// produced an OUTER scrollbar sitting where the list's own would be, so
+        /// three rounds of adjusting the ListBox chased a list that was already
+        /// sized correctly. 214 + 30.4 + ~1.6 for DPI rounding = 246.
+        ///
+        /// Both the opening height and the resize handler are expressed in terms
+        /// of this one value, so correcting it fixes them together and they cannot
+        /// drift apart. ApplyMeasuredHeight also tops up any residual at runtime,
+        /// so a future change to the header, footer or search row self-corrects
+        /// rather than silently reintroducing the overflow.
+        /// </summary>
+        private const double ChromeAllowance = 246;
+
+        /// <summary>
+        /// Opening-size hint only, NOT the final height. Two rounds of estimating
+        /// a row's height from padding and line metrics both came out short and
+        /// left the scrollbar showing, so the real height is measured from the
+        /// laid-out ListBox in Loaded instead. These constants only pick a
+        /// starting size so the corrective resize is a few pixels rather than a
+        /// jarring jump.
+        /// </summary>
+        private const double RowHeightHint = 40;
+        private const double ListBoxChromeHint = 6;
+
+        /// <summary>
+        /// Floor for the list, about three rows. Shared with the resize handler
+        /// so opening and dragging cannot disagree about the minimum. A one- or
+        /// two-item list therefore keeps a little slack rather than collapsing to
+        /// a sliver.
+        /// </summary>
+        private const double MinListHeight = 120;
+
+        /// <summary>Ceiling for the list; longer lists stop here and scroll.</summary>
+        private const double MaxListHeight = 400;
 
         public static string Show(
             string title, IEnumerable<string> items, string current, Window owner)
@@ -610,8 +681,24 @@ namespace AVES.Cmds_PullDown
         private SinglePickerWindow(string title, IEnumerable<string> items, string current)
             : base(title)
         {
-            Width = 360; Height = 420;
-            MinWidth = 320; MinHeight = 320;
+            _allItems = items.ToList();
+
+            // Opening size only. The real height comes from measuring the
+            // laid-out list in Loaded -- see ApplyMeasuredHeight.
+            //
+            // SizeToContent is deliberately NOT used: it would feed back into the
+            // SizeChanged handler below, each deriving its size from the other.
+            double hintHeight = Math.Clamp(
+                _allItems.Count * RowHeightHint + ListBoxChromeHint,
+                MinListHeight, MaxListHeight);
+
+            Width = 360;
+            Height = hintHeight + ChromeAllowance;
+            MinWidth = 320;
+            MinHeight = MinListHeight + ChromeAllowance;
+            // Never taller than the display, however long the list.
+            MaxHeight = SystemParameters.WorkArea.Height * 0.9;
+
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             // ToolWindow gives a close-only title bar while KEEPING resize.
             // ResizeMode.NoResize also hides minimize/maximize but takes resizing
@@ -619,17 +706,18 @@ namespace AVES.Cmds_PullDown
             WindowStyle = WindowStyle.ToolWindow;
             ResizeMode = ResizeMode.CanResize;
 
-            _allItems = items.ToList();
-
             BodyPanel.Children.Add(BuildSearchBox());
 
             _listBox = new ListBox
             {
-                // FIX: Give the ListBox a fixed height so it owns its own
-                // scroll region inside the outer BodyPanel ScrollViewer.
-                // Kept, and now tracked to the window in SizeChanged below, so
-                // resizing grows the list rather than only the chrome.
-                Height = 240,
+                // No explicit Height: the list sizes itself to its items, which
+                // is the only way to learn their true height. MaxHeight still
+                // bounds it, so it keeps owning its own scroll region inside the
+                // outer BodyPanel ScrollViewer rather than growing without limit
+                // (see the wheel-routing fixes below). Loaded then pins the height
+                // and SizeChanged drives it from there.
+                MinHeight = MinListHeight,
+                MaxHeight = MaxListHeight,
                 Margin = new Thickness(0, 0, 0, 0),
                 FontFamily = AvTokens.Ui,
                 FontSize = 13,
@@ -638,6 +726,17 @@ namespace AVES.Cmds_PullDown
                 BorderThickness = new Thickness(1)
             };
             _listBox.ItemContainerStyle = AvControls.PickerListItemStyle();
+
+            // Auto is already the ListBox default; set explicitly so the intent
+            // is on the record. TemplatePickerWindow deliberately forces Visible
+            // to keep the wheel from bubbling to the window -- this window does
+            // not need that, because PassWheelToSelf below re-raises the wheel on
+            // the ListBox whether or not a scrollbar is showing.
+            _listBox.SetValue(ScrollViewer.VerticalScrollBarVisibilityProperty,
+                ScrollBarVisibility.Auto);
+            _listBox.SetValue(ScrollViewer.HorizontalScrollBarVisibilityProperty,
+                ScrollBarVisibility.Disabled);
+
             _listBox.ItemsSource = _allItems;
             if (current != null) _listBox.SelectedItem = current;
             _listBox.MouseDoubleClick += (_, __) => Confirm();
@@ -648,8 +747,17 @@ namespace AVES.Cmds_PullDown
 
             BodyPanel.Children.Add(_listBox);
 
+            // Manual resize only, and only once the list has been measured. The
+            // list is NOT re-sized when the search filter shrinks it: the window
+            // would jump while the user is typing, moving the footer buttons
+            // under the cursor, and it would discard any size the user had chosen.
             SizeChanged += (_, __) =>
-                _listBox.Height = Math.Max(120, ActualHeight - ChromeAllowance);
+            {
+                if (!_measured) return;
+                _listBox.Height = Math.Max(MinListHeight, ActualHeight - ChromeAllowance);
+            };
+
+            Loaded += (_, __) => ApplyMeasuredHeight();
 
             // Footer
             var cancelBtn = AvControls.GhostButton("Cancel");
@@ -663,6 +771,58 @@ namespace AVES.Cmds_PullDown
             footerRow.Children.Add(okBtn);
             SetFooter(footerRow);
         }
+
+        /// <summary>
+        /// Sizes the window from the list's REAL height, once WPF has laid it out.
+        ///
+        /// Estimating a row's height from padding and line metrics was tried twice
+        /// and came out short both times, leaving a scrollbar on a list that fitted
+        /// with room to spare. Asking the laid-out control what it actually
+        /// measures removes the guess entirely.
+        ///
+        /// The list is auto-sized and MaxHeight-bounded, so ActualHeight is the
+        /// content height for short lists and the cap for long ones -- exactly the
+        /// two cases that need different treatment. Pinning it afterwards hands
+        /// control to SizeChanged for manual resizing.
+        ///
+        /// Cost: a brief resize as the window corrects itself on open, kept small
+        /// by opening near the estimated size.
+        /// </summary>
+        private void ApplyMeasuredHeight()
+        {
+            // Loaded can fire before the list has been arranged, so settle layout
+            // first rather than trusting ActualHeight to be populated.
+            _listBox.UpdateLayout();
+
+            double measured = _listBox.ActualHeight;
+            if (measured <= 0) measured = _listBox.DesiredSize.Height;
+            if (measured <= 0) measured = MinListHeight;
+
+            measured = Math.Clamp(measured, MinListHeight, MaxListHeight);
+
+            // Pin the measured height, then let SizeChanged drive it from here.
+            _listBox.Height = measured;
+            Height = measured + ChromeAllowance;
+            _measured = true;
+
+            // Safety net for ChromeAllowance. That constant stands in for the
+            // header, footer, body margins and search row all at once, so a change
+            // to any of them would silently leave the body overflowing
+            // AvesBaseWindow's ScrollViewer again -- which is what produced the
+            // outer scrollbar this whole fix chased.
+            //
+            // Ask the layout how short it still is and add exactly that. With the
+            // constant correct this measures ~0 and never fires, so there is no
+            // second resize in the normal case. It converges in one pass: growing
+            // the window grows the viewport while the content stays put.
+            Dispatcher.BeginInvoke(new Action(TopUpResidualHeight),
+                DispatcherPriority.ContextIdle);
+        }
+
+        // TopUpResidualHeight now lives on AvesBaseWindow, which owns the body
+        // ScrollViewer directly and so needs no visual-tree walk to reach it.
+        // MultiPickerWindow needs the same safeguard, and a second private copy
+        // here is exactly the drift this file has spent the session removing.
 
         /// <summary>
         /// Search row matching the other AVES pickers: Surface-2 field, 1px
