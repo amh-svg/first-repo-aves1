@@ -945,9 +945,24 @@ namespace AVES.Cmds_PullDown
             string title, IEnumerable<string> items, IEnumerable<string> current)
             : base(title)
         {
-            Width = 420; Height = 520;
+            // 660 = the 440 list below plus 220 of chrome, keeping the same
+            // relationship the previous 520/300 pair had. That 220 was never
+            // calibrated, so it under-provisions the body row and leaves an outer
+            // scrollbar until the window is dragged taller -- TopUpResidualHeight
+            // in Loaded measures the shortfall and closes it, rather than this
+            // becoming another hand-tuned constant.
+            Width = 420; Height = 660;
+            // Never taller than the display: 660 is comfortable at 1080p but
+            // would overflow a 768p laptop without this.
+            MaxHeight = SystemParameters.WorkArea.Height * 0.9;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ResizeMode = ResizeMode.CanResize;
+
+            // No gating needed, unlike SinglePickerWindow: this window has no
+            // SizeChanged handler, so nothing can overwrite the corrected height
+            // between layout passes.
+            Loaded += (_, __) => Dispatcher.BeginInvoke(
+                new Action(TopUpResidualHeight), DispatcherPriority.ContextIdle);
 
             _allItems = items.ToList();
             var currentSet = current != null
@@ -1023,7 +1038,12 @@ namespace AVES.Cmds_PullDown
             {
                 // FIX: Fixed height ensures this ScrollViewer owns the scroll
                 // region rather than deferring to the outer AvesBaseWindow ScrollViewer.
-                Height = 300,
+                //
+                // 440 = ten CheckRow rows at 44px. Was 300, which showed under
+                // seven rows once the rows grew from 28px to 44px in the CheckRow
+                // migration. Ten rather than twelve keeps the window off the
+                // bottom of a 768p screen.
+                Height = 440,
                 Content = itemStack,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
