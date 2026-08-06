@@ -589,7 +589,16 @@ namespace AVES.Cmds_PullDown
     internal class SinglePickerWindow : AvesBaseWindow
     {
         private readonly ListBox _listBox;
+        private readonly List<string> _allItems;
         public string SelectedValue { get; private set; }
+
+        /// <summary>
+        /// Header + footer + body margins + the search row, subtracted from the
+        /// window height to size the list. Approximate on purpose: AvesBaseWindow
+        /// owns that chrome and is deliberately not being restructured here, so
+        /// the list is clamped rather than measured exactly.
+        /// </summary>
+        private const double ChromeAllowance = 214;
 
         public static string Show(
             string title, IEnumerable<string> items, string current, Window owner)
@@ -601,14 +610,25 @@ namespace AVES.Cmds_PullDown
         private SinglePickerWindow(string title, IEnumerable<string> items, string current)
             : base(title)
         {
-            Width = 360; Height = 360;
+            Width = 360; Height = 420;
+            MinWidth = 320; MinHeight = 320;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
-            ResizeMode = ResizeMode.NoResize;
+            // ToolWindow gives a close-only title bar while KEEPING resize.
+            // ResizeMode.NoResize also hides minimize/maximize but takes resizing
+            // with it, which a long list needs.
+            WindowStyle = WindowStyle.ToolWindow;
+            ResizeMode = ResizeMode.CanResize;
+
+            _allItems = items.ToList();
+
+            BodyPanel.Children.Add(BuildSearchBox());
 
             _listBox = new ListBox
             {
                 // FIX: Give the ListBox a fixed height so it owns its own
                 // scroll region inside the outer BodyPanel ScrollViewer.
+                // Kept, and now tracked to the window in SizeChanged below, so
+                // resizing grows the list rather than only the chrome.
                 Height = 240,
                 Margin = new Thickness(0, 0, 0, 0),
                 FontFamily = AvTokens.Ui,
@@ -617,7 +637,8 @@ namespace AVES.Cmds_PullDown
                 BorderBrush = AvTokens.Brush(AvTokens.Border),
                 BorderThickness = new Thickness(1)
             };
-            foreach (string item in items) _listBox.Items.Add(item);
+            _listBox.ItemContainerStyle = AvControls.PickerListItemStyle();
+            _listBox.ItemsSource = _allItems;
             if (current != null) _listBox.SelectedItem = current;
             _listBox.MouseDoubleClick += (_, __) => Confirm();
 
@@ -626,6 +647,9 @@ namespace AVES.Cmds_PullDown
             _listBox.PreviewMouseWheel += PassWheelToSelf;
 
             BodyPanel.Children.Add(_listBox);
+
+            SizeChanged += (_, __) =>
+                _listBox.Height = Math.Max(120, ActualHeight - ChromeAllowance);
 
             // Footer
             var cancelBtn = AvControls.GhostButton("Cancel");
@@ -638,6 +662,74 @@ namespace AVES.Cmds_PullDown
             footerRow.Children.Add(new WpfBorder { Width = 10 });
             footerRow.Children.Add(okBtn);
             SetFooter(footerRow);
+        }
+
+        /// <summary>
+        /// Search row matching the other AVES pickers: Surface-2 field, 1px
+        /// BorderStrong, radius 5, magnifier glyph, live case-insensitive filter.
+        /// </summary>
+        private WpfBorder BuildSearchBox()
+        {
+            var grid = new WpfGrid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var magnifier = new TextBlock
+            {
+                Text = "⌕",
+                FontSize = 14,
+                Foreground = AvTokens.Brush(AvTokens.TextFaint),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+
+            var searchBox = new WpfTextBox
+            {
+                FontFamily = AvTokens.Ui,
+                FontSize = 13,
+                Foreground = AvTokens.Brush(AvTokens.Text),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            searchBox.TextChanged += (_, __) => FilterList(searchBox.Text);
+
+            WpfGrid.SetColumn(magnifier, 0);
+            WpfGrid.SetColumn(searchBox, 1);
+            grid.Children.Add(magnifier);
+            grid.Children.Add(searchBox);
+
+            Loaded += (_, __) => searchBox.Focus();
+
+            return new WpfBorder
+            {
+                Background = AvTokens.Brush(AvTokens.Surface2),
+                BorderBrush = AvTokens.Brush(AvTokens.BorderStrong),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(5),
+                Padding = new Thickness(10, 9, 10, 9),
+                Margin = new Thickness(0, 0, 0, 12),
+                Child = grid
+            };
+        }
+
+        /// <summary>
+        /// Live filter. Re-selects the first match when the previous selection
+        /// drops out of the filtered set, so Confirm always has something to
+        /// return -- the same rule the other AVES pickers use.
+        /// </summary>
+        private void FilterList(string query)
+        {
+            List<string> filtered = string.IsNullOrWhiteSpace(query)
+                ? _allItems
+                : _allItems
+                    .Where(n => n.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                    .ToList();
+
+            _listBox.ItemsSource = filtered;
+
+            if (_listBox.SelectedItem == null && filtered.Count > 0)
+                _listBox.SelectedIndex = 0;
         }
 
         private void Confirm()
