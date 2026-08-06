@@ -676,6 +676,9 @@ namespace AVES.Cmds_Button11
             cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.PaddingProperty, new WpfThickness(12, 8, 12, 8)));
             cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.BackgroundProperty, WpfBrushes.Transparent));
             cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.ForegroundProperty, AvTokens.B(AvTokens.Text)));
+            // Without this the cell inherits Stretch, which renders text at the
+            // top of the fixed 40px row.
+            cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.VerticalContentAlignmentProperty, VerticalAlignment.Center));
             grid.CellStyle = cellStyle;
 
             grid.Columns.Add(new WpfDataGridTextColumn { Header = "VIEW", Binding = new System.Windows.Data.Binding("ViewName"), Width = new System.Windows.Controls.DataGridLength(1, System.Windows.Controls.DataGridLengthUnitType.Star) });
@@ -718,6 +721,11 @@ namespace AVES.Cmds_Button11
             // Padding/CornerRadius below match StatusPill's exactly.
             factory.SetValue(WpfButton.PaddingProperty, new WpfThickness(8, 5, 10, 5));
             factory.SetValue(WpfButton.CursorProperty, System.Windows.Input.Cursors.Hand);
+            // The chip's own template centres its label, but the Button element
+            // itself defaulted to Stretch and grew to fill the row, so it stood
+            // taller than the pill beside it. Match the pill, which sets the
+            // same on its root.
+            factory.SetValue(System.Windows.FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
             factory.SetValue(WpfButton.TemplateProperty, BuildChipButtonTemplate());
             factory.AddHandler(WpfButton.ClickEvent, new RoutedEventHandler(OnSelectClick));
             template.VisualTree = factory;
