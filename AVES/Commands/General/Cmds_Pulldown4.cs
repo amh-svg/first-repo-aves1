@@ -770,7 +770,9 @@ namespace AVES.Cmds_PullDownAutoTag
     }
 
     /// <summary>
-    /// One grid row per assembly, aggregated from that assembly's ViewLogRows.
+    /// One grid row per assembly, aggregated from that assembly's ViewLogRows --
+    /// or one row for a single view that belongs to no assembly, in which case
+    /// AssemblyName carries the view's own name and nothing is aggregated.
     ///
     /// Display model only. ViewLogRow stays the source of truth, and the
     /// clipboard payload is still built from the per-view list, so nothing is
@@ -870,9 +872,6 @@ namespace AVES.Cmds_PullDownAutoTag
             Content = root;
         }
 
-        /// <summary>Label for 3D views that belong to no assembly.</summary>
-        private const string NoAssemblyBucket = "(Non-assembly 3D views)";
-
         /// <summary>
         /// Collapses the per-view rows into one row per assembly.
         ///
@@ -883,18 +882,22 @@ namespace AVES.Cmds_PullDownAutoTag
         /// something failed -- and the Notes column records it either way.
         ///
         /// Created and Skipped are summed, matching how the stat tiles above the
-        /// grid already compute their totals.
+        /// grid already compute their totals. The per-view exception text cannot
+        /// survive that aggregation, which is why the clipboard payload is
+        /// deliberately left ungrouped.
         ///
-        /// Views with no assembly collapse into one bucket row, sorted last. Their
-        /// per-view detail, and every per-view exception message that cannot
-        /// survive aggregation, remains in the clipboard payload.
+        /// Views belonging to no assembly keep a row each, named by the view.
+        /// They have no grouping key, so merging them would be an arbitrary
+        /// collapse rather than a grouping -- and it would hide exactly the
+        /// detail that grouping cannot justify losing. They carry their own
+        /// status, counts and notes through unchanged, and sort after the
+        /// assemblies.
         /// </summary>
         private static List<AssemblyLogRow> GroupByAssembly(List<ViewLogRow> rows)
         {
-            var grouped = rows
-                .GroupBy(r => string.IsNullOrWhiteSpace(r.AssemblyName)
-                    ? NoAssemblyBucket
-                    : r.AssemblyName)
+            var assemblyRows = rows
+                .Where(r => !string.IsNullOrWhiteSpace(r.AssemblyName))
+                .GroupBy(r => r.AssemblyName)
                 .Select(g =>
                 {
                     int warnCount = g.Count(r => r.Status == "warn");
@@ -923,13 +926,26 @@ namespace AVES.Cmds_PullDownAutoTag
                         Notes = notes,
                     };
                 })
+                .OrderBy(r => r.AssemblyName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            // Assemblies alphabetically, the no-assembly bucket last.
-            return grouped
-                .OrderBy(r => r.AssemblyName == NoAssemblyBucket ? 1 : 0)
-                .ThenBy(r => r.AssemblyName, StringComparer.OrdinalIgnoreCase)
+            // Straight pass-through: one row in, one row out, nothing aggregated.
+            var looseViewRows = rows
+                .Where(r => string.IsNullOrWhiteSpace(r.AssemblyName))
+                .Select(r => new AssemblyLogRow
+                {
+                    AssemblyName = r.ViewName,
+                    Status = r.Status,
+                    ViewCount = 1,
+                    Created = r.Created,
+                    Skipped = r.Skipped,
+                    Notes = r.Notes,
+                })
+                .OrderBy(r => r.AssemblyName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+
+            assemblyRows.AddRange(looseViewRows);
+            return assemblyRows;
         }
 
         /// <summary>
