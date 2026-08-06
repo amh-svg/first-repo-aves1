@@ -1265,6 +1265,13 @@ namespace AVES.Cmds_Button8
             };
             var nameStyle = new System.Windows.Style(typeof(System.Windows.Controls.TextBlock));
             nameStyle.Setters.Add(new System.Windows.Setter(System.Windows.Controls.TextBlock.FontWeightProperty, WpfFontWeights.SemiBold));
+            // Assigning an ElementStyle replaces DataGridTextColumn's default one
+            // outright, so the generated TextBlock falls back to VerticalAlignment
+            // Stretch: it fills the cell's content box and draws its text at the
+            // top of it, which the cell's VerticalContentAlignment cannot undo.
+            // The Weight and Notes columns already compensate for this; this one
+            // set FontWeight and nothing else, which is why it alone sat high.
+            nameStyle.Setters.Add(new System.Windows.Setter(System.Windows.Controls.TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
             nameCol.ElementStyle = nameStyle;
             grid.Columns.Add(nameCol);
 
