@@ -203,12 +203,13 @@ namespace AVES.Cmds_PullDown
             cellStyle.Setters.Add(new WpfSetter(DataGridCell.PaddingProperty, new Thickness(12, 7, 12, 7)));
             cellStyle.Setters.Add(new WpfSetter(DataGridCell.BorderThicknessProperty, new Thickness(0)));
             cellStyle.Setters.Add(new WpfSetter(DataGridCell.ForegroundProperty, AvTokens.Brush(AvTokens.Text)));
-            // Without this the cell inherits Stretch and text draws at the top of
-            // the 34px row. This factory feeds both of UnifiedReportWindow's
-            // grids -- results and warnings -- across all three of its callers,
-            // so the one setter covers Batch Shared Parameters, Batch Remove
-            // Parameters and the CSV Importer.
-            cellStyle.Setters.Add(new WpfSetter(DataGridCell.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+            // The stock DataGridCell template consumes VerticalContentAlignment
+            // nowhere, so setting it here did nothing and the TextColumn helper
+            // below attaches no ElementStyle to compensate. This factory feeds
+            // both of UnifiedReportWindow's grids -- results and warnings --
+            // across all three of its callers, so this one setter covers Batch
+            // Shared Parameters, Batch Remove Parameters and the CSV Importer.
+            cellStyle.Setters.Add(new WpfSetter(DataGridCell.TemplateProperty, AvControls.DataGridCellTemplate()));
             dg.CellStyle = cellStyle;
 
             return dg;
