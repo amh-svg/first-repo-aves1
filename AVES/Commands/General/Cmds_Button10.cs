@@ -930,7 +930,7 @@ namespace AVES.Cmds_Button10
             grid.Columns.Add(new WpfDataGridTextColumn { Header = "NAME", Binding = new System.Windows.Data.Binding("SheetName"), Width = new System.Windows.Controls.DataGridLength(1.6, System.Windows.Controls.DataGridLengthUnitType.Star) });
 
             var statusCol = new WpfDataGridTemplateColumn { Header = "STATUS", Width = System.Windows.Controls.DataGridLength.Auto, MinWidth = 100 };
-            statusCol.CellTemplate = BuildStatusPillTemplate();
+            statusCol.CellTemplate = AvControls.StatusPillTemplate();
             grid.Columns.Add(statusCol);
 
             grid.Columns.Add(new WpfDataGridTextColumn { Header = "NOTES", Binding = new System.Windows.Data.Binding("Note"), Width = new System.Windows.Controls.DataGridLength(2, System.Windows.Controls.DataGridLengthUnitType.Star) });
@@ -938,46 +938,11 @@ namespace AVES.Cmds_Button10
             return grid;
         }
 
-        private static System.Windows.DataTemplate BuildStatusPillTemplate()
-        {
-            string xaml = @"
-<DataTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'
-              xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'>
-  <Border x:Name='pill' CornerRadius='6' Padding='8,5,10,5' HorizontalAlignment='Left'>
-    <StackPanel Orientation='Horizontal'>
-      <Ellipse x:Name='dot' Width='7' Height='7' VerticalAlignment='Center' Margin='0,0,6,0'/>
-      <TextBlock x:Name='lbl' FontSize='11.5' FontWeight='SemiBold' VerticalAlignment='Center'/>
-    </StackPanel>
-  </Border>
-  <DataTemplate.Triggers>
-    <DataTrigger Binding='{Binding StatusKind}' Value='ok'>
-      <Setter TargetName='pill' Property='Background' Value='#E4F3EA'/>
-      <Setter TargetName='dot'  Property='Fill' Value='#2C7A52'/>
-      <Setter TargetName='lbl'  Property='Foreground' Value='#2C7A52'/>
-      <Setter TargetName='lbl'  Property='Text' Value='Done'/>
-    </DataTrigger>
-    <DataTrigger Binding='{Binding StatusKind}' Value='skip'>
-      <Setter TargetName='pill' Property='Background' Value='#EDEFF2'/>
-      <Setter TargetName='dot'  Property='Fill' Value='#5B6573'/>
-      <Setter TargetName='lbl'  Property='Foreground' Value='#5B6573'/>
-      <Setter TargetName='lbl'  Property='Text' Value='Skipped'/>
-    </DataTrigger>
-    <DataTrigger Binding='{Binding StatusKind}' Value='fail'>
-      <Setter TargetName='pill' Property='Background' Value='#FBE3DE'/>
-      <Setter TargetName='dot'  Property='Fill' Value='#C0381F'/>
-      <Setter TargetName='lbl'  Property='Foreground' Value='#C0381F'/>
-      <Setter TargetName='lbl'  Property='Text' Value='Failed'/>
-    </DataTrigger>
-    <DataTrigger Binding='{Binding StatusKind}' Value='warn'>
-      <Setter TargetName='pill' Property='Background' Value='#FAF0DA'/>
-      <Setter TargetName='dot'  Property='Fill' Value='#9A6B12'/>
-      <Setter TargetName='lbl'  Property='Foreground' Value='#9A6B12'/>
-      <Setter TargetName='lbl'  Property='Text' Value='Warning'/>
-    </DataTrigger>
-  </DataTemplate.Triggers>
-</DataTemplate>";
-            return (System.Windows.DataTemplate)System.Windows.Markup.XamlReader.Parse(xaml);
-        }
+        // BuildStatusPillTemplate is gone: it reimplemented the pill as a parsed
+        // XAML string with ten hardcoded hex values and four hardcoded labels.
+        // The geometry matched AvControls.StatusPill exactly, so this is a
+        // like-for-like swap -- but the colours now come from AvTokens rather
+        // than needing to be re-synced by hand whenever the tokens move.
     }
 
     // ─────────────────────────────────────────────────────────────────────────

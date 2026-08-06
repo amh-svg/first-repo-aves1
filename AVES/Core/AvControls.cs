@@ -571,6 +571,85 @@ namespace AVES.Core
             };
         }
 
+        /// <summary>
+        /// StatusPill as a DataTemplate, for DataGridTemplateColumn cells.
+        ///
+        /// StatusPill returns a Border, which a DataTemplate cannot return
+        /// directly, so every report window that wanted a pill in a grid column
+        /// worked around it separately: Cmds_Button10.cs reimplemented the whole
+        /// pill as a parsed XAML string with hardcoded hex, and Cmds_Button11.cs
+        /// assigned StatusPill's output from a ContentControl's Loaded handler.
+        ///
+        /// Geometry is StatusPill's, value for value -- radius 6, padding
+        /// 8/5/10/5, a 7px dot with a 6px right margin, label 11.5 SemiBold --
+        /// and the colours come from AvTokens rather than literals, so the pill
+        /// follows the tokens instead of having to be re-synced by hand.
+        ///
+        /// bindingPath names the row property holding the kind ("ok" / "skip" /
+        /// "fail" / "warn" / "info"). Rows with a single fixed outcome can expose
+        /// a computed property returning a constant.
+        ///
+        /// Cmds_Button6.cs deliberately keeps its own approach: it injects pills
+        /// via DataGrid.LoadingRow rather than a template, and maps its own status
+        /// vocabulary ("Renamed", "Already Correct") onto these kinds.
+        /// </summary>
+        public static DataTemplate StatusPillTemplate(string bindingPath = "StatusKind")
+        {
+            var pill = new FrameworkElementFactory(typeof(Border));
+            pill.Name = "pill";
+            pill.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+            pill.SetValue(Border.PaddingProperty, new Thickness(8, 5, 10, 5));
+            pill.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Left);
+            pill.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+
+            var row = new FrameworkElementFactory(typeof(StackPanel));
+            row.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+
+            var dot = new FrameworkElementFactory(typeof(WpfEllipse));
+            dot.Name = "dot";
+            dot.SetValue(FrameworkElement.WidthProperty, 7.0);
+            dot.SetValue(FrameworkElement.HeightProperty, 7.0);
+            dot.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            dot.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 6, 0));
+
+            var lbl = new FrameworkElementFactory(typeof(TextBlock));
+            lbl.Name = "lbl";
+            lbl.SetValue(TextBlock.FontFamilyProperty, AvTokens.Ui);
+            lbl.SetValue(TextBlock.FontSizeProperty, 11.5);
+            lbl.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold);
+            lbl.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+
+            row.AppendChild(dot);
+            row.AppendChild(lbl);
+            pill.AppendChild(row);
+
+            var tpl = new DataTemplate { VisualTree = pill };
+
+            AddPillKind(tpl, bindingPath, "ok", AvTokens.OkBg, AvTokens.OkFg, "Done");
+            AddPillKind(tpl, bindingPath, "skip", AvTokens.SkipBg, AvTokens.SkipFg, "Skipped");
+            AddPillKind(tpl, bindingPath, "fail", AvTokens.FailBg, AvTokens.FailFg, "Failed");
+            AddPillKind(tpl, bindingPath, "warn", AvTokens.WarnBg, AvTokens.WarnFg, "Warning");
+            AddPillKind(tpl, bindingPath, "info", AvTokens.InfoBg, AvTokens.InfoFg, "Info");
+
+            return tpl;
+        }
+
+        private static void AddPillKind(
+            DataTemplate tpl, string bindingPath,
+            string kind, string bg, string fg, string label)
+        {
+            var trigger = new DataTrigger
+            {
+                Binding = new System.Windows.Data.Binding(bindingPath),
+                Value = kind
+            };
+            trigger.Setters.Add(new Setter(Border.BackgroundProperty, AvTokens.B(bg), "pill"));
+            trigger.Setters.Add(new Setter(WpfEllipse.FillProperty, AvTokens.B(fg), "dot"));
+            trigger.Setters.Add(new Setter(TextBlock.ForegroundProperty, AvTokens.B(fg), "lbl"));
+            trigger.Setters.Add(new Setter(TextBlock.TextProperty, label, "lbl"));
+            tpl.Triggers.Add(trigger);
+        }
+
         // ====================================================================
         //  Buttons -- three distinct families, one per hover/wiring technique.
         //  See class remarks: these are NOT collapsed into one shape because

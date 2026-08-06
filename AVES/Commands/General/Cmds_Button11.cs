@@ -500,6 +500,14 @@ namespace AVES.Cmds_Button11
         public string FamilyTypeName { get; set; } = "";
         public string ElementIdDisplay { get; set; } = "";
         public ElementId ExampleElementId { get; set; } = ElementId.InvalidElementId;
+
+        /// <summary>
+        /// Always "fail": this report lists only family types that are missing a
+        /// tag, so every row is a failure by construction. Exposed as a property
+        /// rather than hardcoded in the view so the status column can bind to it
+        /// like every other report's does.
+        /// </summary>
+        public string StatusKind => "fail";
     }
 
     /// <summary>
@@ -678,7 +686,7 @@ namespace AVES.Cmds_Button11
             // Every row shown is already a failure -- the pill is decorative/
             // consistent labeling here, not tied to any pass/fail branching.
             var statusCol = new WpfDataGridTemplateColumn { Header = "STATUS", Width = System.Windows.Controls.DataGridLength.Auto, MinWidth = 90 };
-            statusCol.CellTemplate = BuildStatusPillTemplate();
+            statusCol.CellTemplate = AvControls.StatusPillTemplate();
             grid.Columns.Add(statusCol);
 
             var selectCol = new WpfDataGridTemplateColumn { Header = "", Width = System.Windows.Controls.DataGridLength.Auto, MinWidth = 70 };
@@ -688,17 +696,11 @@ namespace AVES.Cmds_Button11
             return grid;
         }
 
-        private static DataTemplate BuildStatusPillTemplate()
-        {
-            var template = new DataTemplate();
-            var factory = new FrameworkElementFactory(typeof(ContentControl));
-            factory.AddHandler(FrameworkElement.LoadedEvent, new RoutedEventHandler((s, e) =>
-            {
-                if (s is ContentControl cc) cc.Content = AvControls.StatusPill("fail");
-            }));
-            template.VisualTree = factory;
-            return template;
-        }
+        // BuildStatusPillTemplate is gone: it wrapped a ContentControl and filled
+        // it from a Loaded handler, because StatusPill returns a Border and a
+        // DataTemplate cannot return one directly. AvControls.StatusPillTemplate
+        // solves that once, and binds the kind from the row rather than assigning
+        // a hardcoded "fail" from an event handler.
 
         private DataTemplate BuildSelectButtonTemplate()
         {
