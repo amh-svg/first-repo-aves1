@@ -945,14 +945,20 @@ namespace AVES.Cmds_PullDown
             string title, IEnumerable<string> items, IEnumerable<string> current)
             : base(title)
         {
-            // 660 = the 440 list below plus 220 of chrome, keeping the same
-            // relationship the previous 520/300 pair had. That 220 was never
-            // calibrated, so it under-provisions the body row and leaves an outer
-            // scrollbar until the window is dragged taller -- TopUpResidualHeight
-            // in Loaded measures the shortfall and closes it, rather than this
-            // becoming another hand-tuned constant.
-            Width = 420; Height = 660;
-            // Never taller than the display: 660 is comfortable at 1080p but
+            // 688 = the 440 list below plus 248 of chrome. Calibrated, not
+            // guessed: at 660 the body still overflowed AvesBaseWindow's
+            // ScrollViewer by a measured 26.4px, so the window grew visibly a
+            // moment after opening. 660 + 26.4 + ~1.6 for DPI rounding = 688.
+            //
+            // The 220 this replaces was inherited from the old 520/300 pair and
+            // had never been calibrated. SinglePickerWindow's equivalent measured
+            // 246 by the same method -- two windows arriving within 2px of each
+            // other, both about 30 short of their real chrome.
+            //
+            // TopUpResidualHeight in Loaded stays as the safety net, and with
+            // this value it measures ~0 and never visibly fires.
+            Width = 420; Height = 688;
+            // Never taller than the display: 688 is comfortable at 1080p but
             // would overflow a 768p laptop without this.
             MaxHeight = SystemParameters.WorkArea.Height * 0.9;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
