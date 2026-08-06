@@ -699,8 +699,14 @@ namespace AVES.Cmds_Button6
                 cs.Setters.Add(new System.Windows.Setter(
                     System.Windows.Controls.Control.BorderThicknessProperty,
                     new System.Windows.Thickness(0)));
+                // VerticalContentAlignment, not VerticalAlignment: the latter
+                // shrinks the cell itself to content height and centres the cell
+                // in the row, so a cell background or selection highlight would
+                // render as a short band floating mid-row instead of filling it.
+                // The text landed centred either way only because these cells
+                // have no background and BorderThickness 0.
                 cs.Setters.Add(new System.Windows.Setter(
-                    System.Windows.FrameworkElement.VerticalAlignmentProperty,
+                    System.Windows.Controls.Control.VerticalContentAlignmentProperty,
                     System.Windows.VerticalAlignment.Center));
                 col.CellStyle = cs;
 
@@ -734,6 +740,22 @@ namespace AVES.Cmds_Button6
                 System.Windows.Controls.Control.BorderThicknessProperty,
                 new System.Windows.Thickness(0, 0, 0, 1.5)));
             statusCol.HeaderStyle = hs2;
+
+            // The status column was the one column with no CellStyle at all, so
+            // its content sat at the DataGridCell default of Stretch. The pill is
+            // assigned straight to cell.Content in the LoadingRow handler below,
+            // which makes the cell's own alignment the thing that governs it.
+            var cs2 = new System.Windows.Style(typeof(System.Windows.Controls.DataGridCell));
+            cs2.Setters.Add(new System.Windows.Setter(
+                System.Windows.Controls.Control.PaddingProperty,
+                new System.Windows.Thickness(12, 0, 12, 0)));
+            cs2.Setters.Add(new System.Windows.Setter(
+                System.Windows.Controls.Control.BorderThicknessProperty,
+                new System.Windows.Thickness(0)));
+            cs2.Setters.Add(new System.Windows.Setter(
+                System.Windows.Controls.Control.VerticalContentAlignmentProperty,
+                System.Windows.VerticalAlignment.Center));
+            statusCol.CellStyle = cs2;
 
             // DataTemplate built in code — pill is created in the LoadingRow event below
             var cellTemplate = new System.Windows.DataTemplate();
