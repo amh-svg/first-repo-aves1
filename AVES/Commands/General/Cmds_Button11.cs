@@ -290,6 +290,10 @@ namespace AVES.Cmds_Button11
             MinWidth = 420;
             MinHeight = 400;
             ResizeMode = ResizeMode.CanResize;
+            // Close-only title bar that still resizes. ResizeMode.NoResize also
+            // hides minimize/maximize but takes resizing with it, which a long
+            // scrolling list needs.
+            WindowStyle = WindowStyle.ToolWindow;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Background = AvTokens.B(AvTokens.Surface);
             FontFamily = AvTokens.Ui;
