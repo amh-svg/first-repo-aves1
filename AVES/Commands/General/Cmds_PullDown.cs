@@ -762,7 +762,13 @@ namespace AVES.Cmds_PullDown
 
     internal class MultiPickerWindow : AvesBaseWindow
     {
-        private readonly List<CheckBox> _checkBoxes = new List<CheckBox>();
+        /// <summary>
+        /// One entry per item. AvControls.CheckRow returns the visible Border and
+        /// an invisible CheckBox that carries the state, so both are needed: the
+        /// Border is what gets shown, hidden by the filter and clicked; the
+        /// CheckBox is what is counted and read back.
+        /// </summary>
+        private readonly List<(Border Visual, CheckBox Box, string Item)> _rows = new();
         private readonly TextBlock _selectionCount;
         private List<string> _allItems;
 
@@ -833,11 +839,22 @@ namespace AVES.Cmds_PullDown
             var itemStack = new StackPanel();
             foreach (string item in _allItems)
             {
-                var cb = MakeCheckRow(item, currentSet.Contains(item));
-                cb.Checked += (_, __) => UpdateCount();
-                cb.Unchecked += (_, __) => UpdateCount();
-                _checkBoxes.Add(cb);
-                itemStack.Children.Add(cb);
+                var (visual, box) = AvControls.CheckRow(item, false);
+
+                // CheckRow's CheckBox is deliberately invisible -- the visible
+                // control is its custom square -- so the row is only toggleable
+                // if the caller wires the Border. Without this the rows are dead.
+                visual.MouseLeftButtonUp += (_, __) => box.IsChecked = box.IsChecked != true;
+
+                // Set after wiring, so CheckRow's own Checked handler paints the
+                // pre-checked rows rather than leaving them visually unchecked.
+                box.IsChecked = currentSet.Contains(item);
+
+                box.Checked += (_, __) => UpdateCount();
+                box.Unchecked += (_, __) => UpdateCount();
+
+                _rows.Add((visual, box, item));
+                itemStack.Children.Add(visual);
             }
 
             // FIX: Extract the inner ScrollViewer so we can attach the
@@ -882,9 +899,9 @@ namespace AVES.Cmds_PullDown
             var addBtn = AvControls.PrimaryButton("Add parameters");
             addBtn.Click += (_, __) =>
             {
-                SelectedValues = _checkBoxes
-                    .Where(c => c.IsChecked == true && c.IsVisible)
-                    .Select(c => (string)c.Tag)
+                SelectedValues = _rows
+                    .Where(r => r.Box.IsChecked == true && r.Visual.IsVisible)
+                    .Select(r => r.Item)
                     .ToList();
                 DialogResult = true;
             };
@@ -905,34 +922,17 @@ namespace AVES.Cmds_PullDown
             SetFooter(footerRow);
         }
 
-        private CheckBox MakeCheckRow(string item, bool isChecked)
-        {
-            var cb = new CheckBox
-            {
-                Tag = item,
-                IsChecked = isChecked,
-                Height = 28,
-                Padding = new Thickness(10, 0, 10, 0),
-                VerticalContentAlignment = VerticalAlignment.Center,
-                Content = new TextBlock
-                {
-                    Text = item,
-                    FontFamily = AvTokens.Mono,
-                    FontSize = 12,
-                    Foreground = AvTokens.Brush(AvTokens.Text),
-                    VerticalAlignment = VerticalAlignment.Center
-                }
-            };
-            return cb;
-        }
+        // MakeCheckRow is gone: AvControls.CheckRow supplies the row now, with the
+        // custom 17px square, the Ui-13 label, and the checked-state highlight
+        // (Accent square, Accent SemiBold label, AccentTint row) that the old
+        // Mono-12 checkbox had no equivalent of.
 
         private void FilterItems(string query)
         {
-            foreach (var cb in _checkBoxes)
+            foreach (var r in _rows)
             {
-                string name = (string)cb.Tag;
-                cb.Visibility = string.IsNullOrEmpty(query) ||
-                                name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                r.Visual.Visibility = string.IsNullOrEmpty(query) ||
+                                      r.Item.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
                     ? WpfVisibility.Visible
                     : WpfVisibility.Collapsed;
             }
@@ -941,7 +941,7 @@ namespace AVES.Cmds_PullDown
 
         private void UpdateCount()
         {
-            int n = _checkBoxes.Count(c => c.IsChecked == true);
+            int n = _rows.Count(r => r.Box.IsChecked == true);
             _selectionCount.Text = $"{n} selected";
         }
 
