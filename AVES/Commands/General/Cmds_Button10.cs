@@ -924,6 +924,10 @@ namespace AVES.Cmds_Button10
             cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.PaddingProperty, new WpfThickness(12, 8, 12, 8)));
             cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.BackgroundProperty, WpfBrushes.Transparent));
             cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.ForegroundProperty, AvTokens.B(AvTokens.Text)));
+            // Without this the cell inherits Stretch, which renders text at the
+            // top of the fixed 40px row. The status pill was unaffected either
+            // way -- StatusPillTemplate centres its own root.
+            cellStyle.Setters.Add(new System.Windows.Setter(WpfDataGridCell.VerticalContentAlignmentProperty, VerticalAlignment.Center));
             grid.CellStyle = cellStyle;
 
             grid.Columns.Add(new WpfDataGridTextColumn { Header = "SHEET", Binding = new System.Windows.Data.Binding("SheetNumber"), Width = new System.Windows.Controls.DataGridLength(0.8, System.Windows.Controls.DataGridLengthUnitType.Star) });
