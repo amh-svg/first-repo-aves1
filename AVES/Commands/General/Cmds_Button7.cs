@@ -676,27 +676,16 @@ namespace AVES.Cmds_Button7
             body.Children.Add(tableWrap);
 
             // ── C. Footer ────────────────────────────────────────────────────
-            var footer = new WpfBorder
-            {
-                Background = AvTokens.B(AvTokens.Surface),
-                BorderBrush = AvTokens.B(AvTokens.Border),
-                BorderThickness = new WpfThickness(0, 1, 0, 0),
-                Padding = new WpfThickness(20, 14, 20, 14)
-            };
             var footerRow = new WpfGrid();
-            footerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            // Column 0 is Star, not Auto: an Auto column sizes to its content, so
+            // the caption would push the buttons on a long document name instead
+            // of ellipsing. Column 1 keeps the two apart.
             footerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            footerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(12) });
             footerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             footerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var sourceLbl = new WpfTextBlock
-            {
-                Text = _sourceCaption,
-                FontFamily = AvTokens.Ui,
-                FontSize = 11.5,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center
-            };
+            var sourceLbl = AvControls.FooterCaption(_sourceCaption);
             WpfGrid.SetColumn(sourceLbl, 0);
             footerRow.Children.Add(sourceLbl);
 
@@ -710,7 +699,7 @@ namespace AVES.Cmds_Button7
             WpfGrid.SetColumn(closeBtn, 3);
             footerRow.Children.Add(closeBtn);
 
-            footer.Child = footerRow;
+            var footer = AvControls.FooterStrip(footerRow);
             WpfGrid.SetRow(footer, 2);
             root.Children.Add(footer);
         }
