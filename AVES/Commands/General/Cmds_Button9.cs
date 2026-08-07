@@ -814,26 +814,16 @@ namespace AVES.Cmds_Button9
         // ----------------------------------------------------------------
         private UIElement BuildFooter()
         {
-            var footer = new Border
-            {
-                Background = AvTokens.Br(AvTokens.Surface2),
-                BorderBrush = AvTokens.Br(AvTokens.Border),
-                BorderThickness = new Thickness(0, 1, 0, 0),
-                Padding = new Thickness(20, 12, 20, 12),
-            };
-
             var row = new WGrid();
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var caption = new TextBlock
-            {
-                Text = $"Destination · {_destFolder}",
-                FontSize = 11,
-                Foreground = AvTokens.Br(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            };
+            // Destination rather than a source document: this window writes files
+            // out, so the folder it wrote to is the useful caption. Its wording
+            // stays. Column 0 was already Star, so trimming worked here before
+            // FooterCaption existed -- this was the only footer of the eight that
+            // ellipsed properly.
+            var caption = AvControls.FooterCaption($"Destination · {_destFolder}");
             WGrid.SetColumn(caption, 0);
             row.Children.Add(caption);
 
@@ -845,8 +835,7 @@ namespace AVES.Cmds_Button9
             WGrid.SetColumn(btnRow, 1);
             row.Children.Add(btnRow);
 
-            footer.Child = row;
-            return footer;
+            return AvControls.FooterStrip(row);
         }
 
         // ----------------------------------------------------------------
