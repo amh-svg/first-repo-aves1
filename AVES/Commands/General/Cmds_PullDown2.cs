@@ -401,7 +401,11 @@ internal sealed class ReportWindow : Window
         var root = new DockPanel();
 
         // Header
-        var header = AvControls.HeaderStrip(title);
+        // ReportHeaderBar rather than HeaderStrip: a fixed 52px on Surface with
+        // a 24px logo, against HeaderStrip's Auto height on Surface2 with a 28px
+        // one. HeaderStrip stays for the three picker windows in this file and
+        // for Cmds_Pulldown3.cs and Cmds_Pulldown4.cs -- only the report moves.
+        var header = AvControls.ReportHeaderBar(title);
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
 
@@ -1708,11 +1712,7 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
         var root = new DockPanel();
 
         // ── Interior header strip ─────────────────────────────────────────────
-        // ReportHeaderBar rather than HeaderStrip: a fixed 52px on Surface with
-        // a 24px logo, against HeaderStrip's Auto height on Surface2 with a 28px
-        // one. HeaderStrip stays for the three picker windows in this file and
-        // for Cmds_Pulldown3.cs and Cmds_Pulldown4.cs -- only the report moves.
-        var headerStrip = AvControls.ReportHeaderBar(title);
+        var headerStrip = AvControls.HeaderStrip(title);
         DockPanel.SetDock(headerStrip, Dock.Top);
         root.Children.Add(headerStrip);
 
