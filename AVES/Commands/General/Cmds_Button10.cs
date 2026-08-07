@@ -827,24 +827,10 @@ namespace AVES.Cmds_Button10
             tableWrap.Child = BuildResultsGrid(rows);
             body.Children.Add(tableWrap);
 
-            var footer = new WpfBorder
-            {
-                Background = AvTokens.B(AvTokens.Surface),
-                BorderBrush = AvTokens.B(AvTokens.Border),
-                BorderThickness = new WpfThickness(0, 1, 0, 0),
-                Padding = new WpfThickness(20, 14, 20, 14)
-            };
-            var footerInner = new DockPanel { LastChildFill = false };
-            var caption = new WpfTextBlock
-            {
-                Text = $"Source · {docTitle}",
-                FontFamily = AvTokens.Ui,
-                FontSize = 11.5,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            DockPanel.SetDock(caption, Dock.Left);
-            footerInner.Children.Add(caption);
+            // LastChildFill, buttons docked first and the caption added last: as
+            // a Dock.Left child it sized to content and would have pushed the
+            // buttons on a long document name rather than ellipsing.
+            var footerInner = new DockPanel { LastChildFill = true };
             var footerRow = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, HorizontalAlignment = WpfHAlign.Right };
             var copyBtn = AvControls.SecondaryBtn("⧉  Copy to clipboard", () => { });
             copyBtn.Margin = new WpfThickness(0, 0, 10, 0);
@@ -854,7 +840,8 @@ namespace AVES.Cmds_Button10
             footerRow.Children.Add(closeBtn);
             DockPanel.SetDock(footerRow, Dock.Right);
             footerInner.Children.Add(footerRow);
-            footer.Child = footerInner;
+            footerInner.Children.Add(AvControls.FooterCaption($"Source · {docTitle}"));
+            var footer = AvControls.FooterStrip(footerInner);
             WpfGrid.SetRow(footer, 2);
             root.Children.Add(footer);
         }
