@@ -440,7 +440,7 @@ namespace AVES.Cmds_Button6
 
             // ── Show table report ──────────────────────────────────────────────
             ShowResultsTable(
-                "Family Renamer — Results",
+                "Family Renamer",
                 rows,
                 selected: selectedElements.Count,
                 renamed: successfulRenames.Count,
@@ -492,35 +492,9 @@ namespace AVES.Cmds_Button6
         private static System.Windows.Controls.Border StatTile(string value, string label, string accentKind = "") =>
             AvControls.StatTile(value, label, accentKind);
 
-        /// <summary>
-        /// Ø glænd / Hilti logo embedded as a Base64 PNG.
-        /// Rendered as an Image sized to fit the header strip height.
-        /// </summary>
-        private static System.Windows.Controls.Image BrandTile(double height = 28)
-        {
-            const string b64 = AvTokens.LogoBase64;
-
-            var bytes = System.Convert.FromBase64String(b64);
-            var stream = new System.IO.MemoryStream(bytes);
-            var bmp = new System.Windows.Media.Imaging.BitmapImage();
-            bmp.BeginInit();
-            bmp.StreamSource = stream;
-            bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
-            bmp.DecodePixelHeight = (int)height;   // scale to target height, keep aspect ratio
-            bmp.EndInit();
-            bmp.Freeze();
-
-            return new System.Windows.Controls.Image
-            {
-                Source = bmp,
-                Height = height,
-                VerticalAlignment = System.Windows.VerticalAlignment.Center,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
-                Stretch = System.Windows.Media.Stretch.Uniform,
-                SnapsToDevicePixels = true,
-                UseLayoutRounding = true
-            };
-        }
+        // The local BrandTile is gone with the header that was its only caller.
+        // It decoded AvTokens.LogoBase64 at 1x display height; ReportHeaderBar
+        // decodes at 2x, so the logo here gets sharper as well as smaller.
 
         #endregion
 
@@ -552,17 +526,7 @@ namespace AVES.Cmds_Button6
             { Height = System.Windows.GridLength.Auto });                      // footer
 
             // ── Row 0 — Header strip ──────────────────────────────────────────
-            var headerBorder = new System.Windows.Controls.Border
-            {
-                Background = AvTokens.Brush(AvTokens.Surface),
-                BorderBrush = AvTokens.Brush(AvTokens.Border),
-                BorderThickness = new System.Windows.Thickness(0, 0, 0, 1),
-                Padding = new System.Windows.Thickness(20, 12, 20, 12)
-            };
-            var headerRow = new System.Windows.Controls.StackPanel
-            { Orientation = System.Windows.Controls.Orientation.Horizontal };
-            headerRow.Children.Add(BrandTile(32));   // logo, 32 px tall — aspect ratio auto
-            headerBorder.Child = headerRow;
+            var headerBorder = AvControls.ReportHeaderBar(title);
             System.Windows.Controls.Grid.SetRow(headerBorder, 0);
             root.Children.Add(headerBorder);
 
