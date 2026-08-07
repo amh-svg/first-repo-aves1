@@ -545,7 +545,7 @@ namespace AVES.Cmds_Button7
             MinHeight = 420;
             ResizeMode = ResizeMode.CanResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            Background = AvTokens.B(AvTokens.Surface2);
+            Background = AvTokens.B(AvTokens.Surface);
             FontFamily = AvTokens.Ui;
 
             var root = new WpfGrid();
