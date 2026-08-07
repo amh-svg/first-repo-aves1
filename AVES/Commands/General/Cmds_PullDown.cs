@@ -526,6 +526,11 @@ namespace AVES.Cmds_PullDown
 
         protected AvesBaseWindow(string windowTitle)
         {
+            // windowTitle only ever reached the in-window header strip, so every
+            // window built on this base showed an empty OS title bar and an
+            // unlabelled taskbar entry. All five subclasses were affected, the
+            // three UnifiedReportWindow callers among them.
+            Title = windowTitle;
             FontFamily = AvTokens.Ui;
             Background = AvTokens.Brush(AvTokens.Surface);
             UseLayoutRounding = true;
