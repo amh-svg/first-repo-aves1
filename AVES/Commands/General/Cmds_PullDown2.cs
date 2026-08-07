@@ -393,7 +393,7 @@ internal sealed class ReportWindow : Window
         ShowInTaskbar = false;
         UseLayoutRounding = true;
         FontFamily = AvTokens.Ui;
-        Background = AvTokens.Br(AvTokens.Backdrop);
+        Background = AvTokens.Br(AvTokens.Surface);
 
         if (revitHandle != IntPtr.Zero)
             _ = new WindowInteropHelper(this) { Owner = revitHandle };
