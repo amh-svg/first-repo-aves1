@@ -200,15 +200,22 @@ namespace AVES.Cmds_PullDown
             dg.ColumnHeaderStyle = headerStyle;
 
             var cellStyle = new Style(typeof(DataGridCell));
-            cellStyle.Setters.Add(new WpfSetter(DataGridCell.PaddingProperty, new Thickness(12, 7, 12, 7)));
+            // Zero vertical padding, matching Cmds_Button6.cs and Cmds_Button7.cs.
+            // The 7px this used to declare was inert until the cell template below
+            // started honouring Padding, at which point it consumed 14 of the row's
+            // 34px and left roughly 3px of slack around the text -- against ~7px in
+            // Button10/Button11 and ~25px in Button6/Button7. These are the shortest
+            // rows in the plugin, so they can afford no vertical padding at all.
+            cellStyle.Setters.Add(new WpfSetter(DataGridCell.PaddingProperty, new Thickness(12, 0, 12, 0)));
             cellStyle.Setters.Add(new WpfSetter(DataGridCell.BorderThicknessProperty, new Thickness(0)));
             cellStyle.Setters.Add(new WpfSetter(DataGridCell.ForegroundProperty, AvTokens.Brush(AvTokens.Text)));
-            // Without this the cell inherits Stretch and text draws at the top of
-            // the 34px row. This factory feeds both of UnifiedReportWindow's
-            // grids -- results and warnings -- across all three of its callers,
-            // so the one setter covers Batch Shared Parameters, Batch Remove
-            // Parameters and the CSV Importer.
-            cellStyle.Setters.Add(new WpfSetter(DataGridCell.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+            // The stock DataGridCell template consumes VerticalContentAlignment
+            // nowhere, so setting it here did nothing and the TextColumn helper
+            // below attaches no ElementStyle to compensate. This factory feeds
+            // both of UnifiedReportWindow's grids -- results and warnings --
+            // across all three of its callers, so this one setter covers Batch
+            // Shared Parameters, Batch Remove Parameters and the CSV Importer.
+            cellStyle.Setters.Add(new WpfSetter(DataGridCell.TemplateProperty, AvControls.DataGridCellTemplate()));
             dg.CellStyle = cellStyle;
 
             return dg;
