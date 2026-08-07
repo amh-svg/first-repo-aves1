@@ -530,7 +530,7 @@ namespace AVES.Cmds_Button11
             _uiDoc = uiDoc;
             _rows = failingRows;
 
-            Title = "Assembly Tag Completeness — Report";
+            Title = "Assembly Tag Completeness";
             Width = 900;
             Height = 620;
             MinWidth = 680;
@@ -550,7 +550,10 @@ namespace AVES.Cmds_Button11
             root.RowDefinitions.Add(new WpfRowDef { Height = GridLength.Auto });
             Content = root;
 
-            var titleBar = AvControls.TitleBar("Assembly Tag Completeness");
+            // ReportHeaderBar rather than TitleBar: 52px on Surface with a 24px
+            // logo, against TitleBar's 44px on Surface2 with a 20px one. The Tag
+            // Reviewer picker in this file keeps TitleBar -- only reports move.
+            var titleBar = AvControls.ReportHeaderBar("Assembly Tag Completeness");
             WpfGrid.SetRow(titleBar, 0);
             root.Children.Add(titleBar);
 
