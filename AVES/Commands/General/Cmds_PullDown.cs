@@ -542,38 +542,12 @@ namespace AVES.Cmds_PullDown
             _rootGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             // ── Header strip ─────────────────────────────────────────────
-            var headerGrid = new WpfGrid { Height = 52 };
-            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var brand = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(16, 0, 0, 0)
-            };
-            var tile = Av.BrandTile(20);
-            tile.Margin = new Thickness(0, 0, 10, 0);
-            brand.Children.Add(tile);
-            brand.Children.Add(new TextBlock
-            {
-                Text = windowTitle,
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.Brush(AvTokens.Text),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            WpfGrid.SetColumn(brand, 0);
-            headerGrid.Children.Add(brand);
-
-            var header = new WpfBorder
-            {
-                Background = AvTokens.Brush(AvTokens.Surface),
-                BorderBrush = AvTokens.Brush(AvTokens.Border),
-                BorderThickness = new Thickness(0, 0, 0, 1),
-                Child = headerGrid
-            };
+            // Was hand-built here at the same 52px on Surface, so geometry is
+            // unchanged; the logo goes 20px to 24px and picks up the 2x decode,
+            // and its left inset 16px to 20px. That reaches all five subclasses,
+            // the two settings windows and both pickers included, not only
+            // UnifiedReportWindow.
+            var header = AvControls.ReportHeaderBar(windowTitle);
             WpfGrid.SetRow(header, 0);
             _rootGrid.Children.Add(header);
 
@@ -1892,7 +1866,7 @@ namespace AVES.Cmds_PullDown
             };
 
             new UnifiedReportWindow(
-                "Batch Parameter Injection — Results",
+                "Batch Parameter Injection",
                 summary, resultColumns,
                 familyResults.Cast<object>()).ShowDialog();
 
@@ -2370,7 +2344,7 @@ namespace AVES.Cmds_PullDown
             };
 
             new UnifiedReportWindow(
-                "Batch Parameter Removal — Results",
+                "Batch Parameter Removal",
                 summary, resultColumns,
                 familyResults.Cast<object>()).ShowDialog();
 
@@ -2735,7 +2709,7 @@ namespace AVES.Cmds_PullDown
                 : null;
 
             new UnifiedReportWindow(
-                "CSV Import — Results",
+                "CSV Import",
                 summary, resultColumns, resultRows,
                 warnings, csvPath).ShowDialog();
 
