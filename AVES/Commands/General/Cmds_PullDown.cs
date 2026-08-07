@@ -1385,16 +1385,15 @@ namespace AVES.Cmds_PullDown
 
             _clipboardText = BuildClipboardText(title, summary, resultColumns, resultList, warnings);
 
-            var sourceCaption = new TextBlock
-            {
-                Text = !string.IsNullOrEmpty(footerText)
+            // Rendered blank whenever footerText was null, which was two of the
+            // three callers: only the CSV importer passed anything. Both now pass
+            // their document title, so the caption says what the other seven
+            // report windows say. The fallback is a backstop for a future caller
+            // that forgets, not something that fires today.
+            var sourceCaption = AvControls.FooterCaption(
+                !string.IsNullOrEmpty(footerText)
                     ? $"Source · {System.IO.Path.GetFileName(footerText)}"
-                    : string.Empty,
-                FontFamily = AvTokens.Ui,
-                FontSize = 11,
-                Foreground = AvTokens.Brush(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center
-            };
+                    : "Source · (unknown)");
 
             var copyBtn = AvControls.SecondaryButton("⧉  Copy to clipboard");
             copyBtn.Click += (_, __) =>
@@ -1864,7 +1863,9 @@ namespace AVES.Cmds_PullDown
             new UnifiedReportWindow(
                 "Batch Parameter Injection",
                 summary, resultColumns,
-                familyResults.Cast<object>()).ShowDialog();
+                familyResults.Cast<object>(),
+                warnings: null,
+                footerText: doc.Title).ShowDialog();
 
             return Result.Succeeded;
         }
@@ -2342,7 +2343,9 @@ namespace AVES.Cmds_PullDown
             new UnifiedReportWindow(
                 "Batch Parameter Removal",
                 summary, resultColumns,
-                familyResults.Cast<object>()).ShowDialog();
+                familyResults.Cast<object>(),
+                warnings: null,
+                footerText: doc.Title).ShowDialog();
 
             return Result.Succeeded;
         }
