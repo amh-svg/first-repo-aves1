@@ -538,7 +538,7 @@ namespace AVES.Cmds_Button7
             _sourceCaption = $"Source · {docTitle}";
 
             // ── Window chrome ────────────────────────────────────────────────
-            Title = "Part List Format — Report";
+            Title = "Part List Format";
             Width = 760;
             Height = 620;
             MinWidth = 600;
@@ -555,45 +555,9 @@ namespace AVES.Cmds_Button7
             Content = root;
 
             // ── Title bar ────────────────────────────────────────────────────
-            var titleBar = new WpfBorder
-            {
-                Background = AvTokens.B(AvTokens.Surface),
-                BorderBrush = AvTokens.B(AvTokens.Border),
-                BorderThickness = new WpfThickness(0, 0, 0, 1),
-                Padding = new WpfThickness(20, 0, 20, 0),
-                Height = 52
-            };
-            var titleRow = new WpfStackPanel
-            {
-                Orientation = WpfOrientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            titleRow.Children.Add(AvControls.BrandTile(24));
-            var titleTextStack = new WpfStackPanel
-            {
-                Orientation = WpfOrientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new WpfThickness(10, 0, 0, 0)
-            };
-            titleTextStack.Children.Add(new WpfTextBlock
-            {
-                Text = "Part List Format",
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = WpfFontWeights.SemiBold,
-                Foreground = AvTokens.B(AvTokens.Text)
-            });
-            titleTextStack.Children.Add(new WpfTextBlock
-            {
-                Text = $"  — {processed} of {assembliesFound} assemblies processed",
-                FontFamily = AvTokens.Ui,
-                FontSize = 12,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                Margin = new WpfThickness(2, 1, 0, 0),
-                VerticalAlignment = VerticalAlignment.Bottom
-            });
-            titleRow.Children.Add(titleTextStack);
-            titleBar.Child = titleRow;
+            // The "{n} of {m} assemblies processed" subtitle that sat beside the
+            // title is gone. Both figures are already on the stat tiles below.
+            var titleBar = AvControls.ReportHeaderBar("Part List Format");
             WpfGrid.SetRow(titleBar, 0);
             root.Children.Add(titleBar);
 
