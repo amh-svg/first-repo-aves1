@@ -762,7 +762,7 @@ namespace AVES.Cmds_Button10
         {
             _rows = rows;
 
-            Title = "Revisions & Title Block Fill — Report";
+            Title = "Revisions & Title Block Fill";
             Width = 720;
             Height = 560;
             MinWidth = 560;
@@ -782,7 +782,10 @@ namespace AVES.Cmds_Button10
             root.RowDefinitions.Add(new WpfRowDef { Height = GridLength.Auto });
             Content = root;
 
-            var titleBar = AvControls.TitleBar("Revisions & Title Block Fill");
+            // ReportHeaderBar rather than TitleBar: 52px on Surface with a 24px
+            // logo, against TitleBar's 44px on Surface2 with a 20px one. The
+            // picker windows in this file keep TitleBar -- only reports move.
+            var titleBar = AvControls.ReportHeaderBar("Revisions & Title Block Fill");
             WpfGrid.SetRow(titleBar, 0);
             root.Children.Add(titleBar);
 
