@@ -691,15 +691,9 @@ internal sealed class ReportWindow : Window
     // ── Footer ────────────────────────────────────────────────────────────────
     private Border BuildFooter(int ok, int bad)
     {
-        // Left: summary counts as text
-        var summary = new TextBlock
-        {
-            Text = $"{ok} succeeded · {bad} failed · {ok + bad} total",
-            FontFamily = AvTokens.Ui,
-            FontSize = 11,
-            Foreground = AvTokens.Br(AvTokens.TextFaint),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
+        // Left: summary counts as text. This window reports counts rather than a
+        // source document, which is its own wording and stays.
+        var summary = AvControls.FooterCaption($"{ok} succeeded · {bad} failed · {ok + bad} total");
 
         _copyBtn = AvControls.SecondaryButtonHoverLoaded("⧉  Copy to clipboard");
         _copyBtn.Margin = new Thickness(0, 0, 8, 0);
@@ -718,19 +712,15 @@ internal sealed class ReportWindow : Window
         btnRow.Children.Add(_copyBtn);
         btnRow.Children.Add(closeBtn);
 
-        var inner = new DockPanel();
-        DockPanel.SetDock(summary, Dock.Left);
-        inner.Children.Add(summary);
+        // Buttons docked first, caption added last as the fill child: docked Left
+        // it sized to content and would have pushed the buttons rather than
+        // ellipsing.
+        var inner = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(btnRow, Dock.Right);
         inner.Children.Add(btnRow);
+        inner.Children.Add(summary);
 
-        return new Border
-        {
-            Background = AvTokens.Br(AvTokens.Surface2),
-            BorderBrush = AvTokens.Br(AvTokens.Border),
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            Padding = new Thickness(20, 14, 20, 14),
-            Child = inner,
-        };
+        return AvControls.FooterStrip(inner);
     }
 
     private void OnCopy(object sender, RoutedEventArgs e)
