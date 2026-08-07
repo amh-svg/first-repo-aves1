@@ -751,14 +751,11 @@ namespace AVES.Cmds_Button6
             root.Children.Add(tableWrap);
 
             // ── Row 3 — Footer ────────────────────────────────────────────────
-            var footerBorder = new System.Windows.Controls.Border
-            {
-                Background = AvTokens.Brush(AvTokens.Surface2),
-                BorderBrush = AvTokens.Brush(AvTokens.Border),
-                BorderThickness = new System.Windows.Thickness(0, 1, 0, 0),
-                Padding = new System.Windows.Thickness(20, 12, 20, 12)
-            };
-            var footerDock = new System.Windows.Controls.DockPanel { LastChildFill = false };
+            // LastChildFill, with the buttons docked first and the caption added
+            // last: as a Dock.Left child the caption sized to its content and
+            // would have pushed the buttons rather than ellipsing. It is the
+            // fill child now, so its trimming has a width to work against.
+            var footerDock = new System.Windows.Controls.DockPanel { LastChildFill = true };
 
             // Right: Close button (primary)
             var closeBtn = MakePrimaryButton("Close");
@@ -771,19 +768,12 @@ namespace AVES.Cmds_Button6
             System.Windows.Controls.DockPanel.SetDock(copyBtn, System.Windows.Controls.Dock.Right);
             footerDock.Children.Add(copyBtn);
 
-            // Left: faint caption
-            var caption = new System.Windows.Controls.TextBlock
-            {
-                Text = $"Family Renamer  ·  {rows.Count} result{(rows.Count == 1 ? "" : "s")}",
-                FontFamily = AvTokens.Ui,
-                FontSize = 11.5,
-                Foreground = AvTokens.Brush(AvTokens.TextFaint),
-                VerticalAlignment = System.Windows.VerticalAlignment.Center
-            };
-            System.Windows.Controls.DockPanel.SetDock(caption, System.Windows.Controls.Dock.Left);
-            footerDock.Children.Add(caption);
+            // Left: faint caption. Result counts rather than a source document,
+            // which is this window's own wording and stays.
+            footerDock.Children.Add(AvControls.FooterCaption(
+                $"Family Renamer  ·  {rows.Count} result{(rows.Count == 1 ? "" : "s")}"));
 
-            footerBorder.Child = footerDock;
+            var footerBorder = AvControls.FooterStrip(footerDock);
             System.Windows.Controls.Grid.SetRow(footerBorder, 3);
             root.Children.Add(footerBorder);
 
