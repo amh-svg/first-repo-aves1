@@ -944,7 +944,7 @@ namespace AVES.Cmds_Button8
             _rows = rows;
             _sourceCaption = $"Source · {docTitle}";
 
-            Title = "Add Total Weight to Sheets — Report";
+            Title = "Add Total Weight to Sheets";
             Width = 820;
             Height = 620;
             MinWidth = 680;
@@ -963,41 +963,9 @@ namespace AVES.Cmds_Button8
             Content = root;
 
             // Title bar
-            var titleBar = new WpfBorder
-            {
-                Background = AvTokens.B(AvTokens.Surface),
-                BorderBrush = AvTokens.B(AvTokens.Border),
-                BorderThickness = new WpfThickness(0, 0, 0, 1),
-                Padding = new WpfThickness(20, 0, 20, 0),
-                Height = 52
-            };
-            var titleRow = new WpfStackPanel { Orientation = WpfOrientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            titleRow.Children.Add(AvControls.BrandTile(24));
-            var titleTextStack = new WpfStackPanel
-            {
-                Orientation = WpfOrientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new WpfThickness(10, 0, 0, 0)
-            };
-            titleTextStack.Children.Add(new WpfTextBlock
-            {
-                Text = "Add Total Weight to Sheets",
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = WpfFontWeights.SemiBold,
-                Foreground = AvTokens.B(AvTokens.Text)
-            });
-            titleTextStack.Children.Add(new WpfTextBlock
-            {
-                Text = $"  — {processed} of {assembliesFound} assemblies processed · Total weight: {totalWeightSum:F3} kg",
-                FontFamily = AvTokens.Ui,
-                FontSize = 12,
-                Foreground = AvTokens.B(AvTokens.TextFaint),
-                Margin = new WpfThickness(2, 1, 0, 0),
-                VerticalAlignment = VerticalAlignment.Bottom
-            });
-            titleRow.Children.Add(titleTextStack);
-            titleBar.Child = titleRow;
+            // The subtitle beside the title is gone: it carried the processed
+            // count and the total weight, both already on the stat tiles below.
+            var titleBar = AvControls.ReportHeaderBar("Add Total Weight to Sheets");
             WpfGrid.SetRow(titleBar, 0);
             root.Children.Add(titleBar);
 
