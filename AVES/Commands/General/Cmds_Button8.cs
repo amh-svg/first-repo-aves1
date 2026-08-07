@@ -944,7 +944,7 @@ namespace AVES.Cmds_Button8
             _rows = rows;
             _sourceCaption = $"Source · {docTitle}";
 
-            Title = "Part List Format — Report";
+            Title = "Add Total Weight to Sheets — Report";
             Width = 820;
             Height = 620;
             MinWidth = 680;
@@ -981,7 +981,7 @@ namespace AVES.Cmds_Button8
             };
             titleTextStack.Children.Add(new WpfTextBlock
             {
-                Text = "Part List Format",
+                Text = "Add Total Weight to Sheets",
                 FontFamily = AvTokens.Ui,
                 FontSize = 13,
                 FontWeight = WpfFontWeights.SemiBold,
