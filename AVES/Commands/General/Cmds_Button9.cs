@@ -491,118 +491,16 @@ namespace AVES.Cmds_Button9
         // ----------------------------------------------------------------
         //  A · Header bar — logo + title + timestamp
         // ----------------------------------------------------------------
+        // The right-aligned timestamp that used to sit here is gone. It is not
+        // lost: the DESTINATION panel in the body already lists it alongside
+        // Folder and Exported, which is where run metadata belongs.
         private UIElement BuildHeaderBar()
-        {
-            var bar = new Border
-            {
-                Background = AvTokens.Br(AvTokens.Surface),
-                BorderBrush = AvTokens.Br(AvTokens.Border),
-                BorderThickness = new Thickness(0, 0, 0, 1),
-                Padding = new Thickness(20, 0, 20, 0),
-                Height = 52,
-            };
+            => AvControls.ReportHeaderBar("Family Export Report");
 
-            var grid = new WGrid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                       // logo
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });  // title
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });                       // timestamp
-
-            // Logo — falls back to brand tile if image not found
-            var logo = BuildLogoImage();
-            logo.VerticalAlignment = VerticalAlignment.Center;
-            logo.Margin = new Thickness(0, 0, 16, 0);
-            WGrid.SetColumn(logo, 0);
-            grid.Children.Add(logo);
-
-            // Title
-            var titleStack = new StackPanel
-            {
-                Orientation = Orientation.Vertical,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            titleStack.Children.Add(new TextBlock
-            {
-                Text = "Family Export Report",
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.Br(AvTokens.Text),
-            });
-            WGrid.SetColumn(titleStack, 1);
-            grid.Children.Add(titleStack);
-
-            // Timestamp
-            var ts = new TextBlock
-            {
-                Text = _timestamp,
-                FontFamily = AvTokens.Mono,
-                FontSize = 11,
-                Foreground = AvTokens.Br(AvTokens.TextFaint),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            WGrid.SetColumn(ts, 2);
-            grid.Children.Add(ts);
-
-            bar.Child = grid;
-            return bar;
-        }
-
-        /// <summary>
-        /// Loads the Øglænd System / Hilti logo from a Base64 string embedded
-        /// directly in the source. Works identically in Debug and Release —
-        /// no file path, no Build Action, no setup required.
-        /// </summary>
-        private FrameworkElement BuildLogoImage()
-        {
-            const string b64 = AvTokens.LogoBase64;
-
-            try
-            {
-                byte[] bytes = System.Convert.FromBase64String(b64);
-                using var stream = new System.IO.MemoryStream(bytes);
-
-                var bmp = new BitmapImage();
-                bmp.BeginInit();
-                bmp.StreamSource = stream;
-                bmp.DecodePixelHeight = 28;
-                bmp.CacheOption = BitmapCacheOption.OnLoad;   // reads stream fully before it closes
-                bmp.EndInit();
-                bmp.Freeze();                                        // safe across threads
-
-                return new Image
-                {
-                    Source = bmp,
-                    Height = 28,
-                    Stretch = Stretch.Uniform,
-                    VerticalAlignment = VerticalAlignment.Center,
-                };
-            }
-            catch
-            {
-                // Fallback to AVES Red brand tile if image fails to decode
-                return BuildBrandTile(28);
-            }
-        }
-
-        /// <summary>Accent rounded square + white dot — AvesUi.BrandTile pattern.</summary>
-        private static Border BuildBrandTile(double size = 20)
-        {
-            var dot = new WEllipse
-            {
-                Width = size * 0.36,
-                Height = size * 0.36,
-                Fill = new SolidColorBrush(WColor.FromArgb(235, 255, 255, 255)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            return new Border
-            {
-                Width = size,
-                Height = size,
-                Background = AvTokens.Br(AvTokens.Accent),
-                CornerRadius = new CornerRadius(6),
-                Child = dot,
-            };
-        }
+        // BuildLogoImage and its BuildBrandTile fallback are gone with the header
+        // that was their only caller. This was the fourth loader for
+        // AvTokens.LogoBase64 in the plugin; ReportHeaderBar's decodes at 2x
+        // display height rather than this one's fixed 28.
 
         // ----------------------------------------------------------------
         //  B · Summary strip — stat tiles + config panel
