@@ -55,6 +55,97 @@ namespace AVES.Core
             };
         }
 
+        /// <summary>
+        /// Logo decoded at twice its display height, so it stays sharp on
+        /// high-DPI displays instead of being downscaled from full resolution at
+        /// render time.
+        ///
+        /// Four separate loaders for the same AvTokens.LogoBase64 had grown up
+        /// across the plugin -- BrandTile with no DecodePixelHeight at all,
+        /// Cmds_Button6.cs decoding at 1x, Cmds_PullDown.cs at 2x, and
+        /// Cmds_Button9.cs with its own try/catch decode. This is
+        /// Cmds_PullDown.cs's, the sharpest of them.
+        /// </summary>
+        private static Image SharpLogo(double height)
+        {
+            var bytes = Convert.FromBase64String(AvTokens.LogoBase64);
+            var bmp = new System.Windows.Media.Imaging.BitmapImage();
+            bmp.BeginInit();
+            bmp.StreamSource = new System.IO.MemoryStream(bytes);
+            bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            bmp.DecodePixelHeight = (int)(height * 2);
+            bmp.EndInit();
+            bmp.Freeze();
+
+            return new Image
+            {
+                Source = bmp,
+                Height = height,
+                Width = double.NaN,
+                Stretch = Stretch.Uniform,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                SnapsToDevicePixels = true
+            };
+        }
+
+        /// <summary>
+        /// The canonical report-window header: a 52px Surface strip carrying a
+        /// 24px logo and the tool's name, and nothing else.
+        ///
+        /// Every report window in the plugin had built its own. Four sizes of
+        /// logo (20/24/28/32), three heights (44/52/Auto) and two backgrounds
+        /// were in use across eight windows, and Cmds_Button6.cs's showed no
+        /// title text at all. The geometry here is Cmds_Button7.cs's and
+        /// Cmds_Button8.cs's, which was both the most common and the cleanest
+        /// instance of it.
+        ///
+        /// One parameter, deliberately. Cmds_Button7.cs and Cmds_Button8.cs
+        /// carried a run-summary subtitle and Cmds_Button9.cs a timestamp; both
+        /// are dropped rather than preserved behind optional arguments, because
+        /// an optional slot is how a header format drifts apart again. Anything
+        /// beyond the tool's name belongs in the body -- which is where
+        /// Cmds_Button9.cs's DESTINATION panel already repeats its timestamp.
+        ///
+        /// The window's own Title should be set to the same string, so the OS
+        /// title bar and this strip never disagree.
+        ///
+        /// AvControls.TitleBar and AvControls.HeaderStrip stay as they are: this
+        /// replaces neither, and both keep callers that are not report windows.
+        /// </summary>
+        public static Border ReportHeaderBar(string title)
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var logo = SharpLogo(24);
+            logo.Margin = new Thickness(0, 0, 12, 0);
+            row.Children.Add(logo);
+
+            row.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontFamily = AvTokens.Ui,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = AvTokens.B(AvTokens.Text),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            return new Border
+            {
+                Background = AvTokens.B(AvTokens.Surface),
+                BorderBrush = AvTokens.B(AvTokens.Border),
+                BorderThickness = new Thickness(0, 0, 0, 1),
+                Padding = new Thickness(20, 0, 20, 0),
+                Height = 52,
+                Child = row
+            };
+        }
+
         // ====================================================================
         //  Title bars (kept as two distinct methods -- see class remarks)
         // ====================================================================
