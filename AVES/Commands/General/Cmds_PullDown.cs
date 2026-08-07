@@ -253,15 +253,11 @@ namespace AVES.Cmds_PullDown
         }
 
         // ── Footer strip ─────────────────────────────────────────────────
+        // Promoted to AvControls: this class's values were already the canonical
+        // ones, so all eight report windows now build their footer from it. A
+        // forwarder rather than a second definition, matching PickerButton.
         public static WpfBorder FooterStrip(UIElement content)
-            => new WpfBorder
-            {
-                Background = AvTokens.Brush(AvTokens.Surface2),
-                BorderBrush = AvTokens.Brush(AvTokens.Border),
-                BorderThickness = new Thickness(0, 1, 0, 0),
-                Padding = new Thickness(20, 14, 20, 14),
-                Child = content
-            };
+            => AvControls.FooterStrip(content);
 
         // ── Segmented toggle (Instance / Type) ────────────────────────────
         public static (WpfBorder container, WpfToggleButton left, WpfToggleButton right)

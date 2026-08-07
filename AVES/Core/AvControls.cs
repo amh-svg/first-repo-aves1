@@ -147,6 +147,65 @@ namespace AVES.Core
         }
 
         // ====================================================================
+        //  Report footer
+        // ====================================================================
+
+        /// <summary>
+        /// The strip a report window's footer sits in: Surface-2, a 1px rule
+        /// along the top, 20/14 padding.
+        ///
+        /// Promoted verbatim from Cmds_PullDown.cs's Av class, which already had
+        /// the canonical values -- this is a move, not a redesign, so its
+        /// existing callers render identically. The class remarks above explain
+        /// that Av's surface stayed local because no other file used it; that
+        /// stopped being true of this one widget once all eight report windows
+        /// wanted it. Av.FooterStrip now forwards here.
+        ///
+        /// Surface-2 rather than Surface, per the Refined Native token table
+        /// scoping Surface-2 to "footers, header strips, inset panels, table
+        /// header". Four windows were on Surface and move.
+        ///
+        /// Takes the whole footer content, because the layout inside it stays
+        /// per-window: some use a Grid, some a DockPanel, and the difference is
+        /// invisible once the caption and buttons land in the same places.
+        /// </summary>
+        public static Border FooterStrip(UIElement content)
+            => new Border
+            {
+                Background = AvTokens.B(AvTokens.Surface2),
+                BorderBrush = AvTokens.B(AvTokens.Border),
+                BorderThickness = new Thickness(0, 1, 0, 0),
+                Padding = new Thickness(20, 14, 20, 14),
+                Child = content
+            };
+
+        /// <summary>
+        /// The faint caption on the left of a report footer.
+        ///
+        /// Text is a parameter because the eight windows deliberately say
+        /// different things: five name their source document, Cmds_Button9.cs
+        /// names its destination folder, and Cmds_PullDown2.cs and
+        /// Cmds_Button6.cs give result counts. Only the styling unifies.
+        ///
+        /// TextTrimming is the point of having this: paths and document names
+        /// both overflow, and only two of the eight were trimming. Note that
+        /// trimming needs the caption to be width-constrained by its parent --
+        /// a Grid Auto column or a DockPanel Dock.Left child sizes to content
+        /// and will push the buttons instead of ellipsing, so callers put this
+        /// in a Star column or make it the LastChildFill child.
+        /// </summary>
+        public static TextBlock FooterCaption(string text)
+            => new TextBlock
+            {
+                Text = text,
+                FontFamily = AvTokens.Ui,
+                FontSize = 11.5,
+                Foreground = AvTokens.B(AvTokens.TextFaint),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+
+        // ====================================================================
         //  Title bars (kept as two distinct methods -- see class remarks)
         // ====================================================================
 
