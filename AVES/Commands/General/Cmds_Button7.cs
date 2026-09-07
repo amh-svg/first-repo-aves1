@@ -1137,9 +1137,22 @@ namespace AVES.Cmds_Button7
                         var symbol = el is FamilyInstance fi ? fi.Symbol as Element : null;
                         var typeEl = symbol ?? doc.GetElement(el.GetTypeId());
 
+                        // Part Number / Item Number / Title are shared parameters —
+                        // verified on a real element, and the Revit API has no
+                        // built-in of any of those names — so their names are the
+                        // same on every Revit UI language and looking them up by
+                        // name is correct.
+                        //
+                        // Description is NOT: it is the built-in
+                        // ALL_MODEL_DESCRIPTION, whose display name is localized.
+                        // Read by name it returned null on a non-English UI, and
+                        // the resulting "" collapsed distinct non-length parts
+                        // (same Title and Item Number, differing only by
+                        // Description) into a single shared part-list row number.
                         string partNumber = GetParamStringFromTypeOrInstance(typeEl, el, "Part Number");
                         string itemNumber = GetParamStringFromTypeOrInstance(typeEl, el, "Item Number");
-                        string description = GetParamStringFromTypeOrInstance(typeEl, el, "Description");
+                        string description = GetParamStringFromTypeOrInstance(
+                            typeEl, el, BuiltInParameter.ALL_MODEL_DESCRIPTION);
                         string title = GetParamStringFromTypeOrInstance(typeEl, el, "Title");
 
                         instanceDataList.Add(new InstanceData
@@ -1351,10 +1364,35 @@ namespace AVES.Cmds_Button7
         //  PARAMETER HELPERS
         // ─────────────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Reads a string parameter by name.
+        ///
+        /// Same rule as the SetParamString overloads: name-based lookup is only
+        /// safe for author-defined parameters. "Part Number", "Item Number",
+        /// "Title" and "Length" are all shared parameters here — verified on a
+        /// real element — and the Revit API has no built-in of any of those
+        /// names, so their names are identical on every Revit UI language.
+        /// Built-ins must use the BuiltInParameter overload instead.
+        /// </summary>
         private static string GetParamString(Element el, string paramName)
+            => ReadParamString(el?.LookupParameter(paramName));
+
+        /// <summary>
+        /// Reads a string parameter identified by its BuiltInParameter, which is
+        /// language-independent. Used for "Description", which is the built-in
+        /// ALL_MODEL_DESCRIPTION: read by name it returned null on a non-English
+        /// UI, silently yielding "" and collapsing distinct non-length parts into
+        /// a single part-list row.
+        /// </summary>
+        private static string GetParamString(Element el, BuiltInParameter bip)
+            => ReadParamString(el?.get_Parameter(bip));
+
+        /// <summary>
+        /// Shared read core for both lookup strategies. Guards and Trim are
+        /// unchanged from the original name-based helper.
+        /// </summary>
+        private static string ReadParamString(Parameter? p)
         {
-            if (el == null) return string.Empty;
-            var p = el.LookupParameter(paramName);
             if (p == null) return string.Empty;
             var raw = p.StorageType == StorageType.String
                 ? (p.AsString() ?? string.Empty)
@@ -1376,6 +1414,20 @@ namespace AVES.Cmds_Button7
             var val = GetParamString(typeEl, paramName);
             if (!string.IsNullOrEmpty(val)) return val;
             return GetParamString(instanceEl, paramName);
+        }
+
+        /// <summary>
+        /// BuiltInParameter counterpart of the above, with the same type-first
+        /// ordering. For ALL_MODEL_DESCRIPTION the instance branch is a no-op —
+        /// the parameter exists only on the type — but the fallback is kept so
+        /// both overloads behave identically.
+        /// </summary>
+        private static string GetParamStringFromTypeOrInstance(
+            Element typeEl, Element instanceEl, BuiltInParameter bip)
+        {
+            var val = GetParamString(typeEl, bip);
+            if (!string.IsNullOrEmpty(val)) return val;
+            return GetParamString(instanceEl, bip);
         }
 
         /// <summary>
