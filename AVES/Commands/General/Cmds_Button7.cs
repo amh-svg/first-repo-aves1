@@ -70,6 +70,7 @@ namespace AVES.Cmds_Button7
         public int LengthMm { get; set; }
         public string Title { get; set; }
         public string PartNumber { get; set; }
+        public string ItemNumber { get; set; }
         public string Description { get; set; }
         public string PartNumberMerge { get; set; }
         public string DescriptionMerge { get; set; }
@@ -81,6 +82,7 @@ namespace AVES.Cmds_Button7
         public string RowNumber { get; set; }
         public string Title { get; set; }
         public string PartNumber { get; set; }
+        public string ItemNumber { get; set; }
         public string Description { get; set; }   // third discriminator for Non-Length rows
         public int LengthMm { get; set; }
         public bool HasLength { get; set; }
@@ -1044,6 +1046,7 @@ namespace AVES.Cmds_Button7
                         var typeEl = symbol ?? doc.GetElement(el.GetTypeId());
 
                         string partNumber = GetParamStringFromTypeOrInstance(typeEl, el, "Part Number");
+                        string itemNumber = GetParamStringFromTypeOrInstance(typeEl, el, "Item Number");
                         string description = GetParamStringFromTypeOrInstance(typeEl, el, "Description");
                         string title = GetParamStringFromTypeOrInstance(typeEl, el, "Title");
 
@@ -1055,6 +1058,7 @@ namespace AVES.Cmds_Button7
                             LengthMm = lengthMm,
                             Title = title,
                             PartNumber = partNumber,
+                            ItemNumber = itemNumber,
                             Description = description,
                             PartNumberMerge = hasLength ? $"{partNumber}-{lengthMm}" : partNumber,
                             DescriptionMerge = hasLength ? $"{description}-{lengthMm}" : description
@@ -1063,14 +1067,14 @@ namespace AVES.Cmds_Button7
 
                     // ── C. Build rows and assign sequence numbers ─────────────
 
-                    // Group 1: Length families — keyed (Title + PartNumber + LengthMm).
-                    // PartNumber is required here too: two different families (e.g.
+                    // Group 1: Length families — keyed (Title + ItemNumber + LengthMm).
+                    // Item Number is required here too: two different families (e.g.
                     // "SPB-RF50 CT-150" PN 88408 and "SPB-RF50 CT-200" PN 88409) can
                     // share the same Title ("Cable tray") and the same Length value,
                     // and would otherwise collapse into a single incorrect row.
                     var lengthRows = instanceDataList
                         .Where(d => d.HasLength)
-                        .GroupBy(d => $"{d.Title}|{d.PartNumber}|{d.LengthMm}",
+                        .GroupBy(d => $"{d.Title}|{d.ItemNumber}|{d.LengthMm}",
                                  StringComparer.OrdinalIgnoreCase)
                         .Select(g => new PartListRow
                         {
@@ -1078,49 +1082,70 @@ namespace AVES.Cmds_Button7
                             Title = g.First().Title,
                             LengthMm = g.First().LengthMm,
                             PartNumber = g.First().PartNumber,
+                            ItemNumber = g.First().ItemNumber,
                             PartNumberMerge = g.First().PartNumberMerge
                         })
-                        .OrderBy(r => r.PartNumberMerge, StringComparer.OrdinalIgnoreCase)
                         .ToList();
 
-                    // Group 2: Non-Length families — keyed (Title + PartNumber + Description).
+                    // Group 2: Non-Length families — keyed (Title + ItemNumber + Description).
                     // Description is the third discriminator: two families can share Title and
-                    // PartNumber (e.g. two bolt types both named "78775 / Locking bolt") but
+                    // Item Number (e.g. two bolt types both named "78775 / Locking bolt") but
                     // always differ in Description (e.g. "LB-M6x20" vs "LB-M6x25").
                     var nonLengthRows = instanceDataList
                         .Where(d => !d.HasLength)
-                        .GroupBy(d => $"{d.Title}|{d.PartNumber}|{d.Description}",
+                        .GroupBy(d => $"{d.Title}|{d.ItemNumber}|{d.Description}",
                                  StringComparer.OrdinalIgnoreCase)
                         .Select(g => new PartListRow
                         {
                             HasLength = false,
                             Title = g.First().Title,
                             PartNumber = g.First().PartNumber,
+                            ItemNumber = g.First().ItemNumber,
                             Description = g.First().Description,
                             LengthMm = 0,
                             PartNumberMerge = g.First().PartNumberMerge
                         })
-                        .OrderBy(r => r.PartNumberMerge, StringComparer.OrdinalIgnoreCase)
                         .ToList();
 
-                    // Flat list: Length rows first, then Non-Length rows
-                    var allRows = lengthRows.Concat(nonLengthRows).ToList();
+                    // Flat list, ordered by one hierarchy so the two families are
+                    // never interleaved: length rows first, then Item Number, then
+                    // the discriminator that belongs to that family -- Length
+                    // (numeric, longest first) for length rows, Description for the
+                    // rest. The two "not my family" keys collapse to a constant, so
+                    // each is a no-op tiebreaker on the rows it does not apply to.
+                    //
+                    // Item Numbers are numeric ids held as strings, so they sort by
+                    // digit count and then by value: 9, 12, 99, 100, 88409, 1371981.
+                    // A plain string sort would give 100 before 12 before 9. Anything
+                    // that will not parse falls to the end of its digit-count group
+                    // rather than throwing.
+                    var allRows = lengthRows.Concat(nonLengthRows)
+                        .OrderByDescending(r => r.HasLength)
+                        .ThenBy(r => (r.ItemNumber ?? string.Empty).Length)
+                        .ThenBy(r => long.TryParse(r.ItemNumber, out var itemNumber)
+                            ? itemNumber
+                            : long.MaxValue)
+                        .ThenByDescending(r => r.HasLength ? r.LengthMm : 0)
+                        .ThenBy(r => r.HasLength ? string.Empty : r.Description,
+                                StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
                     for (int i = 0; i < allRows.Count; i++)
                         allRows[i].RowNumber = (i + 1).ToString();
 
-                    // Lookup: (Title|PartNumber|LengthMm) → RowNumber  for Length families
+                    // Lookup: (Title|ItemNumber|LengthMm) → RowNumber  for Length families
                     var lengthLookup = allRows
                         .Where(r => r.HasLength)
                         .ToDictionary(
-                            r => $"{r.Title}|{r.PartNumber}|{r.LengthMm}",
+                            r => $"{r.Title}|{r.ItemNumber}|{r.LengthMm}",
                             r => r.RowNumber,
                             StringComparer.OrdinalIgnoreCase);
 
-                    // Lookup: (Title|PartNumber|Description) → RowNumber  for Non-Length families
+                    // Lookup: (Title|ItemNumber|Description) → RowNumber  for Non-Length families
                     var nonLengthLookup = allRows
                         .Where(r => !r.HasLength)
                         .ToDictionary(
-                            r => $"{r.Title}|{r.PartNumber}|{r.Description}",
+                            r => $"{r.Title}|{r.ItemNumber}|{r.Description}",
                             r => r.RowNumber,
                             StringComparer.OrdinalIgnoreCase);
 
@@ -1139,10 +1164,10 @@ namespace AVES.Cmds_Button7
                             string rowNum = null;
                             if (data.HasLength)
                                 lengthLookup.TryGetValue(
-                                    $"{data.Title}|{data.PartNumber}|{data.LengthMm}", out rowNum);
+                                    $"{data.Title}|{data.ItemNumber}|{data.LengthMm}", out rowNum);
                             else
                                 nonLengthLookup.TryGetValue(
-                                    $"{data.Title}|{data.PartNumber}|{data.Description}", out rowNum);
+                                    $"{data.Title}|{data.ItemNumber}|{data.Description}", out rowNum);
 
                             if (!string.IsNullOrEmpty(rowNum))
                                 SetParamString(el, "Comments", rowNum);
