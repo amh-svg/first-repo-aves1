@@ -1,14 +1,14 @@
 ﻿// -----------------------------------------------------------------------
 // Title: Part List Format
-// Summary: Lets the user pick one or more assemblies, then generates
-//          merged part-number/description strings and sequential row
-//          numbers for their Generic Model members, writing the results
-//          back onto the elements, and shows a report of the outcome.
+// Summary: Lets the user pick one or more assemblies, then assigns
+//          sequential row numbers to their Generic Model members,
+//          writing the results back onto the elements, and shows a
+//          report of the outcome.
 // Key logic: Groups Generic Model members within each assembly by
-//            Title/Part Number/Length (or Description for non-length
-//            parts) to assign shared row numbers, then writes
-//            "PART NUMBER MERGE", "DESCRIPTION MERGE" and "Comments"
-//            parameters per assembly inside its own transaction.
+//            Title/Item Number/Length (or Description for non-length
+//            parts) to assign shared row numbers, then writes the
+//            "Comments" parameter per assembly inside its own
+//            transaction.
 // -----------------------------------------------------------------------
 // System
 // Autodesk
@@ -72,13 +72,10 @@ namespace AVES.Cmds_Button7
         public string PartNumber { get; set; }
         public string ItemNumber { get; set; }
         public string Description { get; set; }
-        public string PartNumberMerge { get; set; }
-        public string DescriptionMerge { get; set; }
     }
 
     internal class PartListRow
     {
-        public string PartNumberMerge { get; set; }
         public string RowNumber { get; set; }
         public string Title { get; set; }
         public string PartNumber { get; set; }
@@ -86,6 +83,94 @@ namespace AVES.Cmds_Button7
         public string Description { get; set; }   // third discriminator for Non-Length rows
         public int LengthMm { get; set; }
         public bool HasLength { get; set; }
+    }
+
+    /// <summary>
+    /// Outcome of a single SetParamString call. The helper used to return void
+    /// and swallow every one of these but Written, so an assembly whose
+    /// parameters were all missing or read-only committed an empty transaction
+    /// and still reported "Done".
+    /// </summary>
+    internal enum ParamWriteResult
+    {
+        Written,
+        NotFound,           // LookupParameter returned null
+        ReadOnly,           // parameter found but not writable
+        WrongStorageType    // parameter found and writable, but not a string
+    }
+
+    /// <summary>
+    /// Per-assembly tally of SetParamString outcomes, kept per parameter name.
+    ///
+    /// Keeping the counts per name rather than as one lump is what makes the
+    /// report diagnostic: "Comments not found on every member while the two
+    /// merge parameters wrote fine" points at a localized built-in name, all
+    /// three missing points at an unbound shared parameter, and all three
+    /// read-only points at worksharing ownership. A single total cannot tell
+    /// those apart.
+    /// </summary>
+    internal class ParamWriteTally
+    {
+        private readonly Dictionary<string, int[]> _counts =
+            new Dictionary<string, int[]>(StringComparer.Ordinal);
+
+        /// <summary>Number of member instances the writer walked.</summary>
+        public int Members { get; set; }
+
+        public void Record(string paramName, ParamWriteResult result)
+        {
+            if (!_counts.TryGetValue(paramName, out var slot))
+            {
+                slot = new int[4];
+                _counts[paramName] = slot;
+            }
+            slot[(int)result]++;
+        }
+
+        public int Written => _counts.Values.Sum(c => c[(int)ParamWriteResult.Written]);
+
+        /// <summary>
+        /// True when at least one write was silently skipped, for any reason.
+        /// WrongStorageType counts here too: it is the same class of silent
+        /// no-op as the other two, and there is no reason to call it success.
+        /// </summary>
+        public bool HasSilentSkips => _counts.Values.Any(c =>
+            c[(int)ParamWriteResult.NotFound] > 0
+            || c[(int)ParamWriteResult.ReadOnly] > 0
+            || c[(int)ParamWriteResult.WrongStorageType] > 0);
+
+        /// <summary>
+        /// Compact one-line breakdown for the report's Notes column, e.g.
+        /// "412 members · Comments: 412 not found" or, when clean,
+        /// "412 members · 1236 params written". Only the failing parameters are
+        /// named, so a healthy run stays short.
+        /// </summary>
+        public string Describe()
+        {
+            var parts = new List<string> { $"{Members} members" };
+
+            var problems = new List<string>();
+            foreach (var kv in _counts.OrderBy(k => k.Key, StringComparer.Ordinal))
+            {
+                var c = kv.Value;
+                var reasons = new List<string>();
+                if (c[(int)ParamWriteResult.NotFound] > 0)
+                    reasons.Add($"{c[(int)ParamWriteResult.NotFound]} not found");
+                if (c[(int)ParamWriteResult.ReadOnly] > 0)
+                    reasons.Add($"{c[(int)ParamWriteResult.ReadOnly]} read-only");
+                if (c[(int)ParamWriteResult.WrongStorageType] > 0)
+                    reasons.Add($"{c[(int)ParamWriteResult.WrongStorageType]} wrong type");
+                if (reasons.Count > 0)
+                    problems.Add($"{kv.Key}: {string.Join(", ", reasons)}");
+            }
+
+            if (problems.Count > 0)
+                parts.AddRange(problems);
+            else
+                parts.Add($"{Written} params written");
+
+            return string.Join(" · ", parts);
+        }
     }
 
     /// <summary>One row in the Unified Report — one per processed assembly.</summary>
@@ -1029,6 +1114,13 @@ namespace AVES.Cmds_Button7
                     {
                         // Length is an instance parameter stored in Revit internal units (feet).
                         // Convert to millimetres and round to nearest integer.
+                        //
+                        // Intentionally looked up by name: "Length" here is a SHARED
+                        // parameter, not a Revit built-in. Shared parameter names are
+                        // author-defined and are not localized, so this is correct on
+                        // every Revit UI language. Do not "fix" it to a BuiltInParameter
+                        // (CURVE_ELEM_LENGTH, INSTANCE_LENGTH_PARAM, ...) — those do not
+                        // exist on these Generic Model families and would return null.
                         var lenParam = el.LookupParameter("Length");
                         bool hasLength = lenParam != null
                             && lenParam.StorageType == StorageType.Double
@@ -1059,9 +1151,7 @@ namespace AVES.Cmds_Button7
                             Title = title,
                             PartNumber = partNumber,
                             ItemNumber = itemNumber,
-                            Description = description,
-                            PartNumberMerge = hasLength ? $"{partNumber}-{lengthMm}" : partNumber,
-                            DescriptionMerge = hasLength ? $"{description}-{lengthMm}" : description
+                            Description = description
                         });
                     }
 
@@ -1082,8 +1172,7 @@ namespace AVES.Cmds_Button7
                             Title = g.First().Title,
                             LengthMm = g.First().LengthMm,
                             PartNumber = g.First().PartNumber,
-                            ItemNumber = g.First().ItemNumber,
-                            PartNumberMerge = g.First().PartNumberMerge
+                            ItemNumber = g.First().ItemNumber
                         })
                         .ToList();
 
@@ -1102,8 +1191,7 @@ namespace AVES.Cmds_Button7
                             PartNumber = g.First().PartNumber,
                             ItemNumber = g.First().ItemNumber,
                             Description = g.First().Description,
-                            LengthMm = 0,
-                            PartNumberMerge = g.First().PartNumberMerge
+                            LengthMm = 0
                         })
                         .ToList();
 
@@ -1154,12 +1242,11 @@ namespace AVES.Cmds_Button7
                     tx.Start();
                     try
                     {
+                        var tally = new ParamWriteTally { Members = instanceDataList.Count };
+
                         foreach (var data in instanceDataList)
                         {
                             var el = data.Instance;
-
-                            SetParamString(el, "PART NUMBER MERGE", data.PartNumberMerge);
-                            SetParamString(el, "DESCRIPTION MERGE", data.DescriptionMerge);
 
                             string rowNum = null;
                             if (data.HasLength)
@@ -1169,19 +1256,58 @@ namespace AVES.Cmds_Button7
                                 nonLengthLookup.TryGetValue(
                                     $"{data.Title}|{data.ItemNumber}|{data.Description}", out rowNum);
 
+                            // Comments is a Revit built-in, so its display name is
+                            // localized — LookupParameter("Comments") returns null
+                            // on a non-English Revit UI and the write was silently
+                            // skipped. Addressed by BuiltInParameter instead, which
+                            // is language-independent. The tally label stays
+                            // "Comments" because it is human-facing report text.
                             if (!string.IsNullOrEmpty(rowNum))
-                                SetParamString(el, "Comments", rowNum);
+                                tally.Record("Comments",
+                                    SetParamString(el, BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, rowNum));
                         }
 
-                        tx.Commit();
-                        totalAssembliesProcessed++;
+                        // Commit() does not throw on rollback. If Revit posts a
+                        // failure during commit-time regeneration and the dialog
+                        // is dismissed with Cancel, it returns RolledBack and
+                        // execution continues normally — so the status has to be
+                        // read, not assumed. This is a separate, earlier-stage
+                        // question from the per-parameter tally below: did the
+                        // transaction land at all, before asking which writes
+                        // inside it succeeded.
+                        var commitStatus = tx.Commit();
 
-                        reportRows.Add(new ReportRow
+                        if (commitStatus != TransactionStatus.Committed)
                         {
-                            AssemblyName = assembly.Name,
-                            StatusKind = "ok",
-                            Note = ""
-                        });
+                            // Same outcome as the exception path below — nothing
+                            // persisted — so it carries the same "fail" status and
+                            // does not count as Processed. The tally is deliberately
+                            // not reported here: it counts writes that were made
+                            // inside the transaction and then discarded, so
+                            // "1236 params written" beside a Failed pill would
+                            // describe work that no longer exists.
+                            reportRows.Add(new ReportRow
+                            {
+                                AssemblyName = assembly.Name,
+                                StatusKind = "fail",
+                                Note = $"Transaction not committed: {commitStatus}"
+                            });
+                        }
+                        else
+                        {
+                            // A warn row still committed, so it still counts as
+                            // Processed. Warnings is a subset indicator, which keeps
+                            // Processed + Skipped + Failed == Assemblies found rather
+                            // than making the four tiles look like they should sum.
+                            totalAssembliesProcessed++;
+
+                            reportRows.Add(new ReportRow
+                            {
+                                AssemblyName = assembly.Name,
+                                StatusKind = tally.HasSilentSkips ? "warn" : "ok",
+                                Note = tally.Describe()
+                            });
+                        }
                     }
                     catch (Exception txEx)
                     {
@@ -1252,12 +1378,45 @@ namespace AVES.Cmds_Button7
             return GetParamString(instanceEl, paramName);
         }
 
-        private static void SetParamString(Element el, string paramName, string value)
+        /// <summary>
+        /// Writes a string parameter by name, reporting why it did not when it
+        /// did not.
+        ///
+        /// Name-based lookup is only safe for author-defined parameters —
+        /// shared and family parameters carry the name their author gave them
+        /// on every Revit UI language. The "Length" read elsewhere in this
+        /// command is the live example: it is a shared parameter, so looking it
+        /// up by name is correct and deliberate.
+        ///
+        /// Do NOT use this overload for Revit built-ins. Their display names are
+        /// localized, so a name lookup returns null on a non-English install and
+        /// the write is silently skipped — which is exactly the bug that made
+        /// this command appear to succeed while writing nothing. Use the
+        /// BuiltInParameter overload for those.
+        /// </summary>
+        private static ParamWriteResult SetParamString(Element el, string paramName, string value)
+            => SetParam(el.LookupParameter(paramName), value);
+
+        /// <summary>
+        /// Writes a string parameter identified by its BuiltInParameter, which
+        /// is language-independent. Mirrors the pattern already used in
+        /// Cmds_Pulldown4.cs for ALL_MODEL_INSTANCE_COMMENTS.
+        /// </summary>
+        private static ParamWriteResult SetParamString(Element el, BuiltInParameter bip, string value)
+            => SetParam(el.get_Parameter(bip), value);
+
+        /// <summary>
+        /// Shared write core for both lookup strategies. The guards are
+        /// unchanged from the original name-based helper — same conditions, same
+        /// p.Set call, same results.
+        /// </summary>
+        private static ParamWriteResult SetParam(Parameter p, string value)
         {
-            var p = el.LookupParameter(paramName);
-            if (p == null || p.IsReadOnly) return;
-            if (p.StorageType == StorageType.String)
-                p.Set(value);
+            if (p == null) return ParamWriteResult.NotFound;
+            if (p.IsReadOnly) return ParamWriteResult.ReadOnly;
+            if (p.StorageType != StorageType.String) return ParamWriteResult.WrongStorageType;
+            p.Set(value);
+            return ParamWriteResult.Written;
         }
     }
 }
