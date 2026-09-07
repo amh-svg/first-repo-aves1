@@ -69,7 +69,6 @@ namespace AVES.Cmds_Button7
         public bool HasLength { get; set; }
         public int LengthMm { get; set; }
         public string Title { get; set; }
-        public string PartNumber { get; set; }
         public string ItemNumber { get; set; }
         public string Description { get; set; }
     }
@@ -78,7 +77,6 @@ namespace AVES.Cmds_Button7
     {
         public string RowNumber { get; set; }
         public string Title { get; set; }
-        public string PartNumber { get; set; }
         public string ItemNumber { get; set; }
         public string Description { get; set; }   // third discriminator for Non-Length rows
         public int LengthMm { get; set; }
@@ -1131,17 +1129,16 @@ namespace AVES.Cmds_Button7
                                     lenParam.AsDouble(), UnitTypeId.Millimeters))
                             : 0;
 
-                        // Part Number, Description and Title are TYPE parameters.
+                        // Item Number, Description and Title are TYPE parameters.
                         // LookupParameter on the instance returns null for type params,
                         // so we read them from the family symbol (element type).
                         var symbol = el is FamilyInstance fi ? fi.Symbol as Element : null;
                         var typeEl = symbol ?? doc.GetElement(el.GetTypeId());
 
-                        // Part Number / Item Number / Title are shared parameters —
-                        // verified on a real element, and the Revit API has no
-                        // built-in of any of those names — so their names are the
-                        // same on every Revit UI language and looking them up by
-                        // name is correct.
+                        // Item Number and Title are shared parameters — verified on
+                        // a real element, and the Revit API has no built-in of
+                        // either name — so their names are the same on every Revit
+                        // UI language and looking them up by name is correct.
                         //
                         // Description is NOT: it is the built-in
                         // ALL_MODEL_DESCRIPTION, whose display name is localized.
@@ -1149,7 +1146,6 @@ namespace AVES.Cmds_Button7
                         // the resulting "" collapsed distinct non-length parts
                         // (same Title and Item Number, differing only by
                         // Description) into a single shared part-list row number.
-                        string partNumber = GetParamStringFromTypeOrInstance(typeEl, el, "Part Number");
                         string itemNumber = GetParamStringFromTypeOrInstance(typeEl, el, "Item Number");
                         string description = GetParamStringFromTypeOrInstance(
                             typeEl, el, BuiltInParameter.ALL_MODEL_DESCRIPTION);
@@ -1162,7 +1158,6 @@ namespace AVES.Cmds_Button7
                             HasLength = hasLength,
                             LengthMm = lengthMm,
                             Title = title,
-                            PartNumber = partNumber,
                             ItemNumber = itemNumber,
                             Description = description
                         });
@@ -1184,7 +1179,6 @@ namespace AVES.Cmds_Button7
                             HasLength = true,
                             Title = g.First().Title,
                             LengthMm = g.First().LengthMm,
-                            PartNumber = g.First().PartNumber,
                             ItemNumber = g.First().ItemNumber
                         })
                         .ToList();
@@ -1201,7 +1195,6 @@ namespace AVES.Cmds_Button7
                         {
                             HasLength = false,
                             Title = g.First().Title,
-                            PartNumber = g.First().PartNumber,
                             ItemNumber = g.First().ItemNumber,
                             Description = g.First().Description,
                             LengthMm = 0
@@ -1368,10 +1361,10 @@ namespace AVES.Cmds_Button7
         /// Reads a string parameter by name.
         ///
         /// Same rule as the SetParamString overloads: name-based lookup is only
-        /// safe for author-defined parameters. "Part Number", "Item Number",
-        /// "Title" and "Length" are all shared parameters here — verified on a
-        /// real element — and the Revit API has no built-in of any of those
-        /// names, so their names are identical on every Revit UI language.
+        /// safe for author-defined parameters. "Item Number", "Title" and
+        /// "Length" are all shared parameters here — verified on a real
+        /// element — and the Revit API has no built-in of any of those names,
+        /// so their names are identical on every Revit UI language.
         /// Built-ins must use the BuiltInParameter overload instead.
         /// </summary>
         private static string GetParamString(Element el, string paramName)
@@ -1404,9 +1397,10 @@ namespace AVES.Cmds_Button7
 
         /// <summary>
         /// Reads a parameter that may live on the type or the instance.
-        /// Tries the type element first (covers Part Number, Description, Title
-        /// which are Type parameters in these families), then falls back to the
-        /// instance so the helper works universally.
+        /// Tries the type element first (covers Item Number and Title, which are
+        /// Type parameters in these families), then falls back to the instance so
+        /// the helper works universally. Description is also a Type parameter but
+        /// goes through the BuiltInParameter overload, not this one.
         /// </summary>
         private static string GetParamStringFromTypeOrInstance(
             Element typeEl, Element instanceEl, string paramName)
