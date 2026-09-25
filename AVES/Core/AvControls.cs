@@ -1357,7 +1357,12 @@ namespace AVES.Core
                 }
             };
 
-            // Message text
+            // Message text. TextWrapping.Wrap only does anything once the
+            // element actually has a constrained width to wrap within -- a
+            // horizontal StackPanel (the previous contentRow) hands each
+            // child unconstrained width, so a long message rendered on one
+            // line and clipped, however wide the window was fixed at. A Grid
+            // column gives it a real width to wrap against.
             var msg = new TextBlock
             {
                 Text = message,
@@ -1369,13 +1374,26 @@ namespace AVES.Core
                 VerticalAlignment = VerticalAlignment.Top
             };
 
-            var contentRow = new StackPanel
+            // Caps how tall the message area alone can grow before it
+            // scrolls, so a very long message (this window now has to carry
+            // multi-assembly, multi-sentence run reports) gets a scrollbar
+            // instead of pushing the window past MaxHeight below and off the
+            // usable part of the screen.
+            var msgScroll = new ScrollViewer
             {
-                Orientation = Orientation.Horizontal,
-                Margin = new Thickness(20, 20, 20, 0)
+                Content = msg,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                MaxHeight = 420,
             };
+
+            var contentRow = new WpfGrid { Margin = new Thickness(20, 20, 20, 0) };
+            contentRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            contentRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            WpfGrid.SetColumn(icon, 0);
+            WpfGrid.SetColumn(msgScroll, 1);
             contentRow.Children.Add(icon);
-            contentRow.Children.Add(msg);
+            contentRow.Children.Add(msgScroll);
 
             // Footer
             var okBtn = AvControls.PrimaryBtn("OK", () => Close());
@@ -1397,12 +1415,19 @@ namespace AVES.Core
             root.Children.Add(footer);
 
             Title = title;
-            Width = 420;
-            Height = 200;
+            Width = 480;
+            MinWidth = 360;
+            MaxWidth = 720;
             MinHeight = 180;
+            MaxHeight = 640;
+            // Height auto-fits the wrapped message (now that it actually
+            // wraps); width is a fixed starting point the user can still drag
+            // wider or narrower via ResizeMode below -- not SizeToContent.Width,
+            // which would let one long unbroken word or a very wide message
+            // push the window arbitrarily wide instead of wrapping.
             SizeToContent = SizeToContent.Height;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            ResizeMode = ResizeMode.NoResize;
+            ResizeMode = ResizeMode.CanResizeWithGrip;
             Background = AvTokens.B(AvTokens.Surface);
             FontFamily = AvTokens.Ui;
             UseLayoutRounding = true;

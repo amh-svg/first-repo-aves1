@@ -393,7 +393,7 @@ internal static class ViewUtils
         // from the other two so the frame stays right-handed -- a frame that is
         // not is a reflection, which is the RCP behaviour this view exists to
         // avoid.
-        var basisZ = new XYZ(0, 0, -1);
+        var basisZ = new XYZ(0, 0, 1);
         var basisX = topScreenRight.Normalize().Negate();
         var basisY = basisZ.CrossProduct(basisX).Normalize();
 
@@ -3280,7 +3280,8 @@ internal sealed class AssemblySheetContext(
     ViewSchedule? schedule,
     IReadOnlyDictionary<string, View> detailViews,
     double modelWidth,
-    double modelHeight)
+    double modelHeight,
+    string? orientationWarning = null)
 {
     public Document Doc { get; } = doc;
     public AssemblyInstance Assembly { get; } = assembly;
@@ -3297,6 +3298,17 @@ internal sealed class AssemblySheetContext(
 
     /// <summary>Vertical span of the assembly.</summary>
     public double ModelHeight { get; } = modelHeight;
+
+    /// <summary>
+    /// Non-null when the Front/Back axis was computed fresh this run (no
+    /// existing stamp found) and something about that computation is worth
+    /// flagging: a non-axis-aligned assembly rotation (the bounding-box extents
+    /// the choice is based on are then an over-estimate, not exact) or a
+    /// near-square footprint (the choice is unstable -- a later geometry edit
+    /// could flip it on the next unstamped run). Null on every other path,
+    /// including whenever an existing stamp was found and honored instead.
+    /// </summary>
+    public string? OrientationWarning { get; } = orientationWarning;
 }
 
 /// <summary>
@@ -3345,6 +3357,296 @@ internal readonly record struct SheetFrame(XYZ Center, double UsableWidth, doubl
 }
 
 /// <summary>
+/// Stamps each 2D detail view (FRONT/BACK/LEFT/RIGHT/TOP/BOTTOM) with the
+/// Front/Back axis and sign AssemblyDrawingBuilder derived for its assembly,
+/// and with the view's own direction key.
+/// <para>
+/// A second schema, deliberately separate from KoreaPackageStorage below:
+/// Extensible Storage's field set is frozen the moment a schema is first
+/// finished (SchemaBuilder.Finish() locks it for the schema's lifetime, per
+/// the Revit API), and KoreaPackageStorage's four fields are already live in
+/// stamped documents -- a fifth field cannot be added to that GUID.
+/// </para>
+/// <para>
+/// Read by AssemblyDrawingBuilder.Build before it derives an axis from
+/// geometry: if any existing view for this (assembly, package type) already
+/// carries a stamp, that axis/sign is reused rather than recomputed, so a
+/// borderline footprint or a later geometry edit cannot silently re-face a
+/// package that was already generated. The ViewKey field is written for every
+/// view from day one but not read anywhere yet -- reserved for the in-place
+/// re-run work's viewport-to-view matching, designed in now while nothing
+/// depends on it rather than migrated in later.
+/// </para>
+/// </summary>
+internal static class AssemblyOrientationStorage
+{
+    // Fixed for the life of the add-in: changing it orphans every stamped view.
+    private static readonly Guid SchemaGuid = new("4BF1721E-9124-4EA6-98F2-676129014B25");
+
+    private const string SchemaName = "AVESAssemblyViewOrientation";
+    // Must match <VendorId> in AVES.addin exactly -- see KoreaPackageStorage's
+    // identical note below.
+    private const string VendorVendorId = "Development";
+
+    private const string FieldAssemblyUniqueId = "AssemblyUniqueId";
+    private const string FieldPackageType = "PackageType";
+    private const string FieldFrontAxis = "FrontAxis";     // "X" or "Y"
+    private const string FieldFrontSign = "FrontSign";     // +1 or -1
+    private const string FieldViewKey = "ViewKey";         // FRONT/BACK/LEFT/RIGHT/TOP/BOTTOM
+    private const string FieldSchemaVersion = "SchemaVersion";
+    private const string FieldWarningFlags = "WarningFlags"; // bitwise WarnXxx below
+    private const string FieldExtentDx = "ExtentDx";       // feet, local axes, at stamp time
+    private const string FieldExtentDy = "ExtentDy";
+    private const string FieldExtentDz = "ExtentDz";
+
+    // Bumped from 1 to 2: the Front/Back sign convention itself was corrected
+    // (FRONT is now the POSITIVE direction along the derived short axis, was
+    // negative). That is a change to the axis/sign FORMULA, not just to a
+    // tolerance, so version-1 stamps must not be honored -- see the
+    // SchemaVersion check in TryFindExisting.
+    public const int CurrentVersion = 2;
+
+    // Bits recording WHICH condition(s) held when this stamp's axis was
+    // computed. A stamped read skips geometry entirely (that is the point of
+    // the stamp), so without this a package stamped under a near-tie or
+    // non-orthogonal condition would warn exactly once, on the run that
+    // created it, and every later run reading the same stamp would fall
+    // silent -- the same silent-wrongness this fix exists to remove, just
+    // relocated into the stamp instead of removed. These bits are what lets a
+    // stamped read re-surface the same warning on every run, not only the
+    // first.
+    public const int WarnNone = 0;
+    public const int WarnNonOrthogonal = 1;
+    public const int WarnNearTie = 2;
+
+    // How far current DX/DY may drift from the stamped values before a
+    // stamped read warns that the part may have been redesigned since. 5%
+    // relative, with a 10mm absolute floor so a tiny assembly's rounding noise
+    // does not trip it and a huge assembly's few-mm regen jitter does not
+    // either. Deliberately NOT tied to the 1.15 near-tie ratio -- that
+    // threshold is about how STABLE a choice was at stamp time; this one is
+    // about whether the GEOMETRY has since moved, which are different
+    // questions and can disagree (a comfortably-not-tied assembly can still
+    // have been redesigned by more than 5% without ever approaching a tie).
+    private const double ExtentDriftRelativeThreshold = 0.05;
+    private static readonly double ExtentDriftFloorFt =
+        UnitUtils.ConvertToInternalUnits(10.0, UnitTypeId.Millimeters);
+
+    /// <summary>The schema, created on first use -- same pattern as
+    /// KoreaPackageStorage.GetOrCreateSchema below.</summary>
+    private static Autodesk.Revit.DB.ExtensibleStorage.Schema GetOrCreateSchema()
+    {
+        if (Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(SchemaGuid) is { } existing)
+            return existing;
+
+        using var builder = new Autodesk.Revit.DB.ExtensibleStorage.SchemaBuilder(SchemaGuid);
+
+        builder.SetSchemaName(SchemaName);
+        builder.SetVendorId(VendorVendorId);
+        builder.SetReadAccessLevel(Autodesk.Revit.DB.ExtensibleStorage.AccessLevel.Public);
+        builder.SetWriteAccessLevel(Autodesk.Revit.DB.ExtensibleStorage.AccessLevel.Vendor);
+
+        builder.AddSimpleField(FieldAssemblyUniqueId, typeof(string));
+        builder.AddSimpleField(FieldPackageType, typeof(string));
+        builder.AddSimpleField(FieldFrontAxis, typeof(string));
+        builder.AddSimpleField(FieldFrontSign, typeof(int));
+        builder.AddSimpleField(FieldViewKey, typeof(string));
+        builder.AddSimpleField(FieldSchemaVersion, typeof(int));
+        builder.AddSimpleField(FieldWarningFlags, typeof(int));
+        // Plain int, NOT double: a double field is a Revit "measurement" and
+        // requires a spec declared on its FieldBuilder (SetSpec) before
+        // SchemaBuilder.Finish() will accept it -- miss that (as the first
+        // version of this schema did, on all three of these fields) and
+        // Finish() throws "Units are required for field X" for the first
+        // double field it finds, at schema-creation time, which is invisible
+        // to the compiler and was only caught by an actual Revit run. Storing
+        // hundredths of a millimetre as an int sidesteps the requirement
+        // entirely -- see ToHundredthsMm/FromHundredthsMm below.
+        builder.AddSimpleField(FieldExtentDx, typeof(int));
+        builder.AddSimpleField(FieldExtentDy, typeof(int));
+        builder.AddSimpleField(FieldExtentDz, typeof(int));
+
+        return builder.Finish();
+    }
+
+    public static void Stamp(
+        View view, string assemblyUniqueId, string packageType,
+        string frontAxis, int frontSign, string viewKey, int warningFlags,
+        double extentDx, double extentDy, double extentDz)
+    {
+        var schema = GetOrCreateSchema();
+        var entity = new Autodesk.Revit.DB.ExtensibleStorage.Entity(schema);
+
+        entity.Set(FieldAssemblyUniqueId, assemblyUniqueId);
+        entity.Set(FieldPackageType, packageType);
+        entity.Set(FieldFrontAxis, frontAxis);
+        entity.Set(FieldFrontSign, frontSign);
+        entity.Set(FieldViewKey, viewKey);
+        entity.Set(FieldSchemaVersion, CurrentVersion);
+        entity.Set(FieldWarningFlags, warningFlags);
+        entity.Set(FieldExtentDx, ToHundredthsMm(extentDx));
+        entity.Set(FieldExtentDy, ToHundredthsMm(extentDy));
+        entity.Set(FieldExtentDz, ToHundredthsMm(extentDz));
+
+        view.SetEntity(entity);
+    }
+
+    /// <summary>
+    /// The Front axis/sign/warning-flags/extents already stamped on any
+    /// existing view of this assembly's package, or null if none has been
+    /// generated yet (or the package predates this schema). Walks every View
+    /// in the document once -- the same accepted O(views)-per-assembly-per-run
+    /// tradeoff KoreaPackageStorage documents for its own per-assembly sheet
+    /// scan.
+    /// </summary>
+    public static (string FrontAxis, int FrontSign, int WarningFlags,
+        double ExtentDx, double ExtentDy, double ExtentDz)? TryFindExisting(
+        Document doc, string assemblyUniqueId, string packageType)
+    {
+        if (Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(SchemaGuid) is not { } schema)
+            return null;
+
+        foreach (var view in new FilteredElementCollector(doc)
+                     .OfClass(typeof(View)).Cast<View>())
+        {
+            var entity = view.GetEntity(schema);
+            if (!entity.IsValid()) continue;
+
+            // TODO (decided, not yet implemented -- deliberately, ahead of any
+            // client model carrying stamps): the axis is a fact about the PART,
+            // not about which command drew it. Matching PackageType here means
+            // Korea and Vendor hold independent stamps for the same assembly,
+            // so a redesign between "Korea generated first" and "Vendor's
+            // first-ever run" can leave the two silently disagreeing -- each
+            // honoring its own stamp, correctly, while K FRONT stops equaling
+            // V FRONT with no warning either side can raise. Decision: drop
+            // this PackageType check from the match (keep the field on the
+            // stamp for bookkeeping/diagnostics) so whichever command runs
+            // FIRST for an assembly fixes the axis for BOTH -- "stale
+            // together" beats "correct apart," matching the tradeoff the
+            // stamp already makes for a single package's own re-runs, applied
+            // consistently instead of leaking through this one gap. Land this
+            // before any client model exists, not before the orientation-fix
+            // verification run this schema was built for.
+            if (entity.Get<string>(FieldPackageType) != packageType) continue;
+            if (entity.Get<string>(FieldAssemblyUniqueId) != assemblyUniqueId) continue;
+
+            // General mechanism for "the DERIVATION LOGIC changed, not just the
+            // geometry" -- the second time a stamp's stability has blocked a
+            // correction (first was WarningFlags never re-evaluating; this is
+            // the Front/Back sign itself being wrong at the formula level, not
+            // the input geometry). A stamp whose version predates
+            // CurrentVersion is treated as if it does not exist at all: the
+            // caller falls through to a fresh recompute under today's logic
+            // and re-stamps at the current version. Bump CurrentVersion
+            // whenever the axis/sign FORMULA changes (not for a tolerance-only
+            // change, which is now always re-evaluated live regardless -- see
+            // DescribeStampedWarning's callers). This is what makes the six
+            // packages from the Front/Back sign investigation self-heal on
+            // their next run instead of needing this check added case by case.
+            if (entity.Get<int>(FieldSchemaVersion) != CurrentVersion) continue;
+
+            return (entity.Get<string>(FieldFrontAxis), entity.Get<int>(FieldFrontSign),
+                    entity.Get<int>(FieldWarningFlags),
+                    FromHundredthsMm(entity.Get<int>(FieldExtentDx)),
+                    FromHundredthsMm(entity.Get<int>(FieldExtentDy)),
+                    FromHundredthsMm(entity.Get<int>(FieldExtentDz)));
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Human-readable re-statement of a stamped read's warning state: the
+    /// WarningFlags condition(s) that held at stamp time (unchanged from
+    /// before), plus a NEW check the stamp's extents fields exist to support --
+    /// whether CURRENT geometry has drifted from what was stamped, either
+    /// enough to flip which axis today's rule would pick (checked exactly,
+    /// not by tolerance: the same short-axis comparison the fresh-compute path
+    /// uses, run against current DX/DY and compared to the axis actually in
+    /// effect) or just enough to be worth a look (ExtentDriftRelativeThreshold,
+    /// on either axis). The stamped axis is NEVER changed by this -- only the
+    /// message. Null when nothing is worth flagging.
+    /// </summary>
+    public static string? DescribeStampedWarning(
+        int warningFlags, string stampedAxis,
+        double storedDx, double storedDy, double currentDx, double currentDy)
+    {
+        var parts = new List<string>();
+        if ((warningFlags & WarnNonOrthogonal) != 0)
+            parts.Add("the assembly's rotation was not a multiple of 90 deg at the time " +
+                      "(the extents that axis choice was based on were an over-estimate, " +
+                      "not exact)");
+        if ((warningFlags & WarnNearTie) != 0)
+            parts.Add("the footprint was a near-tie between axes at the time " +
+                      "(long/short ratio under 1.15)");
+
+        var currentPick = currentDx <= currentDy ? "X" : "Y";
+        if (currentPick != stampedAxis)
+        {
+            parts.Add(
+                $"CURRENT geometry no longer agrees with the stamped axis -- today's short-" +
+                $"axis rule would now pick local {currentPick}, not the stamped {stampedAxis}. " +
+                "The stamp still wins (nothing was re-faced automatically), but this package " +
+                "likely needs re-generating under a fresh stamp");
+        }
+        else
+        {
+            var dxDrift = RelativeDrift(storedDx, currentDx);
+            var dyDrift = RelativeDrift(storedDy, currentDy);
+            if (dxDrift > ExtentDriftRelativeThreshold || dyDrift > ExtentDriftRelativeThreshold)
+            {
+                parts.Add(
+                    $"extents have drifted since this stamp was made (DX {dxDrift * 100:0}%, " +
+                    $"DY {dyDrift * 100:0}% from stamped) -- the axis choice still agrees for " +
+                    "now, but the part has changed");
+            }
+        }
+
+        return parts.Count == 0
+            ? null
+            : "Front/Back axis is read from an existing stamp. " +
+              char.ToUpperInvariant(parts[0][0]) + parts[0][1..] +
+              (parts.Count > 1 ? "; " + string.Join("; ", parts.Skip(1)) : "") +
+              " -- worth re-checking, not just trusted because a stamp already exists.";
+    }
+
+    /// <summary>
+    /// True when either axis has moved more than ExtentDriftRelativeThreshold
+    /// (with the ExtentDriftFloorFt floor) from what was stamped. The caller
+    /// (AssemblyDrawingBuilder.DeriveFrontAxis) uses this, not just
+    /// DescribeStampedWarning's message text, to decide whether to re-baseline
+    /// the stamp -- re-baselining on every no-flip read regardless of this
+    /// would let sub-tolerance drift reset the stored extents every run,
+    /// so it could never accumulate to cross the threshold. Below tolerance:
+    /// nothing is said and nothing changes; the old baseline stands so small
+    /// changes keep adding up against the ORIGINAL numbers, not last run's.
+    /// </summary>
+    public static bool HasDrifted(double storedDx, double storedDy, double currentDx, double currentDy) =>
+        RelativeDrift(storedDx, currentDx) > ExtentDriftRelativeThreshold ||
+        RelativeDrift(storedDy, currentDy) > ExtentDriftRelativeThreshold;
+
+    private static double RelativeDrift(double stored, double current)
+    {
+        var denom = Math.Max(Math.Abs(stored), ExtentDriftFloorFt);
+        return Math.Abs(current - stored) / denom;
+    }
+
+    /// <summary>
+    /// Feet (internal units, matching every other length in this codebase) to
+    /// hundredths of a millimetre, for the plain-int ExtentDx/Dy/Dz fields.
+    /// 0.01mm resolution -- at least three orders of magnitude finer than the
+    /// 10mm drift floor these values feed, so the round-trip loses nothing
+    /// that could ever matter to that comparison.
+    /// </summary>
+    private static int ToHundredthsMm(double ft) =>
+        (int)Math.Round(UnitUtils.ConvertFromInternalUnits(ft, UnitTypeId.Millimeters) * 100.0);
+
+    private static double FromHundredthsMm(int hundredthsMm) =>
+        UnitUtils.ConvertToInternalUnits(hundredthsMm / 100.0, UnitTypeId.Millimeters);
+}
+
+/// <summary>
 /// Builds the six orthographic views, the 3D view and the part list for one
 /// assembly, applies templates and isolates the assembly in every view. Layout
 /// independent -- nothing here knows about sheets.
@@ -3363,25 +3665,27 @@ internal static class AssemblyDrawingBuilder
             ["RIGHT"] = "Right View",
         };
 
-    // Look direction of each side view: the section camera points this way.
-    // The assembly axes run green/+X across the left-right span and red/+Y
-    // across the front-back span, so FRONT/BACK ride +/-X to land on the broad
-    // face and LEFT/RIGHT ride +/-Y for the narrow edge.
-    // TOP/BOTTOM are plan and section views and are created separately.
-    private static readonly IReadOnlyDictionary<string, XYZ> SideLookDirections =
-        new Dictionary<string, XYZ>
-        {
-            ["FRONT"] = new XYZ(-1, 0, 0),
-            ["BACK"] = new XYZ(1, 0, 0),
-            ["RIGHT"] = new XYZ(0, -1, 0),
-            ["LEFT"] = new XYZ(0, 1, 0),
-        };
-
-    // Look direction the TOP and BOTTOM views are turned to. They already read
-    // correctly against the reference, so this is held separately rather than
-    // taken from SideLookDirections["FRONT"] -- relabelling which face is called
-    // Front must not swing them round by half a turn with it.
-    private static readonly XYZ PlanLookReference = new(1, 0, 0);
+    // Which local horizontal axis FRONT/BACK look along is NOT a fixed
+    // constant: sampled assemblies split both ways (A0000371014 and
+    // A0000371024 run long along local X, A0000371044 runs long along local
+    // Y), so a single hardcoded pair of vectors is wrong for some assemblies
+    // no matter which way it is picked. FRONT/BACK instead ride whichever
+    // local axis is SHORTER for this specific assembly -- looking along the
+    // short span lands on the broad face -- and LEFT/RIGHT ride the long one.
+    // See DeriveFrontAxis below for the tie/stability handling and
+    // AssemblyOrientationStorage above for why a first-generated package's
+    // choice is then honored on every later run instead of recomputed.
+    //
+    // Sign convention: FRONT is the POSITIVE direction along the chosen axis,
+    // BACK the negative; RIGHT is the negative direction along the other
+    // (long) axis, LEFT the positive. Confirmed on-screen -- Front/Back were
+    // swapped, uniformly, on all three sampled assemblies (371014, 371024,
+    // 371044) under an earlier negative-Front convention; Left/Right and
+    // Top/Bottom were already correct under that same run and are unaffected
+    // by this sign (see the frontRight/screenRightAnchor split in Build,
+    // which exists specifically so flipping this sign does not also flip
+    // Top/Bottom's orientation as a side effect).
+    private const double NearTieRatioThreshold = 1.15;
 
     // Breathing room left around the assembly in the six 2D views. Small
     // enough that the crop hugs the model, large enough that tags and
@@ -3395,7 +3699,7 @@ internal static class AssemblyDrawingBuilder
         ElementId titleblockId,
         double sectionBoxPadding,
         NameRegistry viewNames, NameRegistry sheetNames,
-        bool useAssemblyCoordinateSystem = false)
+        string packageType)
     {
         var bbox = GeometryUtils.GetAssemblyBoundingBox(doc, assembly)
             ?? throw new InvalidOperationException(
@@ -3435,21 +3739,43 @@ internal static class AssemblyDrawingBuilder
             schedule.ViewTemplateId = setup.Sched!.Id;
         }
 
-        var detailViews = new Dictionary<string, View>(SideLookDirections.Count + 2);
+        var detailViews = new Dictionary<string, View>(6);
+        string? orientationWarning = null;
 
         if (setup.Generate2DViews)
         {
-            // Orientation source. With the flag off this is null and every
-            // direction below is the world vector it always was; with it on the
-            // same vectors are read as assembly-space and mapped through the
-            // Assembly Origin, so the views follow a rotated origin.
-            var assemblyFrame = useAssemblyCoordinateSystem
-                ? assembly.GetTransform()
-                : null;
+            // Every look direction below is stated in the assembly's own local
+            // axes and mapped into world space through its transform -- there is
+            // no more "world axes" mode (see the removed
+            // UseAssemblyCoordinateSystemFor2DViews / useAssemblyCoordinateSystem
+            // flag: with FRONT/BACK derived from geometry, a fixed-world
+            // alternative has no meaning left to select).
+            var assemblyFrame = assembly.GetTransform();
+            XYZ MapDirection(XYZ local) => assemblyFrame.OfVector(local).Normalize();
 
-            XYZ MapDirection(XYZ local) => assemblyFrame is null
-                ? local
-                : assemblyFrame.OfVector(local).Normalize();
+            var (frontAxis, frontSign, warningFlags, extentDx, extentDy, extentDz, warning) =
+                DeriveFrontAxis(doc, bbox, assemblyFrame, assembly.UniqueId, packageType);
+            orientationWarning = warning;
+
+            var sideAxis = frontAxis == "X" ? "Y" : "X";
+            XYZ AxisVector(string axis, int sign) =>
+                axis == "X" ? new XYZ(sign, 0, 0) : new XYZ(0, sign, 0);
+
+            var frontLocal = AxisVector(frontAxis, frontSign);
+
+            // FRONT/BACK negative/positive along the derived short axis;
+            // RIGHT/LEFT negative/positive along the long one, mirroring the
+            // same pairing. Confirmed on-screen on all three sampled assemblies
+            // (FRONT/BACK swapped under the OLD sign, LEFT/RIGHT and TOP/BOTTOM
+            // already correct) -- FRONT is the POSITIVE direction, corrected
+            // below in frontSign's own derivation (DeriveFrontAxis).
+            var lookDirections = new (string Key, XYZ Local)[]
+            {
+                ("FRONT", frontLocal),
+                ("BACK", AxisVector(frontAxis, -frontSign)),
+                ("RIGHT", AxisVector(sideAxis, -1)),
+                ("LEFT", AxisVector(sideAxis, 1)),
+            };
 
             // CropPaddingMm is for the 2D crop regions only.
             var viewPadding = UnitUtils.ConvertToInternalUnits(
@@ -3467,17 +3793,34 @@ internal static class AssemblyDrawingBuilder
             var level = LevelUtils.FindNearestLevel(doc, bboxCenter)
                 ?? throw new InvalidOperationException("No levels found in this project.");
 
-            foreach (var (key, lookDirection) in SideLookDirections)
+            foreach (var (key, lookDirection) in lookDirections)
             {
                 detailViews[key] = ViewUtils.CreateOrthoSection(
                     doc, sectionVft.Id, bbox, MapDirection(lookDirection), viewPadding);
             }
 
             // Plan and RCP views are born north-up, which puts them out of step
-            // with the sections. Turn them so their screen-right matches the
-            // plan reference direction, which is how the reference sheet reads.
+            // with the sections. Turn them so their screen-right follows a
+            // FIXED direction along the derived short axis -- formerly a fixed
+            // PlanLookReference constant, which carried the identical
+            // fixed-axis assumption FRONT/BACK's own table just turned out to be
+            // wrong for; now anchored to the axis AssemblyDrawingBuilder itself
+            // derives, but DELIBERATELY NOT to frontLocal (which carries
+            // whichever sign is currently labelled Front).
+            //
+            // This anchor must not move when FRONT's sign changes: TOP and
+            // BOTTOM were independently verified correct on all three sampled
+            // assemblies under the OLD (negative) Front convention, including
+            // 371044, whose screen-right actually differs from the other two
+            // under this rule -- so it is right by the geometry, not by
+            // accident, and the Front/Back sign correction above must not be
+            // allowed to rotate it 180 deg as a side effect. Using the fixed
+            // -1 direction here (matching what frontLocal always was before
+            // that correction) rather than frontLocal itself is what holds it
+            // still regardless of which sign Front now carries.
+            var screenRightAnchor = AxisVector(frontAxis, -1);
             var frontRight = XYZ.BasisZ
-                .CrossProduct(MapDirection(PlanLookReference).Normalize())
+                .CrossProduct(MapDirection(screenRightAnchor))
                 .Normalize();
 
             // Fit, rotate, fit: the first fit keeps the crop small so the rotation's
@@ -3506,12 +3849,261 @@ internal static class AssemblyDrawingBuilder
 
                 if (ViewTitles.TryGetValue(key, out var title))
                     ViewUtils.SetDescription(view, title);
+
+                AssemblyOrientationStorage.Stamp(
+                    view, assembly.UniqueId, packageType, frontAxis, frontSign, key, warningFlags,
+                    extentDx, extentDy, extentDz);
             }
         }
 
         return new AssemblySheetContext(
             doc, assembly, titleblockId, sheetNames,
-            view3d, schedule, detailViews, modelW, modelH);
+            view3d, schedule, detailViews, modelW, modelH, orientationWarning);
+    }
+
+    /// <summary>
+    /// The Front/Back axis and sign for this assembly's 2D views, and any
+    /// warning worth surfacing about how they were determined.
+    /// <para>
+    /// An existing stamp (from an earlier run of THIS package type for THIS
+    /// assembly) is honored unconditionally -- no re-check against current
+    /// geometry -- so a package already generated cannot be silently re-faced
+    /// by a later edit. Only when nothing is stamped yet is the axis computed
+    /// fresh, from the world-aligned bounding box's extents projected into the
+    /// assembly's own axes (exact at rotations that are a multiple of 90 deg,
+    /// an over-estimate otherwise -- see the warning below).
+    /// </para>
+    /// <para>
+    /// No tie-break default: the raw DX/DY comparison decides at every ratio,
+    /// including a near-tie. A default would risk handing a borderline
+    /// assembly its LONG axis under a wider threshold than intended, which is
+    /// worse than an unstable-but-honest choice -- stability across runs is
+    /// what the stamp above is for, not a default here.
+    /// </para>
+    /// </summary>
+    private static (string Axis, int Sign, int WarningFlags,
+        double Dx, double Dy, double Dz, string? Warning) DeriveFrontAxis(
+        Document doc, BoundingBoxXYZ worldBbox, Transform assemblyFrame,
+        string assemblyUniqueId, string packageType)
+    {
+        // Current extents, and the warning evaluation built from them, are
+        // computed on BOTH paths, always -- not only when there is no stamp
+        // yet. This is deliberate: a stamped read used to restate whatever
+        // WarningFlags was frozen at stamp time, which meant a package
+        // stamped under a near-tie or non-orthogonal condition warned once,
+        // on the run that created it, and every later run reading the same
+        // stamp fell silent even after the geometry had moved further or the
+        // tolerance itself changed -- the exact silent-wrongness this field
+        // exists to prevent, relocated into the stamp. Warnings are now
+        // ALWAYS a live read against current geometry and today's code, on
+        // every run; only the AXIS/SIGN value itself stays stamped and
+        // stable (that stability is the point of the stamp -- warnings
+        // freezing was never the intent). The stored WarningFlags value is
+        // still written every run, but purely as an as-of-last-run record,
+        // never as the source of what gets said.
+        var (dx, dy, dz) = LocalExtents(worldBbox, assemblyFrame);
+        var (freshAxis, freshSign, freshFlags, freshWarning) =
+            EvaluateFresh(dx, dy, assemblyFrame);
+
+        if (AssemblyOrientationStorage.TryFindExisting(doc, assemblyUniqueId, packageType)
+            is { } stamped)
+        {
+            var messages = new List<string>();
+            if (freshWarning is not null) messages.Add(freshWarning);
+
+            if (freshAxis != stamped.FrontAxis)
+            {
+                // The axis choice itself is in question -- that needs a human
+                // decision (a fresh, deliberate regeneration), not a baseline
+                // update quietly absorbing it. Old extents are kept exactly so
+                // this keeps warning, loudly, on every run until someone acts.
+                messages.Add(
+                    $"CURRENT geometry no longer agrees with the stamped axis -- today's " +
+                    $"short-axis rule would now pick local {freshAxis}, not the stamped " +
+                    $"{stamped.FrontAxis}. The stamp still wins (nothing was re-faced " +
+                    "automatically), but this package likely needs re-generating under a " +
+                    "fresh stamp.");
+
+                return (stamped.FrontAxis, stamped.FrontSign, freshFlags,
+                    stamped.ExtentDx, stamped.ExtentDy, stamped.ExtentDz,
+                    string.Join(" ", messages));
+            }
+
+            // Axis still agrees. Re-baseline ONLY if drift actually crossed the
+            // tolerance -- re-baselining on every no-flip read regardless would
+            // let sub-tolerance changes reset the stored extents every run, so
+            // drift could accumulate indefinitely without ever crossing the
+            // threshold, which is the exact silent-reset hole this was built
+            // to close. Over tolerance: the old extents have served their
+            // purpose, adopt current geometry as the new baseline and let the
+            // drift notice fire once (re-baselining the numbers IS the
+            // acknowledgement, so the same redesign does not warn forever).
+            // Under tolerance: say nothing, change nothing -- the ORIGINAL
+            // stamped numbers stand, so the next run's comparison is still
+            // against them, not against this run's, and small changes keep
+            // adding up rather than resetting every time.
+            var hasDrifted = AssemblyOrientationStorage.HasDrifted(
+                stamped.ExtentDx, stamped.ExtentDy, dx, dy);
+
+            if (hasDrifted)
+            {
+                messages.Add(
+                    $"extents have drifted since this stamp was made (now DX=" +
+                    $"{UnitUtils.ConvertFromInternalUnits(dx, UnitTypeId.Millimeters):0} mm, DY=" +
+                    $"{UnitUtils.ConvertFromInternalUnits(dy, UnitTypeId.Millimeters):0} mm) -- " +
+                    "the axis choice still agrees, so the stamp is re-baselined to current " +
+                    "geometry and this note will not repeat unless it drifts further.");
+            }
+
+            var message = messages.Count == 0 ? null : string.Join(" ", messages);
+            return hasDrifted
+                ? (stamped.FrontAxis, stamped.FrontSign, freshFlags, dx, dy, dz, message)
+                : (stamped.FrontAxis, stamped.FrontSign, freshFlags,
+                   stamped.ExtentDx, stamped.ExtentDy, stamped.ExtentDz, message);
+        }
+
+        return (freshAxis, freshSign, freshFlags, dx, dy, dz, freshWarning);
+    }
+
+    // Warn once the actual rotation eats this fraction of the angular margin
+    // available before rotation error alone could flip the axis choice (see
+    // EvaluateFresh) -- not a fixed angle for every assembly. A near-square
+    // assembly's margin is tiny, so it gets a correspondingly tight
+    // tolerance automatically; a comfortably lopsided one tolerates far more
+    // real-world tilt before this is worth a look. 5% leaves roughly 20x
+    // headroom before the error could plausibly matter.
+    private const double AngularSafetyFraction = 0.05;
+
+    /// <summary>
+    /// The Front/Back axis, sign, and warning state computed fresh from
+    /// CURRENT geometry -- called unconditionally by DeriveFrontAxis, whether
+    /// or not an existing stamp will end up overriding the axis/sign below.
+    /// <para>
+    /// No tie-break default: the raw DX/DY comparison decides at every ratio,
+    /// including a near-tie. A default would risk handing a borderline
+    /// assembly its LONG axis under a wider threshold than intended, which is
+    /// worse than an unstable-but-honest choice -- stability across runs is
+    /// what the stamp is for, not a default here.
+    /// </para>
+    /// <para>
+    /// Sign: FRONT is the POSITIVE direction along the derived short axis
+    /// (BACK negative) -- confirmed on-screen on all three sampled
+    /// assemblies; the previous negative convention had Front and Back
+    /// swapped uniformly. RIGHT/LEFT are independent of this sign entirely
+    /// (their own fixed -1/+1 on the long axis, set at the call site) and are
+    /// unaffected by it, matching that they were already correct on-screen
+    /// under the old convention.
+    /// </para>
+    /// </summary>
+    private static (string Axis, int Sign, int WarningFlags, string? Warning) EvaluateFresh(
+        double dx, double dy, Transform assemblyFrame)
+    {
+        var axis = dx <= dy ? "X" : "Y";
+        const int sign = 1; // FRONT = positive direction along the short axis.
+
+        var flags = AssemblyOrientationStorage.WarnNone;
+        var warnings = new List<string>();
+
+        var shortSpan = Math.Min(dx, dy);
+        var longSpan = Math.Max(dx, dy);
+        var gap = longSpan - shortSpan;
+
+        // Angular margin to an actual axis flip: to first order, projecting a
+        // world-aligned box rotated by a small angle theta (radians) off
+        // exact 90 deg over-estimates the SHORT axis's extent by roughly
+        // longSpan * theta (the OTHER horizontal extent, never DZ -- a
+        // rotation about Z does not touch DZ at all). For that over-estimate
+        // to flip which axis looks shorter, it would need to approach the
+        // gap between them, so theta_flip ~= gap / longSpan is a conservative
+        // (the true crossover, from the exact |cos-sin| formula, is always at
+        // 45 deg regardless of the gap; this linear estimate is the smaller,
+        // safer bound). Warning at AngularSafetyFraction of that margin
+        // replaces a fixed angular constant with one derived per assembly.
+        var flipMarginRadians = longSpan > 1e-9 ? gap / longSpan : 0.0;
+        var warnAngleRadians = flipMarginRadians * AngularSafetyFraction;
+        var actualAngleRadians = MaxAngularDeviationRadians(assemblyFrame);
+
+        if (actualAngleRadians > warnAngleRadians)
+        {
+            flags |= AssemblyOrientationStorage.WarnNonOrthogonal;
+            warnings.Add(
+                $"assembly rotation is {actualAngleRadians * 180.0 / Math.PI:0.####} deg off " +
+                $"the nearest signed axis -- more than {AngularSafetyFraction * 100:0}% of the " +
+                $"~{flipMarginRadians * 180.0 / Math.PI:0.##} deg margin this assembly's own " +
+                "DX/DY gap allows before rotation error alone could flip which axis looks " +
+                "shorter, so the chosen Front/Back axis may be wrong.");
+        }
+
+        if (shortSpan > 1e-9 && longSpan / shortSpan < NearTieRatioThreshold)
+        {
+            flags |= AssemblyOrientationStorage.WarnNearTie;
+            warnings.Add(
+                $"footprint is nearly square (DX={UnitUtils.ConvertFromInternalUnits(dx, UnitTypeId.Millimeters):0} mm, " +
+                $"DY={UnitUtils.ConvertFromInternalUnits(dy, UnitTypeId.Millimeters):0} mm, ratio " +
+                $"{longSpan / shortSpan:0.00} < {NearTieRatioThreshold:0.00}) -- the Front/Back axis " +
+                "choice is unstable; a small geometry edit could flip it on a future run.");
+        }
+
+        return (axis, sign, flags, warnings.Count == 0 ? null : string.Join(" ", warnings));
+    }
+
+    /// <summary>
+    /// Extents of the world-aligned bounding box's 8 corners projected into
+    /// the assembly's own axes -- the same technique ViewUtils.CreateOrtho
+    /// Section's LocalExtents uses for a single view's crop. Exact when
+    /// assemblyFrame's rotation is a multiple of 90 deg; an over-estimate
+    /// otherwise, growing with MaxAngularDeviationRadians below -- see the
+    /// class-level design-plan discussion on why a tight, geometry-based
+    /// footprint is deferred rather than built now.
+    /// </summary>
+    private static (double Dx, double Dy, double Dz) LocalExtents(
+        BoundingBoxXYZ worldBbox, Transform assemblyFrame)
+    {
+        var inverse = assemblyFrame.Inverse;
+        double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue;
+        double maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
+
+        for (var i = 0; i < 8; i++)
+        {
+            var corner = new XYZ(
+                (i & 1) == 0 ? worldBbox.Min.X : worldBbox.Max.X,
+                (i & 2) == 0 ? worldBbox.Min.Y : worldBbox.Max.Y,
+                (i & 4) == 0 ? worldBbox.Min.Z : worldBbox.Max.Z);
+            var p = inverse.OfPoint(corner);
+            minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X);
+            minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
+            minZ = Math.Min(minZ, p.Z); maxZ = Math.Max(maxZ, p.Z);
+        }
+
+        return (maxX - minX, maxY - minY, maxZ - minZ);
+    }
+
+    /// <summary>
+    /// Angle, in radians, of whichever of assemblyFrame's basis vectors sits
+    /// furthest from its nearest signed world axis -- replaces a fixed
+    /// componentwise tolerance (previously 1e-6, an arbitrary cutoff with no
+    /// stated relationship to what the resulting projection error could
+    /// actually do) with a real angle EvaluateFresh can compare against a
+    /// margin derived from this specific assembly's own DX/DY gap.
+    /// </summary>
+    private static double MaxAngularDeviationRadians(Transform assemblyFrame)
+    {
+        double AngleOffNearestAxis(XYZ v)
+        {
+            var n = v.Normalize();
+            var nearest = new[] { XYZ.BasisX, XYZ.BasisY, XYZ.BasisZ }
+                .Select(axis => n.DotProduct(axis) >= 0 ? axis : axis.Negate())
+                .OrderByDescending(axis => n.DotProduct(axis))
+                .First();
+            return Math.Acos(Math.Clamp(n.DotProduct(nearest), -1.0, 1.0));
+        }
+
+        return new[]
+        {
+            AngleOffNearestAxis(assemblyFrame.BasisX),
+            AngleOffNearestAxis(assemblyFrame.BasisY),
+            AngleOffNearestAxis(assemblyFrame.BasisZ),
+        }.Max();
     }
 
     private static void TryApplyTemplate(View view, ElementId templateId)
@@ -3537,12 +4129,12 @@ internal sealed record AssemblyDrawingProfile(
     string TemplateSettingsFile,
 
     /// <summary>
-    /// Build the six 2D views against the assembly's own coordinate system
-    /// (AssemblyInstance.GetTransform()) rather than the world axes, so they
-    /// follow a rotated Assembly Origin. Korea opts in; every other command
-    /// leaves this false and keeps world-aligned views.
+    /// "Korea" or "Vendor" -- scopes the AssemblyOrientationStorage stamp
+    /// (Front/Back axis, per-view key) to this command, so Korea's and
+    /// Vendor's packages for the same assembly are stamped and honored
+    /// independently rather than sharing one axis choice.
     /// </summary>
-    bool UseAssemblyCoordinateSystemFor2DViews = false);
+    string PackageType);
 
 /// <summary>
 /// Drives the whole run: templates, assemblies, title block, settings, the
@@ -3611,6 +4203,7 @@ internal static class AssemblyDrawingRunner
             var sheetNames = BuildSheetNameRegistry(doc);
 
             var results = new List<(string Name, string? Error)>();
+            var orientationWarnings = new List<string>();
 
             using var tx = new Transaction(doc, profile.TransactionName);
             tx.Start();
@@ -3625,12 +4218,15 @@ internal static class AssemblyDrawingRunner
                     var ctx = AssemblyDrawingBuilder.Build(
                         doc, assembly, setup,
                         setup.Titleblock!.Id, sectionBoxPadding, viewNames, sheetNames,
-                        profile.UseAssemblyCoordinateSystemFor2DViews);
+                        profile.PackageType);
 
                     layout.PlaceViews(ctx);
 
                     sub.Commit();
                     results.Add((assembly.Name, null));
+
+                    if (ctx.OrientationWarning is { } warning)
+                        orientationWarnings.Add($"{assembly.Name}: {warning}");
                 }
                 catch (Exception ex)
                 {
@@ -3640,6 +4236,30 @@ internal static class AssemblyDrawingRunner
             }
 
             tx.Commit();
+
+            // Shown ahead of the main report, not folded into it: the shared
+            // ReportRow/StatusPill shape is ok/fail only, and these assemblies
+            // succeeded -- this is a non-fatal note about HOW the Front/Back
+            // axis was chosen, not a failure.
+            if (orientationWarnings.Count > 0)
+            {
+                // Deliberately neutral about WHY: DeriveFrontAxis's message can
+                // now come from either the fresh-compute path or a stamped
+                // read finding a flip/drift condition (see EvaluateFresh /
+                // DeriveFrontAxis) -- an earlier version of this preamble
+                // hardcoded "computed fresh (no existing stamp)" for every
+                // case, which was simply false whenever the message actually
+                // came from an existing stamp. Each per-assembly line already
+                // states its own origin plainly (a fresh-path line describes
+                // the geometry directly; a stamped-path line says "stamp" or
+                // "drifted" explicitly), so the wrapper does not need to and
+                // must not guess at a single shared origin for all of them.
+                AvControls.ShowAlert(profile.AlertTitle,
+                    $"Front/Back axis needs a look for {orientationWarnings.Count} " +
+                    "assembly(ies):\n\n" +
+                    string.Join("\n\n", orientationWarnings),
+                    AlertSeverity.Warning);
+            }
 
             Reporting.ShowResult(profile.ReportTitle, results, uiApp.MainWindowHandle);
             return Result.Succeeded;
@@ -4328,7 +4948,8 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
         "Vendor Sheets - Batch",
         "Vendor Drawing Automation",
         uiApp => Descriptor.CreateLayoutFrom(uiApp),
-        TemplateSettingsFile: "vendor-drawings.json");
+        TemplateSettingsFile: "vendor-drawings.json",
+        PackageType: "Vendor");
 
     public Result Execute(ExternalCommandData commandData, ref string message,
         ElementSet elements)
@@ -4367,7 +4988,7 @@ public sealed class Cmd_KoreaDrawings : IExternalCommand
         "Korea Drawing Automation",
         uiApp => Descriptor.CreateLayoutFrom(uiApp),
         TemplateSettingsFile: "korea-drawings.json",
-        UseAssemblyCoordinateSystemFor2DViews: true);
+        PackageType: "Korea");
 
     public Result Execute(ExternalCommandData commandData, ref string message,
         ElementSet elements)

@@ -5,9 +5,11 @@
 //          viewport: ids, the view it shows, that view's name / title on
 //          sheet / orientation, the viewport's position, rotation and label,
 //          and every Extensible Storage entity on the sheet, viewport and
-//          view. Also evaluates the two candidate identification strategies
-//          (name suffix, view direction) so their answers can be compared
-//          against a real package.
+//          view (including AssemblyOrientationStorage's stamp once packages
+//          are regenerated under it). Also prints a per-assembly geometry
+//          report -- extents/ratio, centroid offset, members ranked along
+//          each local axis -- so a Front/Back or Left/Right sign check has an
+//          identifiable real element to look for instead of an impression.
 // Key logic: Read-only against the model. The one write is an optional
 //            probe that attaches a throwaway entity to a viewport and its
 //            view inside a transaction that is always rolled back, to prove
@@ -27,6 +29,9 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.ExtensibleStorage;
 using Autodesk.Revit.UI;
 using AVES.Core;
+// Production's real orientation stamp -- read here, not reimplemented, so the
+// diagnostic reports what the builder actually did, not a guess at it.
+using AVES.Cmds_PullDownCreateSheets;
 using Grid = System.Windows.Controls.Grid;
 using TextBox = System.Windows.Controls.TextBox;
 using Button = System.Windows.Controls.Button;
@@ -71,6 +76,24 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
     // perfectly consistent pattern across all three real samples so far. The raw
     // local-frame vector is now also printed for every view, so this table is a
     // convenience hint, not the ground truth.
+    //
+    // IMPORTANT, updated once production changed: this whole table describes the
+    // OLD fixed SideLookDirections/CreateUpwardSection convention, which no longer
+    // exists in production -- FRONT/BACK/LEFT/RIGHT are now derived per assembly
+    // (AssemblyDrawingBuilder.DeriveFrontAxis), not fixed to X/Y. ClassifyByDirection
+    // therefore does NOT match a view against ITS OWN key's slot; it reports
+    // whichever table key's vector happens to equal that view's reported direction,
+    // and for a horizontal, current production's four directions are always some
+    // permutation of the same four unit vectors this table also uses -- so the
+    // "Direction match" label a view gets is frequently a DIFFERENT key than the
+    // view's own name (e.g. a FRONT view reporting "KEY RIGHT" is expected, not a
+    // fault), and the per-sheet "resolved N/6" tally still means what it always
+    // meant (does every one of the 6 table slots get claimed by exactly one view).
+    // BOTTOM was fixed to (0,0,-1) to match CreateUpwardSection's corrected sign
+    // (Cmds_PullDown2.cs:396, was (0,0,-1) declared/colliding with TOP, now
+    // (0,0,1) declared -> (0,0,-1) reported) -- before this fix every current-
+    // builder package read "missing BOTTOM" here, which was this stale entry,
+    // not a regression in production.
     private static readonly (string Key, XYZ Dir)[] ExpectedViewDirections =
     [
         ("FRONT", new XYZ(1, 0, 0)),
@@ -78,10 +101,18 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
         ("RIGHT", new XYZ(0, 1, 0)),
         ("LEFT", new XYZ(0, -1, 0)),
         ("TOP", new XYZ(0, 0, 1)),
-        ("BOTTOM", new XYZ(0, 0, 1)), // == TOP today; that collision IS the bug.
+        ("BOTTOM", new XYZ(0, 0, -1)),
     ];
 
     private static readonly Regex CollisionSuffix = new(@" \(\d+\)$", RegexOptions.Compiled);
+
+    // Maps a sheet name's <PREFIX>-ASM_ prefix to the PackageType string
+    // AssemblyOrientationStorage.Stamp actually writes (Cmds_PullDown2.cs, the
+    // two AssemblyDrawingProfile definitions) -- "K"/"V" is a sheet-naming
+    // convention, "Korea"/"Vendor" is the stamped data. Extend if MT ever gets
+    // a real -ASM_ sheet name and a PackageType of its own.
+    private static readonly Dictionary<string, string> PackageTypeByPrefix =
+        new() { ["K"] = "Korea", ["V"] = "Vendor" };
 
     /// <summary>One resolved view, kept for the cross-package comparison that runs
     /// after every selected sheet has been dumped.</summary>
@@ -135,8 +166,13 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
         var sb = new StringBuilder();
         sb.AppendLine($"AVES Vendor viewport diagnostic -- {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
         sb.AppendLine($"Document: {doc.Title}");
-        sb.AppendLine("Legend -- DeclaredBasisZ (what the builder asks Revit to build) vs " +
-                      "ExpectedViewDirections (what View.ViewDirection then reports):");
+        sb.AppendLine("Legend -- NOTE: production no longer has a fixed direction table " +
+                      "(AssemblyDrawingBuilder now derives Front/Back per assembly from its " +
+                      "own geometry -- see the per-assembly GEOMETRY REPORT below). The table " +
+                      "below is kept only to classify views from OLDER, fixed-table packages " +
+                      "already sampled in this investigation. DeclaredBasisZ = what a fixed-" +
+                      "table build asked Revit for; ExpectedViewDirections = what " +
+                      "View.ViewDirection then reported for that ask:");
         foreach (var (key, dir) in DeclaredBasisZ)
         {
             var expected = ExpectedViewDirections.First(e => e.Key == key).Dir;
@@ -201,16 +237,24 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
 
             if (assemblyExtentsPrinted.Add(assembly.Id))
             {
-                var (dx, dy, dz) = LocalExtentsOfAssembly(doc, assembly);
-                var longAxis = dx >= dy ? "X" : "Y";
-                sb.AppendLine($"    Bounding-box extents in ASSEMBLY axes: " +
-                              $"DX={N(dx)}  DY={N(dy)}  DZ={N(dz)}  " +
-                              $"(longer horizontal span: local {longAxis})");
-                sb.AppendLine("    NOTE: computed by projecting the WORLD-aligned bounding " +
-                              "box's 8 corners into assembly axes (the same technique " +
-                              "CreateOrthoSection uses) -- exact at rotations that are a " +
-                              "multiple of 90 deg, an OVER-estimate otherwise. Good enough " +
-                              "to tell which axis is longer; not a tight footprint.");
+                // Full round-trip precision (F()/N() elsewhere round to 4
+                // decimals, which cannot show a deviation on the scale
+                // IsAxisAlignedRotation's 1e-6 tolerance actually cares about),
+                // plus the angle each basis vector sits off its nearest signed
+                // world axis, in degrees -- directly answers "is this a real
+                // tiny tilt or a comparison bug" without hand arithmetic on
+                // raw components.
+                sb.AppendLine($"    Transform (full precision)  X={FullPrecision(t.BasisX)}");
+                sb.AppendLine($"                                 Y={FullPrecision(t.BasisY)}");
+                sb.AppendLine($"                                 Z={FullPrecision(t.BasisZ)}");
+                sb.AppendLine($"    Angular deviation from nearest signed axis: " +
+                              $"X={AngleOffNearestAxisDeg(t.BasisX):0.000000} deg  " +
+                              $"Y={AngleOffNearestAxisDeg(t.BasisY):0.000000} deg  " +
+                              $"Z={AngleOffNearestAxisDeg(t.BasisZ):0.000000} deg  " +
+                              $"(IsAxisAlignedRotation's current tolerance: componentwise " +
+                              $"1e-6, roughly equivalent to ~0.0001 deg for a single-axis tilt)");
+
+                PrintAssemblyGeometryReport(doc, assembly, packagePrefix, sb);
             }
         }
 
@@ -328,38 +372,42 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
     }
 
     /// <summary>
-    /// Extents of the assembly's world-aligned bounding box, projected into its own
-    /// axes -- same corner-projection technique as ViewUtils.CreateOrthoSection's
-    /// LocalExtents (Cmds_PullDown2.cs:549-567), duplicated here read-only rather
-    /// than reused, since that helper is private to the production file. Exact at
-    /// rotations that are a multiple of 90 deg; an over-estimate otherwise.
+    /// One member element's centre, converted into the assembly's own axes.
+    private readonly record struct MemberSample(Element El, XYZ Local);
+
+    /// <summary>
+    /// Per-assembly geometry report for the Front/Back and Left/Right sign
+    /// check: local extents and long/short ratio (Amendment 3, DX/DY/DZ +
+    /// ratio vs. the 1.15 warning threshold), the centroid's signed offset
+    /// from the bounding-box centre along each local axis, member elements
+    /// ranked along each local axis with enough identity to find them in the
+    /// model, today's prediction (the same rule AssemblyDrawingBuilder.
+    /// DeriveFrontAxis uses), and whatever is ACTUALLY stamped -- read through
+    /// the real production AssemblyOrientationStorage.TryFindExisting, not
+    /// reimplemented here.
     /// </summary>
-    private static (double Dx, double Dy, double Dz) LocalExtentsOfAssembly(
-        Document doc, AssemblyInstance assembly)
+    private static void PrintAssemblyGeometryReport(
+        Document doc, AssemblyInstance assembly, string packagePrefix, StringBuilder sb)
     {
-        BoundingBoxXYZ? world = null;
-        foreach (var id in assembly.GetMemberIds().Append(assembly.Id))
-        {
-            if (doc.GetElement(id) is not { } el) continue;
-            BoundingBoxXYZ? bb;
-            try { bb = el.get_BoundingBox(null); } catch { bb = null; }
-            if (bb is null) continue;
+        var assemblyFrame = assembly.GetTransform();
+        var inverse = assemblyFrame.Inverse;
 
-            world = world is null ? bb : new BoundingBoxXYZ
-            {
-                Min = new XYZ(Math.Min(world.Min.X, bb.Min.X), Math.Min(world.Min.Y, bb.Min.Y),
-                              Math.Min(world.Min.Z, bb.Min.Z)),
-                Max = new XYZ(Math.Max(world.Max.X, bb.Max.X), Math.Max(world.Max.Y, bb.Max.Y),
-                              Math.Max(world.Max.Z, bb.Max.Z)),
-            };
-        }
+        var memberElements = assembly.GetMemberIds()
+            .Select(id => doc.GetElement(id))
+            .Where(e => e is not null)
+            .Select(e => e!)
+            .ToList();
 
-        if (world is null) return (0, 0, 0);
+        // World-aligned bounding box (assembly + every member), same source
+        // GeometryUtils.GetAssemblyBoundingBox uses in production -- projected
+        // into assembly axes for the local extents. Exact at rotations that are
+        // a multiple of 90 deg (every sample so far); an OVER-ESTIMATE
+        // otherwise -- see AssemblyDrawingBuilder.IsAxisAlignedRotation, which
+        // is exactly what the non-orthogonal-rotation warning checks for.
+        var world = WorldBoundingBoxOfAssembly(doc, assembly, memberElements);
 
-        var inverse = assembly.GetTransform().Inverse;
         double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue;
         double maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
-
         for (var i = 0; i < 8; i++)
         {
             var corner = new XYZ(
@@ -371,9 +419,235 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
             minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
             minZ = Math.Min(minZ, p.Z); maxZ = Math.Max(maxZ, p.Z);
         }
+        var localCenter = new XYZ((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
 
-        return (maxX - minX, maxY - minY, maxZ - minZ);
+        var members = new List<MemberSample>();
+        foreach (var el in memberElements)
+        {
+            BoundingBoxXYZ? bb;
+            try { bb = el.get_BoundingBox(null); } catch { bb = null; }
+            if (bb is null) continue;
+            members.Add(new MemberSample(el, inverse.OfPoint((bb.Min + bb.Max) / 2.0)));
+        }
+
+        // Unweighted centroid of member element centres, in local axes -- a
+        // cheap stand-in for a true volumetric centroid (no geometry
+        // extraction, just each member's own bounding-box centre), good
+        // enough to say which end of the assembly carries more stuff.
+        var centroid = members.Count == 0
+            ? localCenter
+            : new XYZ(members.Average(m => m.Local.X), members.Average(m => m.Local.Y),
+                      members.Average(m => m.Local.Z));
+
+        var dx = maxX - minX;
+        var dy = maxY - minY;
+        var dz = maxZ - minZ;
+        var shortSpan = Math.Min(dx, dy);
+        var longSpan = Math.Max(dx, dy);
+        var ratio = shortSpan > 1e-9 ? longSpan / shortSpan : double.PositiveInfinity;
+
+        // Same rule as AssemblyDrawingBuilder.DeriveFrontAxis's fresh-compute
+        // branch: short axis, FRONT negative.
+        var predictedAxis = dx <= dy ? "X" : "Y";
+        const int predictedSign = -1;
+        var sideAxis = predictedAxis == "X" ? "Y" : "X";
+
+        sb.AppendLine($"  GEOMETRY REPORT for {assembly.Name} (all values in ASSEMBLY axes)");
+        sb.AppendLine($"    DX={ToMm(dx):0} mm  DY={ToMm(dy):0} mm  DZ={ToMm(dz):0} mm  " +
+                      $"long/short ratio={ratio:0.00}  (warns below 1.15)");
+        sb.AppendLine($"    Centroid offset from bounding-box centre: " +
+                      $"local X={SignedMm(centroid.X - localCenter.X)} mm, " +
+                      $"local Y={SignedMm(centroid.Y - localCenter.Y)} mm, " +
+                      $"local Z={SignedMm(centroid.Z - localCenter.Z)} mm");
+        sb.AppendLine($"    PREDICTED by today's rule: Front/Back on local {predictedAxis} " +
+                      $"(the short axis); FRONT = {AxisLabel(predictedAxis, predictedSign)}, " +
+                      $"BACK = {AxisLabel(predictedAxis, -predictedSign)}; RIGHT = " +
+                      $"{AxisLabel(sideAxis, -1)}, LEFT = {AxisLabel(sideAxis, 1)}");
+
+        var packageType = PackageTypeByPrefix.GetValueOrDefault(packagePrefix, packagePrefix);
+        var stamped = AssemblyOrientationStorage.TryFindExisting(doc, assembly.UniqueId, packageType);
+        if (stamped is { } s)
+        {
+            var restated = AssemblyOrientationStorage.DescribeStampedWarning(
+                s.WarningFlags, s.FrontAxis, s.ExtentDx, s.ExtentDy, dx, dy);
+            sb.AppendLine($"    ACTUAL stamp for package \"{packageType}\": axis={s.FrontAxis}  " +
+                          $"sign={s.FrontSign}  warningFlags={s.WarningFlags}  " +
+                          $"stampedDX={ToMm(s.ExtentDx):0} mm  stampedDY={ToMm(s.ExtentDy):0} mm  " +
+                          $"stampedDZ={ToMm(s.ExtentDz):0} mm " +
+                          (restated is null ? "(clean)" : $"-- {restated}"));
+        }
+        else
+        {
+            sb.AppendLine($"    ACTUAL stamp for package \"{packageType}\": none yet " +
+                          "(not generated under this schema, or not generated at all).");
+        }
+
+        var sortedByX = members.OrderBy(m => m.Local.X).ToList();
+        var sortedByY = members.OrderBy(m => m.Local.Y).ToList();
+
+        if (members.Count > 0)
+        {
+            // Explicit per-axis accessor + range, keyed by axis name -- avoids
+            // any risk of picking the wrong sorted list/range pair by mixing up
+            // which one is "this axis" vs. "the other axis" for FRONT/BACK
+            // (predictedAxis) vs. RIGHT/LEFT (sideAxis).
+            Func<MemberSample, double> AxisValue(string axis) => axis == "X" ? m => m.Local.X : m => m.Local.Y;
+            List<MemberSample> SortedBy(string axis) => axis == "X" ? sortedByX : sortedByY;
+            (double Min, double Max) RangeOf(string axis)
+            {
+                var sorted = SortedBy(axis);
+                var v = AxisValue(axis);
+                return (v(sorted[0]), v(sorted[^1]));
+            }
+
+            var front = PickAxisWitness(SortedBy(predictedAxis), wantNegativeEnd: true,
+                AxisValue(sideAxis), RangeOf(sideAxis));
+            var back = PickAxisWitness(SortedBy(predictedAxis), wantNegativeEnd: false,
+                AxisValue(sideAxis), RangeOf(sideAxis));
+            var right = PickAxisWitness(SortedBy(sideAxis), wantNegativeEnd: true,
+                AxisValue(predictedAxis), RangeOf(predictedAxis));
+            var left = PickAxisWitness(SortedBy(sideAxis), wantNegativeEnd: false,
+                AxisValue(predictedAxis), RangeOf(predictedAxis));
+
+            sb.AppendLine("    WHAT TO CHECK -- each witness is extreme on ITS OWN predicted axis " +
+                          "AND near the centre of the OTHER axis, so finding it on a sheet is " +
+                          "evidence for that ONE check, not both at once (a corner member that is " +
+                          "extreme on both axes proves nothing, since it would show up on either " +
+                          "sheet regardless of which sign is right):");
+            AppendWitnessLine(sb, "FRONT", "BACK", "local " + predictedAxis + " negative", front);
+            AppendWitnessLine(sb, "BACK", "FRONT", "local " + predictedAxis + " positive", back);
+            AppendWitnessLine(sb, "RIGHT", "LEFT", "local " + sideAxis + " negative", right);
+            AppendWitnessLine(sb, "LEFT", "RIGHT", "local " + sideAxis + " positive", left);
+        }
+        else
+        {
+            sb.AppendLine("    WHAT TO CHECK: no member elements resolved -- cannot point at a " +
+                          "specific element. Compare the FRONT/BACK and LEFT/RIGHT sheets by eye " +
+                          "against the model instead.");
+        }
+
+        sb.AppendLine($"    Members ranked along local X, near->far (n={members.Count}):");
+        PrintRankedMembers(sortedByX, m => m.Local.X, sb);
+        sb.AppendLine($"    Members ranked along local Y, near->far (n={members.Count}):");
+        PrintRankedMembers(sortedByY, m => m.Local.Y, sb);
     }
+
+    /// <summary>
+    /// Among the members nearest the wanted end of an axis-sorted list, picks
+    /// the one closest to the CENTRE of the other axis -- so it is a witness
+    /// for that one axis alone, not a corner member that would show up on
+    /// either sheet regardless of which sign is right. "Close to centre" is
+    /// the central 50% of the other axis's own range (i.e. not itself sitting
+    /// in the outer quarter at either end); candidates are drawn from the 8
+    /// nearest members to the wanted end, or the whole list if smaller.
+    /// </summary>
+    private static (MemberSample? Witness, bool NoIndependentWitness) PickAxisWitness(
+        List<MemberSample> sortedByThisAxis, bool wantNegativeEnd,
+        Func<MemberSample, double> otherAxisValue, (double Min, double Max) otherAxisRange)
+    {
+        if (sortedByThisAxis.Count == 0) return (null, true);
+
+        var poolSize = Math.Min(8, sortedByThisAxis.Count);
+        var candidates = wantNegativeEnd
+            ? sortedByThisAxis.Take(poolSize)
+            : sortedByThisAxis.TakeLast(poolSize);
+
+        var otherCentre = (otherAxisRange.Min + otherAxisRange.Max) / 2.0;
+        var otherHalfRange = (otherAxisRange.Max - otherAxisRange.Min) / 2.0;
+
+        var ranked = candidates
+            .Select(m => (Member: m, OtherOffset: Math.Abs(otherAxisValue(m) - otherCentre)))
+            .OrderBy(x => x.OtherOffset)
+            .ToList();
+
+        var best = ranked[0];
+        // otherHalfRange near zero means the OTHER axis barely varies across
+        // the assembly at all -- nothing can be "off-centre" on it, so any
+        // candidate qualifies.
+        var isIndependent = otherHalfRange < 1e-6 || best.OtherOffset <= otherHalfRange * 0.5;
+
+        return (best.Member, !isIndependent);
+    }
+
+    private static void AppendWitnessLine(
+        StringBuilder sb, string thisKey, string otherKey, string predictedDirection,
+        (MemberSample? Witness, bool NoIndependentWitness) result)
+    {
+        if (result.Witness is null)
+        {
+            sb.AppendLine($"      {thisKey}: no member elements resolved -- cannot name a witness.");
+            return;
+        }
+
+        if (result.NoIndependentWitness)
+        {
+            sb.AppendLine($"      {thisKey} ({predictedDirection}): NO INDEPENDENT WITNESS -- every " +
+                          $"member near this end is also near an extreme of the other axis " +
+                          $"(closest available: {DescribeMember(result.Witness.Value)}). This check " +
+                          "cannot be confirmed by element id alone for this assembly; compare the " +
+                          "sheets by eye against the model instead.");
+            return;
+        }
+
+        sb.AppendLine($"      {thisKey} ({predictedDirection}): {DescribeMember(result.Witness.Value)} -- " +
+                      $"if the sign is RIGHT, this is what you see on the {thisKey} sheet; if " +
+                      $"INVERTED, it shows up on {otherKey} instead.");
+    }
+
+    /// <summary>Up to 6 members from each end of an axis-sorted list; the
+    /// full list if it is short enough that "each end" would overlap.</summary>
+    private static void PrintRankedMembers(
+        List<MemberSample> sorted, Func<MemberSample, double> axisValue, StringBuilder sb)
+    {
+        if (sorted.Count == 0) { sb.AppendLine("      (no members resolved)"); return; }
+
+        var shown = sorted.Count <= 12 ? sorted : sorted.Take(6).Concat(sorted.TakeLast(6)).ToList();
+        for (var i = 0; i < shown.Count; i++)
+        {
+            if (sorted.Count > 12 && i == 6)
+                sb.AppendLine($"      ... {sorted.Count - 12} member(s) omitted ...");
+            sb.AppendLine($"      {axisValue(shown[i]),9:0.00} ft   {DescribeMember(shown[i])}");
+        }
+    }
+
+    private static string DescribeMember(MemberSample m)
+    {
+        var el = m.El;
+        var typeEl = el.Document.GetElement(el.GetTypeId());
+        var familyType = typeEl is FamilySymbol fs ? $"{fs.FamilyName} : {typeEl.Name}" : typeEl?.Name;
+        return $"{el.Category?.Name ?? "<no category>"} -- {familyType ?? "<no type>"}  Id={el.Id}";
+    }
+
+    private static BoundingBoxXYZ WorldBoundingBoxOfAssembly(
+        Document doc, AssemblyInstance assembly, List<Element> members)
+    {
+        BoundingBoxXYZ? TryBBox(Element el) { try { return el.get_BoundingBox(null); } catch { return null; } }
+        BoundingBoxXYZ? Union(BoundingBoxXYZ? a, BoundingBoxXYZ? b)
+        {
+            if (a is null) return b;
+            if (b is null) return a;
+            return new BoundingBoxXYZ
+            {
+                Min = new XYZ(Math.Min(a.Min.X, b.Min.X), Math.Min(a.Min.Y, b.Min.Y), Math.Min(a.Min.Z, b.Min.Z)),
+                Max = new XYZ(Math.Max(a.Max.X, b.Max.X), Math.Max(a.Max.Y, b.Max.Y), Math.Max(a.Max.Z, b.Max.Z)),
+            };
+        }
+
+        var world = TryBBox(assembly);
+        foreach (var el in members) world = Union(world, TryBBox(el));
+        return world ?? new BoundingBoxXYZ { Min = XYZ.Zero, Max = XYZ.Zero };
+    }
+
+    private static double ToMm(double ft) => UnitUtils.ConvertFromInternalUnits(ft, UnitTypeId.Millimeters);
+
+    private static string SignedMm(double ft)
+    {
+        var mm = ToMm(ft);
+        return mm >= 0 ? $"+{mm:0}" : $"{mm:0}";
+    }
+
+    private static string AxisLabel(string axis, int sign) =>
+        $"{(sign < 0 ? "negative" : "positive")} local {axis}";
 
     /// <summary>
     /// For every assembly that has resolved views from more than one package
@@ -706,6 +980,28 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
     }
 
     private static string F(XYZ? p) => p is null ? "<null>" : $"({N(p.X)}, {N(p.Y)}, {N(p.Z)})";
+
+    /// <summary>Round-trip ("R") precision, for telling a genuine tiny tilt
+    /// apart from a comparison bug -- F()/N()'s 4-decimal rounding cannot show
+    /// a deviation anywhere near IsAxisAlignedRotation's 1e-6 tolerance.</summary>
+    private static string FullPrecision(XYZ p) =>
+        $"({p.X.ToString("R", CultureInfo.InvariantCulture)}, " +
+        $"{p.Y.ToString("R", CultureInfo.InvariantCulture)}, " +
+        $"{p.Z.ToString("R", CultureInfo.InvariantCulture)})";
+
+    /// <summary>Angle, in degrees, between v and whichever signed world axis it
+    /// sits closest to (largest |component|) -- e.g. for v close to (0,1,0),
+    /// how far it actually tilts away from exactly +Y.</summary>
+    private static double AngleOffNearestAxisDeg(XYZ v)
+    {
+        var normalized = v.Normalize();
+        var nearest = new[] { XYZ.BasisX, XYZ.BasisY, XYZ.BasisZ }
+            .Select(axis => normalized.DotProduct(axis) >= 0 ? axis : axis.Negate())
+            .OrderByDescending(axis => normalized.DotProduct(axis))
+            .First();
+        var cosAngle = Math.Clamp(normalized.DotProduct(nearest), -1.0, 1.0);
+        return Math.Acos(cosAngle) * 180.0 / Math.PI;
+    }
 
     private static string N(double v) => v.ToString("0.####", CultureInfo.InvariantCulture);
 
