@@ -128,31 +128,91 @@ namespace AVES.Cmds_Button11
         }
 
         /// <summary>
-        /// Every view generated to document an assembly (3D, front/section,
-        /// plan, sheet, etc.) across the whole project, used to populate the
-        /// view picker. There is no direct "get all assembly views" API
-        /// (AssemblyViewUtils only exposes creation methods), so this scans
-        /// every View and filters by IsAssemblyView + a valid
-        /// AssociatedAssemblyInstanceId -- a View-specific property pair,
-        /// distinct from the base Element.AssemblyInstanceId (which means
-        /// "this element is a member of assembly X", not "this view documents
-        /// assembly X").
+        /// View types that can host model elements and therefore support a
+        /// view-scoped FilteredElementCollector. Deliberately an allow-list:
+        /// schedules, legends, sheets and the various internal/report view
+        /// types either carry no model geometry or make
+        /// FilteredElementCollector(doc, viewId) throw, so anything not named
+        /// here is out. Callouts need no entry of their own -- a callout
+        /// reports the ViewType of the view it was cut from.
         /// </summary>
-        public static List<View> GetAllAssemblyViews(Document doc)
+        private static readonly HashSet<ViewType> ScannableViewTypes = new HashSet<ViewType>
+        {
+            ViewType.FloorPlan,
+            ViewType.CeilingPlan,
+            ViewType.EngineeringPlan,
+            ViewType.Section,
+            ViewType.Elevation,
+            ViewType.Detail,
+            ViewType.ThreeD,
+        };
+
+        /// <summary>
+        /// Every view the scanner can inspect: printable model views of a
+        /// supported type that are actually placed on a sheet, templates
+        /// excluded. Assembly views are included on the same terms as any other
+        /// view -- they report the ViewType of the view they are (Section,
+        /// FloorPlan, ThreeD ...), so no assembly-specific test is needed to
+        /// keep them.
+        /// <para>
+        /// Placement comes from View.GetPlacementOnSheetStatus() (Revit 2023+),
+        /// a direct relationship rather than a scan of Viewport elements, so no
+        /// per-view sheet search is involved. PartiallyPlaced counts as placed:
+        /// it exists for segmented schedules, which this allow-list already
+        /// excludes, but accepting it keeps the predicate correct if the
+        /// allow-list ever widens.
+        /// </para>
+        /// <para>
+        /// The scan itself is unchanged and still assembly-centric: a view with
+        /// no assembly members visible simply produces no rows.
+        /// </para>
+        /// </summary>
+        public static List<View> GetScannableViews(Document doc)
         {
             return new FilteredElementCollector(doc)
                 .OfClass(typeof(View))
                 .Cast<View>()
-                .Where(v => !v.IsTemplate
-                    && v.IsAssemblyView
-                    && v.AssociatedAssemblyInstanceId != ElementId.InvalidElementId
-                    // Part List views (AssemblyViewUtils.CreatePartList -- a
-                    // ViewSchedule, same underlying type as Material Takeoff/
-                    // Single Category Schedule views, so distinguishing by
-                    // name rather than type) don't carry taggable geometry and
-                    // aren't a meaningful scope for this tool.
-                    && v.Name.IndexOf("Part List", StringComparison.OrdinalIgnoreCase) < 0)
+                .Where(v =>
+                {
+                    var placement = v.GetPlacementOnSheetStatus();
+
+                    return !v.IsTemplate
+                        && v.CanBePrinted
+                        && ScannableViewTypes.Contains(v.ViewType)
+                        && (placement == ViewPlacementOnSheetStatus.CompletelyPlaced
+                            || placement == ViewPlacementOnSheetStatus.PartiallyPlaced);
+                })
                 .ToList();
+        }
+
+        /// <summary>
+        /// The views whose tags count as "tagging" for the given view.
+        /// <para>
+        /// Dependent views share their view-specific elements with the primary
+        /// and with each other, but a tag's OwnerViewId is the single view it
+        /// was placed in. Scoping a dependent view to itself alone would
+        /// therefore report every family type as untagged whenever the tags
+        /// were placed in the primary. The scope is widened to the whole
+        /// dependency family in both directions: a dependent picks up its
+        /// primary and its siblings, a primary picks up its dependents.
+        /// </para>
+        /// </summary>
+        public static HashSet<ElementId> GetTagScopeForView(Document doc, View view)
+        {
+            var scope = new HashSet<ElementId> { view.Id };
+
+            var primaryId = view.GetPrimaryViewId();
+            var primary = primaryId != ElementId.InvalidElementId
+                ? doc.GetElement(primaryId) as View
+                : view;
+
+            if (primary == null) return scope;
+
+            scope.Add(primary.Id);
+            foreach (var dependentId in primary.GetDependentViewIds())
+                scope.Add(dependentId);
+
+            return scope;
         }
 
         /// <summary>
@@ -163,10 +223,14 @@ namespace AVES.Cmds_Button11
         /// GetTaggedLocalElementIds throwing.
         /// </summary>
         public static TaggedTypeScanResult BuildTaggedTypeIdsForViews(
-            Document doc, List<IndependentTag> allTags, HashSet<ElementId> scopeViewIds)
+            Document doc,
+            ILookup<ElementId, IndependentTag> tagsByOwnerView,
+            HashSet<ElementId> scopeViewIds)
         {
             var result = new TaggedTypeScanResult();
-            var scopedTags = allTags.Where(t => scopeViewIds.Contains(t.OwnerViewId)).ToList();
+            // Indexed once by the caller, so this is a handful of key lookups
+            // rather than a full pass over every tag in the document per view.
+            var scopedTags = scopeViewIds.SelectMany(id => tagsByOwnerView[id]).ToList();
             result.TotalTagsScanned = scopedTags.Count;
 
             foreach (var tag in scopedTags)
@@ -272,15 +336,34 @@ namespace AVES.Cmds_Button11
         private readonly WpfTextBlock _countLabel;
         private bool _confirmed;
 
-        public AssemblyViewPickerWindow(Document doc, List<View> allAssemblyViews)
+        /// <summary>
+        /// Section label for a view in the picker. Assembly views keep their own
+        /// group so the original workflow stays one glance away; everything else
+        /// groups by view type, which is the only stable grouping a normal view
+        /// has (it belongs to no assembly, and may sit on no sheet at all).
+        /// </summary>
+        private static string GroupLabelFor(View view)
         {
-            var ordered = allAssemblyViews
-                .Select(v => new
-                {
-                    View = v,
-                    Assembly = doc.GetElement(v.AssociatedAssemblyInstanceId) as AssemblyInstance
-                })
-                .OrderBy(x => x.Assembly?.AssemblyTypeName ?? "", StringComparer.OrdinalIgnoreCase)
+            if (view.IsAssemblyView) return "Assembly Views";
+
+            switch (view.ViewType)
+            {
+                case ViewType.FloorPlan: return "Floor Plans";
+                case ViewType.CeilingPlan: return "Ceiling Plans";
+                case ViewType.EngineeringPlan: return "Structural Plans";
+                case ViewType.Section: return "Sections";
+                case ViewType.Elevation: return "Elevations";
+                case ViewType.Detail: return "Detail Views";
+                case ViewType.ThreeD: return "3D Views";
+                default: return view.ViewType.ToString();
+            }
+        }
+
+        public AssemblyViewPickerWindow(Document doc, List<View> scannableViews)
+        {
+            var ordered = scannableViews
+                .Select(v => new { View = v, Group = GroupLabelFor(v) })
+                .OrderBy(x => x.Group, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(x => x.View.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -385,13 +468,13 @@ namespace AVES.Cmds_Button11
             {
                 list.Children.Add(new WpfTextBlock
                 {
-                    Text = "No assembly views were found in this project.",
+                    Text = "No scannable views placed on sheets were found in this project.",
                     FontFamily = AvTokens.Ui,
                     FontSize = 13,
                     Foreground = AvTokens.B(AvTokens.TextFaint)
                 });
             }
-            foreach (var group in ordered.GroupBy(e => e.Assembly?.AssemblyTypeName ?? "(unknown assembly)"))
+            foreach (var group in ordered.GroupBy(e => e.Group))
             {
                 var headerVisual = AvControls.SectionHeader(group.Key);
                 list.Children.Add(headerVisual);
@@ -810,22 +893,28 @@ namespace AVES.Cmds_Button11
 
             try
             {
-                var allAssemblyViews = TagCompletenessScanner.GetAllAssemblyViews(doc);
-                if (allAssemblyViews.Count == 0)
+                var scannableViews = TagCompletenessScanner.GetScannableViews(doc);
+                if (scannableViews.Count == 0)
                 {
                     AvControls.ShowAlert("Assembly Tag Completeness",
-                        "No assembly views were found in this project. This tool checks tags placed in an " +
-                        "assembly's own generated views (3D, front/section, plan, etc.) -- create those first.", AlertSeverity.Warning);
+                        "No scannable views placed on sheets were found in this project. This tool checks " +
+                        "tags in plans, sections, elevations, detail and 3D views -- including an " +
+                        "assembly's own generated views -- but only where the view has been placed " +
+                        "on a sheet.", AlertSeverity.Warning);
                     return Result.Cancelled;
                 }
 
-                var picker = new AssemblyViewPickerWindow(doc, allAssemblyViews);
+                var picker = new AssemblyViewPickerWindow(doc, scannableViews);
                 picker.ShowDialog();
 
                 if (picker.SelectedViews.Count == 0)
                     return Result.Cancelled;
 
-                var allTags = TagCompletenessScanner.GetAllIndependentTags(doc);
+                // Indexed once for the whole run: the per-view scan then does key
+                // lookups instead of re-scanning every tag in the document.
+                var tagsByOwnerView = TagCompletenessScanner
+                    .GetAllIndependentTags(doc)
+                    .ToLookup(t => t.OwnerViewId);
                 var failingRows = new List<TagReportRow>();
                 int assembliesScanned = 0;
                 int familyTypesChecked = 0;
@@ -836,7 +925,8 @@ namespace AVES.Cmds_Button11
                     if (assemblies.Count == 0) continue;
 
                     var tagScan = TagCompletenessScanner.BuildTaggedTypeIdsForViews(
-                        doc, allTags, new HashSet<ElementId> { view.Id });
+                        doc, tagsByOwnerView,
+                        TagCompletenessScanner.GetTagScopeForView(doc, view));
 
                     foreach (var assembly in assemblies.OrderBy(a => a.AssemblyTypeName, StringComparer.OrdinalIgnoreCase))
                     {
