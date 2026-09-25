@@ -1,12 +1,12 @@
 ﻿// -----------------------------------------------------------------------
 // Pulldown Title: Auto Tag
 // Sub-buttons:
-//   - MT Tag: Lets the user pick a multi-category tag family and one or
+//   - MT Tag: Lets the user pick a Generic Model tag family and one or
 //     more 3D views on sheets, then auto-places tags on view elements
 //     with collision-avoiding placement (edge clearance, spacing, and
 //     tall/wide element handling).
 //   - Vendor Tag: Same batch view/tag picker and auto-placement logic as
-//     MT Tag, but targets generic-model tag families instead.
+//     MT Tag, also targeting Generic Model tag families.
 // -----------------------------------------------------------------------
 // Autodesk
 using Autodesk.Revit.Attributes;
@@ -1096,7 +1096,7 @@ namespace AVES.Cmds_PullDownAutoTag
     }
 
     // ============================================================
-    //  BUTTON 1 — CMD_MTTAG  (MT Drawings — untouched)
+    //  BUTTON 1 — CMD_MTTAG  (MT Drawings)
     // ============================================================
     [Transaction(TransactionMode.Manual)]
     public class Cmd_MTTag : IExternalCommand
@@ -1130,7 +1130,7 @@ namespace AVES.Cmds_PullDownAutoTag
 
             // 2. Single window: pick tag family (in-window section) + multi-select views
             var picker = new BatchViewPickerWindow(
-                entries, doc, BuiltInCategory.OST_MultiCategoryTags,
+                entries, doc, BuiltInCategory.OST_GenericModelTags,
                 "MT Tag Family", "▶  Run Script");
             if (picker.ShowDialog() != true
                 || picker.SelectedViews.Count == 0
@@ -1523,6 +1523,7 @@ namespace AVES.Cmds_PullDownAutoTag
                 (int)BuiltInCategory.OST_Cameras,   (int)BuiltInCategory.OST_Grids,
                 (int)BuiltInCategory.OST_Levels,    (int)BuiltInCategory.OST_SectionBox,
                 (int)BuiltInCategory.OST_Views,     (int)BuiltInCategory.OST_RvtLinks,
+                (int)BuiltInCategory.OST_Assemblies,
             };
             var seen = new HashSet<long>(); var res = new List<Element>();
             foreach (Element el in new FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType())

@@ -48,7 +48,7 @@ namespace AVES.Cmds_PullDownAutoDimension
 
             public static readonly HashSet<int> MemberCategories =
             [
-                (int)BuiltInCategory.OST_StructuralFraming,
+                (int)BuiltInCategory.OST_GenericModel,
                 (int)BuiltInCategory.OST_StructuralColumns,
                 (int)BuiltInCategory.OST_StructuralFoundation,
             ];
@@ -141,7 +141,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                         var members = GetMembers(doc, assembly);
                         if (members.Count == 0)
                         {
-                            summary.AppendLine("  No structural members found – skipped.");
+                            summary.AppendLine("  No target members found – skipped.");
                             summary.AppendLine();
                             continue;
                         }
@@ -2495,7 +2495,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                     ));
                 }
                 else if (!string.IsNullOrWhiteSpace(line) && currentAssembly != null
-                         && (line.Contains("No structural") || line.Contains("No members")
+                         && (line.Contains("No target members") || line.Contains("No members")
                              || line.Contains("No associated")))
                 {
                     rows.Add((currentAssembly, "(all views)", "—", "skip", line.Trim()));
