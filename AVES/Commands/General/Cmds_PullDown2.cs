@@ -9,6 +9,9 @@
 //     and direction.
 //   - MT Drawings: Auto-generates a single-sheet (A1) vendor drawing per
 //     assembly with a condensed set of 3D/orthographic views.
+//   - Korea: Auto-generates a seven-sheet set per assembly -- 3D and part
+//     list on the first, then one orthographic view per sheet, oriented to
+//     the assembly origin and refreshed in place on a 2D-only re-run.
 // -----------------------------------------------------------------------
 
 // Autodesk
@@ -205,6 +208,377 @@ internal static class ViewUtils
         view.IsSectionBoxActive = true;
     }
 
+    /// <summary>
+    /// Creates a standard orthographic <see cref="View3D"/> named
+    /// <paramref name="name"/>, on <paramref name="templateId"/>, with its
+    /// section box fitted to <paramref name="bbox"/> grown by
+    /// <paramref name="sectionBoxPadding"/>. Single implementation shared by
+    /// the Vendor and Assembly drawing commands; the padding is supplied by the
+    /// caller so this stays generic. CreateIsometric is the orthographic
+    /// constructor -- CreatePerspective is the one that is not.
+    /// </summary>
+    public static View3D CreateOrthographic3D(
+        Document doc,
+        ViewFamilyType vft3d,
+        string name,
+        ElementId templateId,
+        BoundingBoxXYZ? bbox,
+        double sectionBoxPadding)
+    {
+        var view = View3D.CreateIsometric(doc, vft3d.Id);
+        view.Name = name;
+        view.ViewTemplateId = templateId;
+        ApplySectionBox(view, bbox, sectionBoxPadding);
+        return view;
+    }
+
+    /// <summary>First view family type matching <paramref name="family"/>.</summary>
+    public static ViewFamilyType? GetViewFamilyType(Document doc, ViewFamily family) =>
+        new FilteredElementCollector(doc)
+            .OfClass(typeof(ViewFamilyType))
+            .Cast<ViewFamilyType>()
+            .FirstOrDefault(vft => vft.ViewFamily == family);
+
+    /// <summary>
+    /// Crops <paramref name="view"/> to a world-space bounding box: the box's
+    /// eight corners are pulled back into the crop box's own local frame, so
+    /// the fit is correct whatever the view's orientation.
+    /// </summary>
+    public static void FitCropBoxToBoundingBox(View view, BoundingBoxXYZ worldBbox, double padding)
+    {
+        if (worldBbox is null || view.IsTemplate) return;
+
+        var crop = view.CropBox;
+        var (min, max) = LocalExtents(crop.Transform, worldBbox, padding);
+
+        view.CropBox = new BoundingBoxXYZ
+        {
+            Transform = crop.Transform,
+            Min = min,
+            Max = max,
+        };
+        view.CropBoxActive = true;
+        view.CropBoxVisible = false;
+    }
+
+    private static readonly PlanViewPlane[] ViewRangePlanes =
+    {
+        PlanViewPlane.TopClipPlane,
+        PlanViewPlane.CutPlane,
+        PlanViewPlane.BottomClipPlane,
+        PlanViewPlane.ViewDepthPlane,
+    };
+
+    /// <summary>
+    /// Opens a plan view's view range to the assembly's full Z extent, so the
+    /// view is a complete projection rather than an architectural cut. A freshly
+    /// created plan keeps its view family type's default range -- a narrow band
+    /// about its level, cut around 1.2 m -- which clips any assembly sitting
+    /// outside it: floor plans come out part-drawn, ceiling plans come out blank.
+    /// <para>
+    /// Every plane is derived from the padded bounding box and nothing else. The
+    /// cut plane is parked on the far edge of that span -- at the top for a plan
+    /// looking down, at the bottom for an RCP looking up -- so the whole assembly
+    /// falls on the drawn side of it and nothing is cut through. Offsets are
+    /// measured from <paramref name="level"/>, the level the view was created on,
+    /// and every plane is pinned to it so no Level Above / Level Below default
+    /// survives to reintroduce the clipping.
+    /// </para>
+    /// </summary>
+    public static void FitViewRangeToBoundingBox(
+        ViewPlan view, BoundingBoxXYZ worldBbox, Level level, double padding)
+    {
+        if (worldBbox is null || view.IsTemplate) return;
+
+        var low = worldBbox.Min.Z - level.Elevation - padding;
+        var high = worldBbox.Max.Z - level.Elevation + padding;
+
+        using var range = view.GetViewRange();
+
+        foreach (var plane in ViewRangePlanes)
+            range.SetLevelId(plane, level.Id);
+
+        if (view.ViewType == ViewType.CeilingPlan)
+        {
+            // Looking up: everything above the cut plane is drawn, and the RCP's
+            // view depth runs past the top rather than below the bottom.
+            range.SetOffset(PlanViewPlane.BottomClipPlane, low);
+            range.SetOffset(PlanViewPlane.CutPlane, low);
+            range.SetOffset(PlanViewPlane.TopClipPlane, high);
+            range.SetOffset(PlanViewPlane.ViewDepthPlane, high);
+        }
+        else
+        {
+            // Looking down: everything below the cut plane is drawn, as far down
+            // as the view depth.
+            range.SetOffset(PlanViewPlane.ViewDepthPlane, low);
+            range.SetOffset(PlanViewPlane.BottomClipPlane, low);
+            range.SetOffset(PlanViewPlane.CutPlane, high);
+            range.SetOffset(PlanViewPlane.TopClipPlane, high);
+        }
+
+        var errors = view.CheckPlanViewRangeValidity(range);
+        if (errors.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Computed {view.ViewType} view range is invalid: " +
+                string.Join(", ", errors));
+        }
+
+        view.SetViewRange(range);
+    }
+
+    /// <summary>
+    /// Creates an orthographic section looking along <paramref name="lookDirection"/>,
+    /// sized to <paramref name="worldBbox"/> (plus padding) in every axis.
+    /// </summary>
+    public static ViewSection CreateOrthoSection(
+        Document doc,
+        ElementId sectionVftId,
+        BoundingBoxXYZ worldBbox,
+        XYZ lookDirection,
+        double padding)
+    {
+        var up = XYZ.BasisZ;
+        var basisZ = lookDirection.Normalize();
+        var basisX = up.CrossProduct(basisZ).Normalize();
+        var basisY = basisZ.CrossProduct(basisX).Normalize();
+
+        var transform = Transform.Identity;
+        transform.Origin = (worldBbox.Min + worldBbox.Max) / 2.0;
+        transform.BasisX = basisX;
+        transform.BasisY = basisY;
+        transform.BasisZ = basisZ;
+
+        var (min, max) = LocalExtents(transform, worldBbox, padding);
+
+        var box = new BoundingBoxXYZ
+        {
+            Transform = transform,
+            Min = min,
+            Max = max,
+        };
+
+        return ViewSection.CreateSection(doc, sectionVftId, box);
+    }
+
+    /// <summary>
+    /// Creates a true orthographic view from below: a section whose camera sits
+    /// under the assembly looking straight up. <paramref name="topScreenRight"/>
+    /// is the screen-right of the view from above; the underside takes the
+    /// opposite, which is what puts the hardware on the side the reference
+    /// drawing shows.
+    /// <para>
+    /// A Reflected Ceiling Plan cannot do this. "Reflected" is literal -- Revit
+    /// mirrors the image so it reads the same way round as the floor plan above
+    /// it, and the API exposes no switch to turn that off: the reflection belongs
+    /// to the view type itself. An upward section carries no such convention, so
+    /// it draws the underside as it actually is.
+    /// </para>
+    /// <para>
+    /// This is separate from <see cref="CreateOrthoSection"/> because that one
+    /// derives its horizontal axis from world up, which collapses when the look
+    /// direction is itself vertical.
+    /// </para>
+    /// </summary>
+    public static ViewSection CreateUpwardSection(
+        Document doc,
+        ElementId sectionVftId,
+        BoundingBoxXYZ worldBbox,
+        XYZ topScreenRight,
+        double padding)
+    {
+        // BasisZ points out of the screen towards the viewer, who is underneath.
+        // BasisX runs against the top view's screen-right, and BasisY follows
+        // from the other two so the frame stays right-handed -- a frame that is
+        // not is a reflection, which is the RCP behaviour this view exists to
+        // avoid.
+        var basisZ = new XYZ(0, 0, -1);
+        var basisX = topScreenRight.Normalize().Negate();
+        var basisY = basisZ.CrossProduct(basisX).Normalize();
+
+        var transform = Transform.Identity;
+        transform.Origin = (worldBbox.Min + worldBbox.Max) / 2.0;
+        transform.BasisX = basisX;
+        transform.BasisY = basisY;
+        transform.BasisZ = basisZ;
+
+        var (min, max) = LocalExtents(transform, worldBbox, padding);
+
+        var box = new BoundingBoxXYZ
+        {
+            Transform = transform,
+            Min = min,
+            Max = max,
+        };
+
+        return ViewSection.CreateSection(doc, sectionVftId, box);
+    }
+
+    /// <summary>
+    /// Permanently hides everything in <paramref name="view"/> that is not part
+    /// of <paramref name="assembly"/>, so the view shows that assembly alone.
+    /// </summary>
+    public static void IsolateAssemblyPermanently(Document doc, View view, AssemblyInstance assembly)
+    {
+        var keep = new HashSet<ElementId>(assembly.GetMemberIds()) { assembly.Id };
+
+        // A view-based collector only sees what the view has actually resolved,
+        // and these views were created moments ago in this same transaction.
+        doc.Regenerate();
+
+        var toHide = new FilteredElementCollector(doc, view.Id)
+            .WhereElementIsNotElementType()
+            .Where(e => e.Category is not null
+                        && !keep.Contains(e.Id)
+                        && e.CanBeHidden(view))
+            .Select(e => e.Id)
+            .ToList();
+
+        if (toHide.Count == 0) return;
+
+        try
+        {
+            view.HideElements(toHide);
+        }
+        catch
+        {
+            // Bulk hide is all-or-nothing; fall back to one element at a time
+            // so a single stubborn element does not cost the whole isolation.
+            foreach (var id in toHide)
+            {
+                try { view.HideElements(new List<ElementId> { id }); }
+                catch { /* element refuses to hide in this view; skip it */ }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Turns <paramref name="view"/> so its screen-right runs along
+    /// <paramref name="desiredRight"/> -- the API equivalent of the UI's
+    /// Rotate Crop. Revit exposes no rotation member on View and
+    /// View.RightDirection is read-only, so this rotates the element that
+    /// carries the crop rectangle, which is what fixes the view's own axes.
+    /// The rotation is the measured angle, so an Assembly Origin turned by any
+    /// amount is followed, not just quarter turns.
+    /// Project North, True North and the model are all left alone.
+    /// </summary>
+    public static void RotateCropToRightDirection(
+        Document doc, View view, XYZ desiredRight, XYZ pivot)
+    {
+        if (view.IsTemplate) return;
+
+        var angle = SignedPlanAngleBetween(view.RightDirection, desiredRight);
+        if (angle == 0.0) return;
+
+        var wasVisible = view.CropBoxVisible;
+        view.CropBoxActive = true;
+        view.CropBoxVisible = true;
+
+        try
+        {
+            if (FindCropBoxElementId(doc, view) is not { } cropBoxId) return;
+
+            var axis = Autodesk.Revit.DB.Line.CreateBound(pivot, pivot + XYZ.BasisZ);
+            ElementTransformUtils.RotateElement(doc, cropBoxId, axis, angle);
+        }
+        finally
+        {
+            view.CropBoxVisible = wasVisible;
+        }
+    }
+
+    /// <summary>
+    /// The element carrying the view's crop rectangle. Revit hands out no direct
+    /// reference to it: it only turns up in a view-scoped collector while the
+    /// crop is visible. So collect once with it shown and once with it hidden --
+    /// the latter inside a sub-transaction that is rolled back -- and take the
+    /// difference.
+    /// </summary>
+    private static ElementId? FindCropBoxElementId(Document doc, View view)
+    {
+        doc.Regenerate();
+        var shown = new FilteredElementCollector(doc, view.Id).ToElementIds();
+
+        HashSet<ElementId> hidden;
+        using (var probe = new SubTransaction(doc))
+        {
+            probe.Start();
+            view.CropBoxVisible = false;
+            doc.Regenerate();
+            hidden = new HashSet<ElementId>(
+                new FilteredElementCollector(doc, view.Id).ToElementIds());
+            probe.RollBack();
+        }
+
+        return shown.FirstOrDefault(id => !hidden.Contains(id));
+    }
+
+    /// <summary>
+    /// Signed rotation about Z that carries <paramref name="from"/> onto
+    /// <paramref name="to"/>. Zero when the two already agree or either one is
+    /// vertical.
+    /// <para>
+    /// The angle is returned as measured -- deliberately not quantised. It used
+    /// to be snapped to the nearest quarter turn, which was right while the view
+    /// directions were world axes and every angle was a multiple of 90 degrees.
+    /// Once those directions started coming through the Assembly Origin the snap
+    /// discarded any rotation under 45 degrees, which is precisely the value this
+    /// is being asked for.
+    /// </para>
+    /// </summary>
+    private static double SignedPlanAngleBetween(XYZ from, XYZ to)
+    {
+        if (Flatten(from) is not { } a || Flatten(to) is not { } b) return 0.0;
+
+        var angle = Math.Atan2(a.CrossProduct(b).Z, a.DotProduct(b));
+
+        return Math.Abs(angle) < 1e-9 ? 0.0 : angle;
+    }
+
+    private static XYZ? Flatten(XYZ v)
+    {
+        var flat = new XYZ(v.X, v.Y, 0);
+        return flat.IsZeroLength() ? null : flat.Normalize();
+    }
+
+    /// <summary>
+    /// Extents of a world-space box expressed in the local coordinates of
+    /// <paramref name="frame"/>, grown by <paramref name="padding"/> all round.
+    /// </summary>
+    private static (XYZ Min, XYZ Max) LocalExtents(
+        Transform frame, BoundingBoxXYZ worldBbox, double padding)
+    {
+        var inverse = frame.Inverse;
+
+        double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue;
+        double maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
+
+        foreach (var corner in Corners(worldBbox))
+        {
+            var p = inverse.OfPoint(corner);
+            minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X);
+            minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
+            minZ = Math.Min(minZ, p.Z); maxZ = Math.Max(maxZ, p.Z);
+        }
+
+        return (new XYZ(minX - padding, minY - padding, minZ - padding),
+                new XYZ(maxX + padding, maxY + padding, maxZ + padding));
+    }
+
+    private static IEnumerable<XYZ> Corners(BoundingBoxXYZ box)
+    {
+        var lo = box.Min;
+        var hi = box.Max;
+        for (int i = 0; i < 8; i++)
+        {
+            yield return new XYZ(
+                (i & 1) == 0 ? lo.X : hi.X,
+                (i & 2) == 0 ? lo.Y : hi.Y,
+                (i & 4) == 0 ? lo.Z : hi.Z);
+        }
+    }
+
     public static Viewport? PlaceView(Document doc, ViewSheet sheet, View view, XYZ point) =>
         Viewport.CanAddViewToSheet(doc, sheet.Id, view.Id)
             ? Viewport.Create(doc, sheet.Id, view.Id, point)
@@ -237,6 +611,59 @@ internal static class TitleblockUtils
             .OfCategory(BuiltInCategory.OST_TitleBlocks)
             .WhereElementIsElementType()
             .FirstElement();
+
+    /// <summary>
+    /// Every title block type in the project, keyed by the name shown to the
+    /// user. Built on the same collector <see cref="FirstAvailable"/> uses.
+    /// </summary>
+    public static IReadOnlyDictionary<string, FamilySymbol> CollectSymbols(Document doc) =>
+        new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_TitleBlocks)
+            .WhereElementIsElementType()
+            .OfType<FamilySymbol>()
+            .GroupBy(DisplayName)
+            .ToDictionary(g => g.Key, g => g.First());
+
+    /// <summary>"Family Name : Type Name" -- what the picker lists and what the
+    /// settings store, so a saved choice survives a restart.</summary>
+    public static string DisplayName(FamilySymbol symbol) =>
+        $"{symbol.FamilyName} : {symbol.Name}";
+
+    /// <summary>
+    /// Resolves a saved title block name against the project. Returns null only
+    /// when the project has none at all; when the saved one has since been
+    /// deleted or renamed it falls back to the first available and reports that
+    /// through <paramref name="fellBack"/> so the caller can tell the user.
+    /// </summary>
+    public static FamilySymbol? Resolve(
+        IReadOnlyDictionary<string, FamilySymbol> symbols,
+        string? savedName,
+        out bool fellBack)
+    {
+        fellBack = false;
+
+        if (symbols.Count == 0) return null;
+
+        if (!string.IsNullOrWhiteSpace(savedName) &&
+            symbols.TryGetValue(savedName!, out var saved))
+        {
+            return saved;
+        }
+
+        fellBack = !string.IsNullOrWhiteSpace(savedName);
+        return symbols.Values.First();
+    }
+}
+
+internal static class LevelUtils
+{
+    /// <summary>Level whose elevation sits closest to <paramref name="point"/>.</summary>
+    public static Level? FindNearestLevel(Document doc, XYZ point) =>
+        new FilteredElementCollector(doc)
+            .OfClass(typeof(Level))
+            .Cast<Level>()
+            .OrderBy(l => Math.Abs(l.Elevation - point.Z))
+            .FirstOrDefault();
 }
 
 internal sealed class NameRegistry
@@ -973,39 +1400,69 @@ internal sealed class TemplateMenuWindow : Window
     public View? V2d { get; private set; }
     public View? Sched { get; private set; }
 
+    /// <summary>Title block type the sheets will be created with.</summary>
+    public FamilySymbol? Titleblock { get; private set; }
+
+    /// <summary>Step 5 -- which categories of output this run generates.
+    /// All three start checked, so an untouched Step 5 is today's behaviour.</summary>
+    public bool Generate3DViews { get; private set; } = true;
+    public bool GenerateSchedules { get; private set; } = true;
+    public bool Generate2DViews { get; private set; } = true;
+
     // One pre-filtered list per step, so each picker offers only templates that
     // can actually be applied to the view that step creates.
     private readonly IReadOnlyDictionary<string, View> _view3dTemplates;
     private readonly IReadOnlyDictionary<string, View> _view2dTemplates;
     private readonly IReadOnlyDictionary<string, View> _scheduleTemplates;
+    private readonly IReadOnlyDictionary<string, FamilySymbol> _titleblocks;
     private readonly IntPtr _revitHandle;
 
     private readonly Button _row3d;
     private readonly Button _row2d;
     private readonly Button _rowSched;
+    private readonly Button _rowTitleblock;
     private readonly Button _continueBtn;
+
+    // Assembly checklist. Rows are built once and hidden/shown by the filter, so
+    // typing in the search box never disturbs what is already ticked.
+    private readonly List<(AssemblyInstance Assembly, Border Row, CheckBox Box)> _assemblyRows = [];
+    private readonly TextBox _assemblySearch;
+    private readonly TextBlock _assemblyCount;
+
+    /// <summary>Assemblies ticked in the right-hand column, in the order given.</summary>
+    public List<AssemblyInstance> SelectedAssemblies { get; private set; } = [];
 
     public TemplateMenuWindow(
         IReadOnlyDictionary<string, View> view3dTemplates,
         IReadOnlyDictionary<string, View> view2dTemplates,
         IReadOnlyDictionary<string, View> scheduleTemplates,
+        IReadOnlyDictionary<string, FamilySymbol> titleblocks,
+        FamilySymbol? preselectedTitleblock,
+        View? preselectedView3D,
+        View? preselectedView2D,
+        View? preselectedSchedule,
+        IReadOnlyList<AssemblyInstance> assemblies,
         IntPtr revitHandle = default)
     {
         _view3dTemplates = view3dTemplates;
         _view2dTemplates = view2dTemplates;
         _scheduleTemplates = scheduleTemplates;
+        _titleblocks = titleblocks;
+        Titleblock = preselectedTitleblock;
+        V3d = preselectedView3D;
+        V2d = preselectedView2D;
+        Sched = preselectedSchedule;
         _revitHandle = revitHandle;
 
         Title = "Drawing Automations";
-        Width = 460;
-        MinWidth = 380;
+        Width = 900;
+        MinWidth = 720;
 
         // Height follows the content instead of a fixed value. A fixed height had
         // to be guessed against the rows' measured size and was ~18px short at
         // 100% scaling, worse as DPI rose, which pushed the last row under the
         // ScrollViewer and read as the window being cut off. Auto-sizing measures
-        // in DIPs, so it adapts to display scaling, and it survives a fourth step
-        // being added later.
+        // in DIPs, so it adapts to display scaling.
         //
         // Width deliberately stays fixed: the picker boxes stretch to fill it, and
         // their value text trims with an ellipsis, which needs a bounded width to
@@ -1013,13 +1470,7 @@ internal sealed class TemplateMenuWindow : Window
         // longest template name and the trimming would never engage.
         SizeToContent = SizeToContent.Height;
 
-        // Ceiling so a future menu with many steps cannot outgrow the display.
-        // Auto-sizing measures with infinite available height, so the ScrollViewer
-        // below would otherwise never engage; past this height it takes over again.
-        // WorkArea reports the PRIMARY monitor, so on a mixed-DPI multi-monitor
-        // setup a window shown on a secondary display is capped by the primary's
-        // work area — an accepted approximation for what is already a pathological
-        // case.
+        // Ceiling so a menu with many assemblies cannot outgrow the display.
         MaxHeight = SystemParameters.WorkArea.Height * 0.9;
 
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -1036,7 +1487,7 @@ internal sealed class TemplateMenuWindow : Window
 
         var root = new DockPanel();
 
-        var header = AvControls.HeaderStrip("Select Templates");
+        var header = AvControls.HeaderStrip("Drawing Setup");
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
 
@@ -1046,7 +1497,7 @@ internal sealed class TemplateMenuWindow : Window
         _continueBtn = AvControls.PrimaryButtonHoverLoaded("Continue");
         _continueBtn.IsDefault = true;
         _continueBtn.IsEnabled = false;
-        _continueBtn.Click += (_, _) => { DialogResult = true; Close(); };
+        _continueBtn.Click += (_, _) => { CaptureSelectedAssemblies(); DialogResult = true; Close(); };
 
         var cancelBtn = AvControls.GhostButtonHoverLoaded("Cancel");
         cancelBtn.IsCancel = true;
@@ -1074,20 +1525,23 @@ internal sealed class TemplateMenuWindow : Window
         DockPanel.SetDock(footer, Dock.Bottom);
         root.Children.Add(footer);
 
-        // ── Body — the three numbered rows, scrollable ────────────────────────
-        var stack = new StackPanel();
-        stack.Children.Add(new TextBlock
+        // ── Body — drawing setup on the left, assembly selection on the right ──
+        var columns = new Grid { Margin = new Thickness(20, 16, 20, 16) };
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(390) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        // ── Left column — Generate, then the four pickers ─────────────────────
+        var setupStack = new StackPanel();
+        setupStack.Children.Add(new TextBlock
         {
-            Text = "Choose a template for each step, then click Run.",
+            Text = "Choose what to generate, then a template for each step.",
             FontSize = 12,
             FontWeight = FontWeights.SemiBold,
             Foreground = AvTokens.Br(AvTokens.TextDim),
             Margin = new Thickness(0, 0, 0, 12),
         });
 
-        // Each step is a label ABOVE its clickable box, matching the pattern the
-        // Batch Shared Parameters window already uses. The label carries the step
-        // badge and title; only the box below it opens the picker.
         _row3d = AvControls.PickerButton(Placeholder, showChevron: true);
         _row3d.Click += (_, _) => PickInto(
             _view3dTemplates, "Select 3D View Template", _row3d, v => V3d = v);
@@ -1100,32 +1554,210 @@ internal sealed class TemplateMenuWindow : Window
         _rowSched.Click += (_, _) => PickInto(
             _scheduleTemplates, "Select Schedule Template", _rowSched, v => Sched = v);
 
+        _rowTitleblock = AvControls.PickerButton(Placeholder, showChevron: true);
+        _rowTitleblock.Click += (_, _) => PickTitleblock();
+
         // Nothing is chosen yet, so start every box in the faint placeholder
         // state rather than the normal text colour PickerButton defaults to.
-        AvControls.SetPickerValue(_row3d, null, Placeholder);
-        AvControls.SetPickerValue(_row2d, null, Placeholder);
-        AvControls.SetPickerValue(_rowSched, null, Placeholder);
+        // A restored template shows its name straight away; anything not
+        // restored keeps the faint placeholder it has always had.
+        AvControls.SetPickerValue(_row3d, V3d?.Name, Placeholder);
+        AvControls.SetPickerValue(_row2d, V2d?.Name, Placeholder);
+        AvControls.SetPickerValue(_rowSched, Sched?.Name, Placeholder);
 
-        AddStep(stack, 1, "3D View Template", _row3d);
-        AddStep(stack, 2, "2D View Template", _row2d);
-        AddStep(stack, 3, "Schedule Template", _rowSched);
+        // The title block is the one step that can start already answered: a
+        // previously saved choice is carried in and shown straight away.
+        AvControls.SetPickerValue(
+            _rowTitleblock,
+            Titleblock is null ? null : TitleblockUtils.DisplayName(Titleblock),
+            Placeholder);
 
-        var scroller = new ScrollViewer
+        // Generate leads: it decides which template pickers below it are even
+        // relevant. Every box starts checked, so an untouched window behaves the
+        // way it did before selective generation existed.
+        setupStack.Children.Add(AvControls.FieldLabel(1, "Generate"));
+
+        var (row3dViews, box3dViews) = AvControls.CheckRow("3D Views", true);
+        var (row2dViews, box2dViews) = AvControls.CheckRow("2D Views", false);
+        var (rowSchedules, boxSchedules) = AvControls.CheckRow("Schedules", false);
+
+        box3dViews.IsChecked = true;
+        box2dViews.IsChecked = true;
+        boxSchedules.IsChecked = true;
+
+        // Unchecking a category greys out its picker but never clears the choice,
+        // so re-checking it brings the previous template straight back.
+        WireGenerateRow(row3dViews, box3dViews, v =>
+        {
+            Generate3DViews = v;
+            _row3d.IsEnabled = v;
+            UpdateContinueEnabled();
+        });
+        WireGenerateRow(row2dViews, box2dViews, v =>
+        {
+            Generate2DViews = v;
+            _row2d.IsEnabled = v;
+            UpdateContinueEnabled();
+        });
+        WireGenerateRow(rowSchedules, boxSchedules, v =>
+        {
+            GenerateSchedules = v;
+            _rowSched.IsEnabled = v;
+            UpdateContinueEnabled();
+        });
+
+        setupStack.Children.Add(row3dViews);
+        setupStack.Children.Add(row2dViews);
+        setupStack.Children.Add(rowSchedules);
+        setupStack.Children.Add(new Border { Height = 14 });
+
+        AddStep(setupStack, 2, "3D View Template", _row3d);
+        AddStep(setupStack, 3, "2D View Template", _row2d);
+        AddStep(setupStack, 4, "Schedule Template", _rowSched);
+        AddStep(setupStack, 5, "Title Block", _rowTitleblock);
+
+        var setupScroller = new ScrollViewer
         {
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            Padding = new Thickness(20, 16, 20, 16),
-            Content = stack,
+            Content = setupStack,
         };
-        root.Children.Add(scroller);
+        Grid.SetColumn(setupScroller, 0);
+        columns.Children.Add(setupScroller);
+
+        // ── Right column — assembly selection ─────────────────────────────────
+        var assemblyPanel = new DockPanel();
+
+        var assemblyHeader = AvControls.FieldLabel(6, "Assemblies");
+        DockPanel.SetDock(assemblyHeader, Dock.Top);
+        assemblyPanel.Children.Add(assemblyHeader);
+
+        // Search box: the same Surface2 / BorderStrong / radius-5 wrapper with a
+        // magnifier glyph that the Part List Format picker uses, so the two
+        // assembly lists in this add-in look like one control.
+        var searchWrap = new Border
+        {
+            Background = AvTokens.Br(AvTokens.Surface2),
+            BorderBrush = AvTokens.Br(AvTokens.BorderStrong),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5),
+            Margin = new Thickness(0, 0, 0, 10),
+            Padding = new Thickness(10, 0, 10, 0),
+            Height = 34,
+        };
+
+        var searchRow = new StackPanel { Orientation = Orientation.Horizontal };
+        searchRow.Children.Add(new TextBlock
+        {
+            Text = "⌕",
+            FontSize = 15,
+            Foreground = AvTokens.Br(AvTokens.TextFaint),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 7, 0),
+        });
+
+        _assemblySearch = new TextBox
+        {
+            FontFamily = AvTokens.Ui,
+            FontSize = 13,
+            Foreground = AvTokens.Br(AvTokens.Text),
+            Background = System.Windows.Media.Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            MinWidth = 200,
+            ToolTip = "Filter assemblies by name",
+        };
+        _assemblySearch.TextChanged += (_, _) => ApplyAssemblyFilter();
+
+        searchRow.Children.Add(_assemblySearch);
+        searchWrap.Child = searchRow;
+        DockPanel.SetDock(searchWrap, Dock.Top);
+        assemblyPanel.Children.Add(searchWrap);
+
+        // Same SecondaryBtn pair the Part List Format picker uses, down to the
+        // accent-coloured Select All and the 6px gap between them.
+        var selectAllBtn = AvControls.SecondaryBtn("Select All", () => SetAllAssembliesChecked(true));
+        selectAllBtn.Foreground = AvTokens.Br(AvTokens.Accent);
+        selectAllBtn.Margin = new Thickness(0, 0, 6, 0);
+
+        var deselectAllBtn = AvControls.SecondaryBtn("Deselect All", () => SetAllAssembliesChecked(false));
+        deselectAllBtn.Margin = new Thickness(0, 0, 0, 0);
+
+        _assemblyCount = new TextBlock
+        {
+            FontFamily = AvTokens.Ui,
+            FontSize = 11,
+            Foreground = AvTokens.Br(AvTokens.TextFaint),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+
+        var toolRow = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        toolRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        toolRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        toolRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(selectAllBtn, 0);
+        Grid.SetColumn(deselectAllBtn, 1);
+        Grid.SetColumn(_assemblyCount, 2);
+        toolRow.Children.Add(selectAllBtn);
+        toolRow.Children.Add(deselectAllBtn);
+        toolRow.Children.Add(_assemblyCount);
+        DockPanel.SetDock(toolRow, Dock.Top);
+        assemblyPanel.Children.Add(toolRow);
+
+        // Nothing starts ticked: the user opts in to what this run touches,
+        // and Continue stays disabled until at least one row is chosen.
+        var assemblyList = new StackPanel();
+        var first = true;
+        foreach (var assembly in assemblies)
+        {
+            var (row, box) = AvControls.CheckRow(assembly.Name, first);
+            first = false;
+
+            box.IsChecked = false;
+            row.MouseLeftButtonUp += (_, _) => box.IsChecked = !(box.IsChecked == true);
+            box.Checked += (_, _) => UpdateAssemblyCount();
+            box.Unchecked += (_, _) => UpdateAssemblyCount();
+
+            assemblyList.Children.Add(row);
+            _assemblyRows.Add((assembly, row, box));
+        }
+
+        var assemblyScroller = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            MaxHeight = 420,
+            Content = assemblyList,
+            BorderBrush = AvTokens.Br(AvTokens.Border),
+            BorderThickness = new Thickness(1),
+        };
+        assemblyPanel.Children.Add(assemblyScroller);
+
+        Grid.SetColumn(assemblyPanel, 2);
+        columns.Children.Add(assemblyPanel);
+
+        root.Children.Add(columns);
 
         Content = root;
+
+        UpdateAssemblyCount();
+
+    }
+    /// <summary>
+    /// Makes a Generate row behave like the picker rows below it: the whole
+    /// toggles, and the checkbox drives the backing flag.
+    /// </summary>
+    private static void WireGenerateRow(
+        System.Windows.Controls.Border row,
+        System.Windows.Controls.CheckBox box,
+        Action<bool> assign)
+    {
+        row.MouseLeftButtonUp += (_, _) => box.IsChecked = !(box.IsChecked == true);
+        box.Checked += (_, _) => assign(true);
+        box.Unchecked += (_, _) => assign(false);
     }
 
-    /// <summary>
-    /// Appends one step to the body: its numbered label, then its picker box,
-    /// then the gap before the next step.
-    /// </summary>
     private static void AddStep(StackPanel stack, int step, string title, Button box)
     {
         stack.Children.Add(AvControls.FieldLabel(step, title));
@@ -1152,8 +1784,132 @@ internal sealed class TemplateMenuWindow : Window
 
         assign(picked);
         AvControls.SetPickerValue(row, picked.Name, Placeholder);
-        _continueBtn.IsEnabled = V3d is not null && V2d is not null && Sched is not null;
+        UpdateContinueEnabled();
     }
+
+    /// <summary>
+    /// Title block step. Unlike the template steps this one may already hold a
+    /// saved value, so cancelling the popup keeps what is there rather than
+    /// aborting the flow.
+    /// </summary>
+    private void PickTitleblock()
+    {
+        var picked = TemplatePicker.PickName(
+            _titleblocks.Keys, "Select Title Block", _revitHandle);
+        if (picked is null) return;
+
+        Titleblock = _titleblocks[picked];
+        AvControls.SetPickerValue(_rowTitleblock, picked, Placeholder);
+        UpdateContinueEnabled();
+    }
+
+
+    /// <summary>
+    /// Live filter over the assembly checklist. Rows are hidden rather than
+    /// rebuilt, so what the user has already ticked survives every keystroke.
+    /// </summary>
+    private void ApplyAssemblyFilter()
+    {
+        var filter = _assemblySearch.Text?.Trim() ?? string.Empty;
+
+        foreach (var (assembly, row, _) in _assemblyRows)
+        {
+            var match = filter.Length == 0
+                || assembly.Name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+
+            row.Visibility = match
+                ? System.Windows.Visibility.Visible
+                : System.Windows.Visibility.Collapsed;
+        }
+
+        UpdateAssemblyCount();
+    }
+
+    /// <summary>
+    /// Ticks or clears every row the filter is currently showing, so Select All
+    /// after a search applies to the search rather than the whole model.
+    /// </summary>
+    private void SetAllAssembliesChecked(bool value)
+    {
+        foreach (var (_, row, box) in _assemblyRows)
+        {
+            if (row.Visibility == System.Windows.Visibility.Visible)
+                box.IsChecked = value;
+        }
+
+        UpdateAssemblyCount();
+    }
+
+    private void UpdateAssemblyCount()
+    {
+        var total = _assemblyRows.Count;
+        var selected = _assemblyRows.Count(r => r.Box.IsChecked == true);
+
+        // Always "x of y": the zero case reads as a state, not as an empty
+        // list. Counted over every row, never the filtered subset, so a
+        // narrow search still reports the whole dataset.
+        _assemblyCount.Text = $"{selected} of {total} selected";
+
+        UpdateContinueEnabled();
+    }
+
+    private void CaptureSelectedAssemblies() =>
+        SelectedAssemblies = _assemblyRows
+            .Where(r => r.Box.IsChecked == true)
+            .Select(r => r.Assembly)
+            .ToList();
+
+    /// <summary>
+    /// Continue needs a runnable request: something to draw, something to draw it
+    /// on, a template for every category actually being generated, and at least
+    /// one assembly. A category that is switched off needs no template.
+    /// </summary>
+    private void UpdateContinueEnabled()
+    {
+        var anyCategory = Generate3DViews || Generate2DViews || GenerateSchedules;
+        var templatesReady =
+            (!Generate3DViews || V3d is not null)
+            && (!Generate2DViews || V2d is not null)
+            && (!GenerateSchedules || Sched is not null);
+        var anyAssembly = _assemblyRows.Any(r => r.Box.IsChecked == true);
+
+        _continueBtn.IsEnabled =
+            anyCategory && templatesReady && Titleblock is not null && anyAssembly;
+    }
+}
+
+/// <summary>
+/// Everything the setup window collects: the three view templates, the title
+/// block the sheets are created with, and which categories of output this run
+/// should generate. The generate flags default to true, so a run that leaves
+/// Step 5 alone behaves exactly as it did before selective generation existed.
+/// </summary>
+internal sealed class DrawingSetup
+{
+    public View? V3d { get; set; }
+    public View? V2d { get; set; }
+    public View? Sched { get; set; }
+    public FamilySymbol? Titleblock { get; set; }
+
+    /// <summary>Assemblies the user ticked, already in the alphabetical order
+    /// the collector produced.</summary>
+    public IReadOnlyList<AssemblyInstance> SelectedAssemblies { get; set; } = [];
+
+    public bool Generate3DViews { get; set; } = true;
+    public bool GenerateSchedules { get; set; } = true;
+    public bool Generate2DViews { get; set; } = true;
+
+    /// <summary>
+    /// A runnable request: a title block, at least one assembly, at least one
+    /// category, and a template for every category actually being generated.
+    /// </summary>
+    public bool IsComplete =>
+        Titleblock is not null
+        && SelectedAssemblies.Count > 0
+        && (Generate3DViews || Generate2DViews || GenerateSchedules)
+        && (!Generate3DViews || V3d is not null)
+        && (!Generate2DViews || V2d is not null)
+        && (!GenerateSchedules || Sched is not null);
 }
 
 internal static class TemplatePicker
@@ -1168,6 +1924,15 @@ internal static class TemplatePicker
         return templates[dialog.SelectedTemplateName];
     }
 
+    /// <summary>Same popup, for a plain list of names (title blocks).</summary>
+    public static string? PickName(IEnumerable<string> names, string title,
+        IntPtr revitHandle = default)
+    {
+        var sorted = names.OrderBy(n => n).ToList();
+        var dialog = new TemplatePickerWindow(sorted, title, revitHandle);
+        return dialog.ShowDialog() == true ? dialog.SelectedTemplateName : null;
+    }
+
     // ── Per-step template filtering ──────────────────────────────────────────
     //
     // Every step used to receive the same unfiltered list, so each one offered
@@ -1176,7 +1941,7 @@ internal static class TemplatePicker
     // failed at apply time, after the user had already made the other choices.
     //
     // All three filter the existing dictionary rather than re-collecting from the
-    // document, which is what lets PickTriple keep its signature and both call
+    // document, which is what lets PickSetup keep its signature and all call
     // sites stay untouched.
 
     /// <summary>Templates applicable to the orthographic 3D view.</summary>
@@ -1214,53 +1979,112 @@ internal static class TemplatePicker
             .Where(kv => Array.IndexOf(kinds, kv.Value.ViewType) >= 0)
             .ToDictionary(kv => kv.Key, kv => kv.Value);
 
-    public static (View? V3d, View? V2d, View? Sched) PickTriple(
-        IReadOnlyDictionary<string, View> templates, IntPtr revitHandle = default)
+    /// <summary>
+    /// The setup window: three view templates plus the title block the sheets
+    /// will be created with. <paramref name="savedTitleblockName"/> preselects a
+    /// previously stored choice; if it no longer exists the first available one
+    /// is offered instead and the user is told.
+    /// </summary>
+    public static DrawingSetup? PickSetup(
+        IReadOnlyDictionary<string, View> templates,
+        Document doc,
+        string? savedTitleblockName,
+        string? savedView3DTemplateName,
+        string? savedView2DTemplateName,
+        string? savedScheduleTemplateName,
+        IReadOnlyList<AssemblyInstance> assemblies,
+        string alertTitle,
+        IntPtr revitHandle = default)
     {
         var view3dTemplates = View3dTemplatesOf(templates);
         if (view3dTemplates.Count == 0)
         {
-            AvControls.ShowAlert("Vendor Automation",
+            AvControls.ShowAlert(alertTitle,
                 "No 3D view templates found in this project.\n\n" +
                 "A 3D view template is required for the assembly's 3D view. " +
                 "Create one, then run this command again.",
                 AlertSeverity.Warning);
-            return (null, null, null);
+            return null;
         }
 
         var view2dTemplates = View2dTemplatesOf(templates);
         if (view2dTemplates.Count == 0)
         {
-            AvControls.ShowAlert("Vendor Automation",
+            AvControls.ShowAlert(alertTitle,
                 "No 2D view templates found in this project.\n\n" +
                 "An elevation, section or detail view template is required for " +
                 "the assembly's detail views. Create one, then run this command " +
                 "again.",
                 AlertSeverity.Warning);
-            return (null, null, null);
+            return null;
         }
 
         var scheduleTemplates = ScheduleTemplatesOf(templates);
         if (scheduleTemplates.Count == 0)
         {
-            AvControls.ShowAlert("Vendor Automation",
+            AvControls.ShowAlert(alertTitle,
                 "No schedule view templates found in this project.\n\n" +
                 "A schedule template is required for the part list. Create one, " +
                 "then run this command again.",
                 AlertSeverity.Warning);
-            return (null, null, null);
+            return null;
         }
 
+        var titleblocks = TitleblockUtils.CollectSymbols(doc);
+        if (titleblocks.Count == 0)
+        {
+            AvControls.ShowAlert(alertTitle,
+                "No title block types found in this project.\n\n" +
+                "A title block is required to create sheets. Load one, then run " +
+                "this command again.",
+                AlertSeverity.Warning);
+            return null;
+        }
+
+        var preselected = TitleblockUtils.Resolve(
+            titleblocks, savedTitleblockName, out var fellBack);
+
+        if (fellBack)
+        {
+            AvControls.ShowAlert(alertTitle,
+                $"The saved title block \"{savedTitleblockName}\" is no longer in " +
+                "this project.\n\n" +
+                $"\"{TitleblockUtils.DisplayName(preselected!)}\" has been selected " +
+                "instead. Pick a different one in the setup window if you need to.",
+                AlertSeverity.Warning);
+        }
+
+        // A saved template is restored only if a template of that name is still
+        // offered for that step. Anything renamed, deleted or now filtered out
+        // simply resolves to null, which is the unselected default.
+        view3dTemplates.TryGetValue(savedView3DTemplateName ?? string.Empty, out var preset3d);
+        view2dTemplates.TryGetValue(savedView2DTemplateName ?? string.Empty, out var preset2d);
+        scheduleTemplates.TryGetValue(savedScheduleTemplateName ?? string.Empty, out var presetSched);
+
         var menu = new TemplateMenuWindow(
-            view3dTemplates, view2dTemplates, scheduleTemplates, revitHandle);
-        if (menu.ShowDialog() != true) return (null, null, null);
+            view3dTemplates, view2dTemplates, scheduleTemplates,
+            titleblocks, preselected, preset3d, preset2d, presetSched,
+            assemblies, revitHandle);
+        if (menu.ShowDialog() != true) return null;
 
-        // Belt-and-braces: Continue is only enabled once all three are set, but the
+        // Belt-and-braces: Continue enables only on a runnable request, but the
         // tuple contract is all-or-nothing, so anything missing here is a cancel.
-        if (menu.V3d is null || menu.V2d is null || menu.Sched is null)
-            return (null, null, null);
+        if (menu.Titleblock is null || menu.SelectedAssemblies.Count == 0)
+        {
+            return null;
+        }
 
-        return (menu.V3d, menu.V2d, menu.Sched);
+        return new DrawingSetup
+        {
+            V3d = menu.V3d,
+            V2d = menu.V2d,
+            Sched = menu.Sched,
+            Titleblock = menu.Titleblock,
+            SelectedAssemblies = menu.SelectedAssemblies,
+            Generate3DViews = menu.Generate3DViews,
+            GenerateSchedules = menu.GenerateSchedules,
+            Generate2DViews = menu.Generate2DViews,
+        };
     }
 }
 
@@ -1276,6 +2100,18 @@ public interface ICloneableSettings<T> where T : ICloneableSettings<T>
 
 public sealed class VendorDrawingsSettings : ICloneableSettings<VendorDrawingsSettings>
 {
+    /// <summary>Title block type chosen in the setup window, as
+    /// "Family : Type". Null until the user has picked one.</summary>
+    public string? TitleBlockName { get; set; }
+
+    /// <summary>View template names last chosen in the setup window, so the
+    /// next run reopens with them already selected. Names, not ElementIds:
+    /// these settings are per-user and outlive any one document. Null until
+    /// the user has picked one.</summary>
+    public string? View3DTemplateName { get; set; }
+    public string? View2DTemplateName { get; set; }
+    public string? ScheduleTemplateName { get; set; }
+
     public double OffsetXMm { get; set; } = -250.0;
     public double OffsetYMm { get; set; } = 150.0;
 
@@ -1286,6 +2122,13 @@ public sealed class VendorDrawingsSettings : ICloneableSettings<VendorDrawingsSe
     public double ScheduleOffsetYMm { get; set; } = 90.0;
 
     public double ClusterSpacingFactor { get; set; } = 0.20;
+
+    /// <summary>Offset of the single 2D viewport that the Korea layout repeats
+    /// across its per-view sheets. Zero keeps the viewport on the sheet centre,
+    /// which is what settings files written before this existed deserialize to.
+    /// Read only by the Korea layout; the Vendor layout ignores it.</summary>
+    public double Views2DOffsetXMm { get; set; } = 0.0;
+    public double Views2DOffsetYMm { get; set; } = 0.0;
 
     public double LeftPercent { get; set; } = 0.60;
     public double BottomRightReservedXPercent { get; set; } = 0.35;
@@ -1299,10 +2142,16 @@ public sealed class VendorDrawingsSettings : ICloneableSettings<VendorDrawingsSe
     public double View3DOffsetYFt() => UnitUtils.ConvertToInternalUnits(View3DOffsetYMm, UnitTypeId.Millimeters);
     public double ScheduleOffsetXFt() => UnitUtils.ConvertToInternalUnits(ScheduleOffsetXMm, UnitTypeId.Millimeters);
     public double ScheduleOffsetYFt() => UnitUtils.ConvertToInternalUnits(ScheduleOffsetYMm, UnitTypeId.Millimeters);
+    public double Views2DOffsetXFt() => UnitUtils.ConvertToInternalUnits(Views2DOffsetXMm, UnitTypeId.Millimeters);
+    public double Views2DOffsetYFt() => UnitUtils.ConvertToInternalUnits(Views2DOffsetYMm, UnitTypeId.Millimeters);
 }
 
 public sealed class AssemblyDrawingsSettings : ICloneableSettings<AssemblyDrawingsSettings>
 {
+    /// <summary>Title block type chosen in the setup window, as
+    /// "Family : Type". Null until the user has picked one.</summary>
+    public string? TitleBlockName { get; set; }
+
     public double AsmViewXMm { get; set; } = -365.76;
     public double AsmViewYMm { get; set; } = 243.84;
     public double BoltViewXMm { get; set; } = 365.76;
@@ -1321,6 +2170,18 @@ public sealed class AssemblyDrawingsSettings : ICloneableSettings<AssemblyDrawin
 
 public sealed class MTDrawingsSettings : ICloneableSettings<MTDrawingsSettings>
 {
+    /// <summary>Title block type chosen in the setup window, as
+    /// "Family : Type". Null until the user has picked one.</summary>
+    public string? TitleBlockName { get; set; }
+
+    /// <summary>View template names last chosen in the setup window, so the
+    /// next run reopens with them already selected. Names, not ElementIds:
+    /// these settings are per-user and outlive any one document. Null until
+    /// the user has picked one.</summary>
+    public string? View3DTemplateName { get; set; }
+    public string? View2DTemplateName { get; set; }
+    public string? ScheduleTemplateName { get; set; }
+
     public double OffsetXMm { get; set; } = -229.0;
     public double OffsetYMm { get; set; } = 400.0;
     public bool ApplyOffsetXTwice { get; set; } = true;
@@ -1895,6 +2756,175 @@ internal abstract class LayoutSettingsDialogBase<T> : Window
 }
 
 
+
+// =============================================================================
+// Layout descriptors — one object per sheet layout
+// =============================================================================
+// The settings dialog and the sheet generation read the same descriptor, so the
+// preview cannot drift from what the command actually draws: adding a layout
+// means adding one descriptor, not editing the dialog as well.
+
+internal abstract class VendorLayoutDescriptor
+{
+    public abstract string DialogTitle { get; }
+
+    /// <summary>Whether the dialog offers the Vendor-only 6-view cluster row.</summary>
+    public abstract bool ShowClusterSection { get; }
+
+    /// <summary>Whether the dialog offers the Korea-only offset for the single
+    /// 2D viewport repeated across its per-view sheets.</summary>
+    public abstract bool Show2DSheetSection { get; }
+
+    public abstract void DrawPreview(LayoutPreviewCanvas preview, VendorDrawingsSettings s);
+
+    public abstract string PreviewStatus(VendorDrawingsSettings s);
+
+    public abstract IAssemblySheetLayout CreateLayout(VendorDrawingsSettings settings);
+
+    /// <summary>
+    /// Shows the settings dialog for this layout and builds the layout from
+    /// what came back, or null if the user cancelled.
+    /// </summary>
+    public IAssemblySheetLayout? CreateLayoutFrom(UIApplication uiApp) =>
+        SettingsGate.ShowVendorDrawings(uiApp, this) is { } settings
+            ? CreateLayout(settings)
+            : null;
+
+    public static readonly VendorLayoutDescriptor Vendor = new VendorLayoutDescriptorImpl();
+    public static readonly VendorLayoutDescriptor Korea = new KoreaLayoutDescriptorImpl();
+
+    // ── Shared preview geometry ──────────────────────────────────────────────
+    protected const double SheetW = 165.0;
+    protected const double SheetH = 117.0;
+    protected const double LeftPad = 18.0;
+    protected const double SheetTop = 8.0;
+
+    /// <summary>
+    /// Sheet 1 is the same for every layout: the 3D view and the part list, both
+    /// positioned off the dialog's offsets.
+    /// </summary>
+    protected static void DrawSheetOne(LayoutPreviewCanvas preview)
+    {
+        preview.DrawSheetOutline(LeftPad, SheetTop, SheetW, SheetH, "Sheet 1 — 3D + Schedule");
+
+        var cx = LeftPad + SheetW / 2.0;
+        var cy = SheetTop + SheetH / 2.0;
+        preview.DrawCrosshair(cx, cy);
+
+        preview.DrawElement(cx - 45, cy, 60.0, 48.0,
+            LayoutPreviewCanvas.View3DFill, LayoutPreviewCanvas.View3DStroke, "3D");
+
+        preview.DrawElement(cx + 55, cy - 30, 44.0, 34.0,
+            LayoutPreviewCanvas.ScheduleFill, LayoutPreviewCanvas.ScheduleStroke, "Sched");
+    }
+
+    protected static string SheetOneStatus(VendorDrawingsSettings s) =>
+        $"Global offset: {s.OffsetXMm:0.#} mm X, {s.OffsetYMm:0.#} mm Y  |  " +
+        $"3D view: {s.View3DOffsetXMm:0.#} mm X, {s.View3DOffsetYMm:0.#} mm Y  |  " +
+        $"Schedule: {s.ScheduleOffsetXMm:0.#} mm X, {s.ScheduleOffsetYMm:0.#} mm Y";
+}
+
+/// <summary>Two A3 sheets: 3D + schedule, then the six views clustered.</summary>
+internal sealed class VendorLayoutDescriptorImpl : VendorLayoutDescriptor
+{
+    public override string DialogTitle => "Vendor Drawings (A3, two sheets per assembly)";
+
+    public override bool ShowClusterSection => true;
+
+    public override bool Show2DSheetSection => false;
+
+    public override IAssemblySheetLayout CreateLayout(VendorDrawingsSettings settings) =>
+        new VendorSheetLayout(settings);
+
+    public override void DrawPreview(LayoutPreviewCanvas preview, VendorDrawingsSettings s)
+    {
+        DrawSheetOne(preview);
+
+        const double s2Top = SheetTop + SheetH + 16.0;
+        preview.DrawSheetOutline(LeftPad, s2Top, SheetW, SheetH, "Sheet 2 — 6-View Cluster");
+
+        const double cx = LeftPad + SheetW / 2.0;
+        const double cy = s2Top + SheetH / 2.0;
+
+        const double spacing = SheetW * 0.20;
+        const double viewSize = 16.0;
+        DrawClusterView(preview, cx, cy, viewSize, "F");
+        DrawClusterView(preview, cx + spacing, cy, viewSize, "B");
+        DrawClusterView(preview, cx - spacing, cy, viewSize, "R");
+        DrawClusterView(preview, cx + spacing * 2, cy, viewSize, "L");
+        DrawClusterView(preview, cx, cy - spacing, viewSize, "T");
+        DrawClusterView(preview, cx, cy + spacing, viewSize, "Bt");
+    }
+
+    public override string PreviewStatus(VendorDrawingsSettings s) =>
+        SheetOneStatus(s) +
+        $"  |  Cluster spacing: {s.ClusterSpacingFactor:0.##} × sheet W";
+
+    private static void DrawClusterView(
+        LayoutPreviewCanvas preview, double cx, double cy, double size, string label) =>
+        preview.DrawElement(cx, cy, size, size,
+            LayoutPreviewCanvas.View2DFill, LayoutPreviewCanvas.View2DStroke, label);
+}
+
+/// <summary>
+/// Seven sheets: 3D + schedule, then one view per sheet. The thumbnails mirror
+/// KoreaSheetLayout -- one viewport, centred, filling the same fraction of the
+/// drawable height the generated sheets use.
+/// </summary>
+internal sealed class KoreaLayoutDescriptorImpl : VendorLayoutDescriptor
+{
+    public override string DialogTitle => "Korea Drawings";
+
+    public override bool ShowClusterSection => false;
+
+    public override bool Show2DSheetSection => true;
+
+    public override IAssemblySheetLayout CreateLayout(VendorDrawingsSettings settings) =>
+        new KoreaSheetLayout(settings);
+
+    public override void DrawPreview(LayoutPreviewCanvas preview, VendorDrawingsSettings s)
+    {
+        DrawSheetOne(preview);
+
+        // Sheets 2-7 differ only in which view they carry, so one full-size
+        // representative sheet says more than six thumbnails would.
+        const double top = SheetTop + SheetH + 16.0;
+        preview.DrawSheetOutline(LeftPad, top, SheetW, SheetH,
+            "Representative 2D Sheet (Sheets 2\u20137)");
+
+        // One viewport at the layout's own fraction of the drawable height --
+        // the same constants the generated sheets are scaled by. Drawn at the
+        // sheet centre and deliberately NOT shifted by Views2DOffset: the
+        // representative sheet stands for all six, so it stays put while those
+        // fields are edited. The offsets still reach the generated sheets, and
+        // the status line below reports their current values.
+        const double usableW = SheetW * KoreaSheetLayout.UsableSheetFraction;
+        const double usableH = SheetH * KoreaSheetLayout.UsableSheetFraction;
+        const double boxW = usableW * 0.72;
+        const double boxH = usableH * KoreaSheetLayout.TargetHeightFraction;
+
+        preview.DrawElement(
+            LeftPad + SheetW / 2.0,
+            top + SheetH / 2.0,
+            boxW, boxH,
+            LayoutPreviewCanvas.View2DFill, LayoutPreviewCanvas.View2DStroke, "2D VIEW");
+
+        // Split across two lines: the preview column is too narrow for the
+        // sentence to fit on one at this font size.
+        preview.DrawCaption(
+            "Sheets 2\u20137 are identical in layout. Only the view changes",
+            LeftPad, top + SheetH + 6.0);
+        preview.DrawCaption(
+            "(Front, Back, Left, Right, Top, Bottom).",
+            LeftPad, top + SheetH + 18.0);
+    }
+
+    public override string PreviewStatus(VendorDrawingsSettings s) =>
+        SheetOneStatus(s) +
+        $"  |  2D view: {s.Views2DOffsetXMm:0.#} mm X, {s.Views2DOffsetYMm:0.#} mm Y" +
+        $"  |  2D viewports: {KoreaSheetLayout.TargetHeightFraction * 100:0} % of drawable height";
+}
+
 // =============================================================================
 // Button 1 dialog — Vendor Drawings
 // =============================================================================
@@ -1905,11 +2935,20 @@ internal sealed class VendorDrawingsSettingsDialog
     private NumericRow _offsetX = null!, _offsetY = null!;
     private NumericRow _v3dX = null!, _v3dY = null!;
     private NumericRow _schedX = null!, _schedY = null!;
-    private NumericRow _clusterSpacing = null!;
+    private NumericRow? _clusterSpacing;
+    private NumericRow? _views2dX, _views2dY;
 
-    public VendorDrawingsSettingsDialog(VendorDrawingsSettings initial, IntPtr revitHandle)
-        : base(initial, "Vendor Drawings (A3, two sheets per assembly)", revitHandle)
+    // Title, cluster row and preview all come off one descriptor, the same one
+    // that builds the layout doing the actual placement.
+    private readonly VendorLayoutDescriptor _descriptor;
+
+    public VendorDrawingsSettingsDialog(
+        VendorDrawingsSettings initial,
+        IntPtr revitHandle,
+        VendorLayoutDescriptor descriptor)
+        : base(initial, descriptor.DialogTitle, revitHandle)
     {
+        _descriptor = descriptor;
         RebuildAll();
     }
 
@@ -1938,6 +2977,20 @@ internal sealed class VendorDrawingsSettingsDialog
         _schedY = Row("Schedule offset Y", s.ScheduleOffsetYMm, "mm",
             "Y position of the schedule from sheet centre (excl. Global Offset).");
 
+        if (_descriptor.Show2DSheetSection)
+        {
+            ControlsPanel.Children.Add(
+                FormHelpers.SectionHeader("Representative 2D Sheet (Sheets 2\u20137)"));
+            _views2dX = Row("2D view offset X", s.Views2DOffsetXMm, "mm",
+                "X position of the 2D view from sheet centre, applied to all six " +
+                "sheets (excl. Global Offset).");
+            _views2dY = Row("2D view offset Y", s.Views2DOffsetYMm, "mm",
+                "Y position of the 2D view from sheet centre, applied to all six " +
+                "sheets (excl. Global Offset).");
+        }
+
+        if (!_descriptor.ShowClusterSection) return;
+
         ControlsPanel.Children.Add(FormHelpers.SectionHeader("Sheet 2 — 6-View Cluster"));
         _clusterSpacing = Row("Cluster spacing factor", s.ClusterSpacingFactor, "× sheet W",
             "Spacing between adjacent views in the First Angle cluster.");
@@ -1951,55 +3004,20 @@ internal sealed class VendorDrawingsSettingsDialog
         Working.View3DOffsetYMm = _v3dY.Value;
         Working.ScheduleOffsetXMm = _schedX.Value;
         Working.ScheduleOffsetYMm = _schedY.Value;
-        Working.ClusterSpacingFactor = _clusterSpacing.Value;
+
+        // Left at its stored value when the section is hidden: nothing edited it.
+        if (_clusterSpacing is { } clusterSpacing)
+            Working.ClusterSpacingFactor = clusterSpacing.Value;
+
+        if (_views2dX is { } views2dX) Working.Views2DOffsetXMm = views2dX.Value;
+        if (_views2dY is { } views2dY) Working.Views2DOffsetYMm = views2dY.Value;
     }
 
     protected override void RefreshPreview()
     {
-        var s = Working;
-
-        const double sheetW = 165.0;
-        const double sheetH = 117.0;
-        const double leftPad = 18.0;
-
-        const double s1Top = 8.0;
-        Preview.DrawSheetOutline(leftPad, s1Top, sheetW, sheetH, "Sheet 1 — 3D + Schedule");
-
-        const double s1CenterX = leftPad + sheetW / 2.0;
-        const double s1CenterY = s1Top + sheetH / 2.0;
-        Preview.DrawCrosshair(s1CenterX, s1CenterY);
-
-        Preview.DrawElement(s1CenterX - 45, s1CenterY, 60.0, 48.0,
-            LayoutPreviewCanvas.View3DFill, LayoutPreviewCanvas.View3DStroke, "3D");
-
-        Preview.DrawElement(s1CenterX + 55, s1CenterY - 30, 44.0, 34.0,
-            LayoutPreviewCanvas.ScheduleFill, LayoutPreviewCanvas.ScheduleStroke, "Sched");
-
-        const double s2Top = s1Top + sheetH + 16.0;
-        Preview.DrawSheetOutline(leftPad, s2Top, sheetW, sheetH, "Sheet 2 — 6-View Cluster");
-
-        const double s2CenterX = leftPad + sheetW / 2.0;
-        const double s2CenterY = s2Top + sheetH / 2.0;
-
-        const double fixedSpacing = sheetW * 0.20;
-        const double viewSize = 16.0;
-        DrawClusterView(s2CenterX, s2CenterY, viewSize, "F");
-        DrawClusterView(s2CenterX + fixedSpacing, s2CenterY, viewSize, "B");
-        DrawClusterView(s2CenterX - fixedSpacing, s2CenterY, viewSize, "R");
-        DrawClusterView(s2CenterX + fixedSpacing * 2, s2CenterY, viewSize, "L");
-        DrawClusterView(s2CenterX, s2CenterY - fixedSpacing, viewSize, "T");
-        DrawClusterView(s2CenterX, s2CenterY + fixedSpacing, viewSize, "Bt");
-
-        StatusText.Text =
-            $"Global offset: {s.OffsetXMm:0.#} mm X, {s.OffsetYMm:0.#} mm Y  |  " +
-            $"3D view: {s.View3DOffsetXMm:0.#} mm X, {s.View3DOffsetYMm:0.#} mm Y  |  " +
-            $"Schedule: {s.ScheduleOffsetXMm:0.#} mm X, {s.ScheduleOffsetYMm:0.#} mm Y  |  " +
-            $"Cluster spacing: {s.ClusterSpacingFactor:0.##} × sheet W";
+        _descriptor.DrawPreview(Preview, Working);
+        StatusText.Text = _descriptor.PreviewStatus(Working);
     }
-
-    private void DrawClusterView(double cx, double cy, double size, string label) =>
-        Preview.DrawElement(cx, cy, size, size,
-            LayoutPreviewCanvas.View2DFill, LayoutPreviewCanvas.View2DStroke, label);
 }
 
 
@@ -2207,10 +3225,12 @@ internal sealed class MTDrawingsSettingsDialog
 
 internal static class SettingsGate
 {
-    public static VendorDrawingsSettings? ShowVendorDrawings(UIApplication uiApp)
+    public static VendorDrawingsSettings? ShowVendorDrawings(
+        UIApplication uiApp, VendorLayoutDescriptor descriptor)
     {
         var initial = SettingsStore.LoadOrDefault<VendorDrawingsSettings>("vendor-drawings.json");
-        var dlg = new VendorDrawingsSettingsDialog(initial, uiApp.MainWindowHandle);
+        var dlg = new VendorDrawingsSettingsDialog(
+            initial, uiApp.MainWindowHandle, descriptor);
         if (dlg.ShowDialog() != true) return null;
         var result = dlg.Result;
         if (result is null) return null;
@@ -2243,13 +3263,95 @@ internal static class SettingsGate
 
 
 // =============================================================================
-// 7. BUTTON 1 — Cmd_VendorDrawings (A3, two sheets per assembly)
+// 7. SHARED ASSEMBLY DRAWING PIPELINE
 // =============================================================================
+// Vendor and Korea build exactly the same views, schedule and isolation for an
+// assembly; they differ only in how those end up on sheets. The pipeline below
+// owns everything shared, and each command supplies an IAssemblySheetLayout for
+// the part that varies.
 
-[Transaction(TransactionMode.Manual)]
-public sealed class Cmd_VendorDrawings : IExternalCommand
+/// <summary>Everything the shared pipeline built for one assembly.</summary>
+internal sealed class AssemblySheetContext(
+    Document doc,
+    AssemblyInstance assembly,
+    ElementId titleblockId,
+    NameRegistry sheetNames,
+    View3D? view3d,
+    ViewSchedule? schedule,
+    IReadOnlyDictionary<string, View> detailViews,
+    double modelWidth,
+    double modelHeight)
 {
-    private static readonly IReadOnlyDictionary<string, string> ViewTitles =
+    public Document Doc { get; } = doc;
+    public AssemblyInstance Assembly { get; } = assembly;
+    public ElementId TitleblockId { get; } = titleblockId;
+    public NameRegistry SheetNames { get; } = sheetNames;
+    /// <summary>Null when Step 5 had 3D Views unchecked.</summary>
+    public View3D? View3D { get; } = view3d;
+    /// <summary>Null when Step 5 had Schedules unchecked.</summary>
+    public ViewSchedule? Schedule { get; } = schedule;
+    public IReadOnlyDictionary<string, View> DetailViews { get; } = detailViews;
+
+    /// <summary>Widest horizontal span of the assembly.</summary>
+    public double ModelWidth { get; } = modelWidth;
+
+    /// <summary>Vertical span of the assembly.</summary>
+    public double ModelHeight { get; } = modelHeight;
+}
+
+/// <summary>
+/// The one thing that differs between the drawing commands: how the finished
+/// views are distributed over sheets, at what scale, and where.
+/// </summary>
+internal interface IAssemblySheetLayout
+{
+    void PlaceViews(AssemblySheetContext ctx);
+}
+
+/// <summary>
+/// The drawable area of a sheet, measured from the title block actually placed
+/// on it rather than assumed from a paper size -- the sheet origin is wherever
+/// the title block family puts it, so the centre has to be measured, not
+/// computed from a width and a height.
+/// </summary>
+internal readonly record struct SheetFrame(XYZ Center, double UsableWidth, double UsableHeight)
+{
+    public static SheetFrame Measure(Document doc, ViewSheet sheet, double usableFraction)
+    {
+        // The title block instance only exists once the new sheet is regenerated.
+        doc.Regenerate();
+
+        var titleblock = new FilteredElementCollector(doc, sheet.Id)
+            .OfCategory(BuiltInCategory.OST_TitleBlocks)
+            .WhereElementIsNotElementType()
+            .FirstElement();
+
+        if (titleblock?.get_BoundingBox(sheet) is not { } bb)
+        {
+            throw new InvalidOperationException(
+                "Could not measure the title block placed on the new sheet.");
+        }
+
+        var center = new XYZ(
+            (bb.Min.X + bb.Max.X) / 2.0,
+            (bb.Min.Y + bb.Max.Y) / 2.0,
+            0);
+
+        return new SheetFrame(
+            center,
+            Math.Abs(bb.Max.X - bb.Min.X) * usableFraction,
+            Math.Abs(bb.Max.Y - bb.Min.Y) * usableFraction);
+    }
+}
+
+/// <summary>
+/// Builds the six orthographic views, the 3D view and the part list for one
+/// assembly, applies templates and isolates the assembly in every view. Layout
+/// independent -- nothing here knows about sheets.
+/// </summary>
+internal static class AssemblyDrawingBuilder
+{
+    public static readonly IReadOnlyDictionary<string, string> ViewTitles =
         new Dictionary<string, string>
         {
             ["3D"] = "3D View",
@@ -2261,21 +3363,198 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
             ["RIGHT"] = "Right View",
         };
 
-    private static readonly IReadOnlyDictionary<string, AssemblyDetailViewOrientation> Orientations =
-        new Dictionary<string, AssemblyDetailViewOrientation>
+    // Look direction of each side view: the section camera points this way.
+    // The assembly axes run green/+X across the left-right span and red/+Y
+    // across the front-back span, so FRONT/BACK ride +/-X to land on the broad
+    // face and LEFT/RIGHT ride +/-Y for the narrow edge.
+    // TOP/BOTTOM are plan and section views and are created separately.
+    private static readonly IReadOnlyDictionary<string, XYZ> SideLookDirections =
+        new Dictionary<string, XYZ>
         {
-            ["FRONT"] = AssemblyDetailViewOrientation.ElevationFront,
-            ["BACK"] = AssemblyDetailViewOrientation.ElevationBack,
-            ["LEFT"] = AssemblyDetailViewOrientation.ElevationLeft,
-            ["RIGHT"] = AssemblyDetailViewOrientation.ElevationRight,
-            ["TOP"] = AssemblyDetailViewOrientation.ElevationTop,
-            ["BOTTOM"] = AssemblyDetailViewOrientation.ElevationBottom,
+            ["FRONT"] = new XYZ(-1, 0, 0),
+            ["BACK"] = new XYZ(1, 0, 0),
+            ["RIGHT"] = new XYZ(0, -1, 0),
+            ["LEFT"] = new XYZ(0, 1, 0),
         };
 
-    public Result Execute(ExternalCommandData commandData, ref string message,
-        ElementSet elements)
+    // Look direction the TOP and BOTTOM views are turned to. They already read
+    // correctly against the reference, so this is held separately rather than
+    // taken from SideLookDirections["FRONT"] -- relabelling which face is called
+    // Front must not swing them round by half a turn with it.
+    private static readonly XYZ PlanLookReference = new(1, 0, 0);
+
+    // Breathing room left around the assembly in the six 2D views. Small
+    // enough that the crop hugs the model, large enough that tags and
+    // annotation on the outermost members do not get clipped.
+    private const double CropPaddingMm = 10.0;
+
+    public static AssemblySheetContext Build(
+        Document doc,
+        AssemblyInstance assembly,
+        DrawingSetup setup,
+        ElementId titleblockId,
+        double sectionBoxPadding,
+        NameRegistry viewNames, NameRegistry sheetNames,
+        bool useAssemblyCoordinateSystem = false)
     {
-        var uiApp = commandData.Application;
+        var bbox = GeometryUtils.GetAssemblyBoundingBox(doc, assembly)
+            ?? throw new InvalidOperationException(
+                "Could not compute a bounding box for this assembly.");
+
+        var (sizeX, sizeY, sizeZ) = GeometryUtils.GetSize(bbox);
+        var modelW = Math.Max(sizeX, sizeY);
+        var modelH = sizeZ;
+
+        // Each category is gated by its Step 5 flag. A skipped category creates
+        // nothing and touches nothing already in the model -- including the view
+        // family type lookups, so a run with 2D off cannot fail on a project that
+        // has no Section or Floor Plan type.
+        View3D? view3d = null;
+        if (setup.Generate3DViews)
+        {
+            // Standard orthographic View3D, not an assembly 3D view. A section box
+            // does the framing, so the assembly has to be isolated explicitly the
+            // way the 2D views are.
+            var vft3d = ViewUtils.Get3DViewFamilyType(doc)
+                ?? throw new InvalidOperationException(
+                    "No 3D view family type found in this project.");
+
+            view3d = ViewUtils.CreateOrthographic3D(
+                doc, vft3d, viewNames.Reserve($"{assembly.Name} - 3D"),
+                setup.V3d!.Id, bbox, sectionBoxPadding);
+            ViewUtils.IsolateAssemblyPermanently(doc, view3d, assembly);
+
+            ViewUtils.SetDescription(view3d, ViewTitles["3D"]);
+        }
+
+        ViewSchedule? schedule = null;
+        if (setup.GenerateSchedules)
+        {
+            schedule = AssemblyViewUtils.CreatePartList(doc, assembly.Id);
+            schedule.Name = viewNames.Reserve($"{assembly.Name} - Part List");
+            schedule.ViewTemplateId = setup.Sched!.Id;
+        }
+
+        var detailViews = new Dictionary<string, View>(SideLookDirections.Count + 2);
+
+        if (setup.Generate2DViews)
+        {
+            // Orientation source. With the flag off this is null and every
+            // direction below is the world vector it always was; with it on the
+            // same vectors are read as assembly-space and mapped through the
+            // Assembly Origin, so the views follow a rotated origin.
+            var assemblyFrame = useAssemblyCoordinateSystem
+                ? assembly.GetTransform()
+                : null;
+
+            XYZ MapDirection(XYZ local) => assemblyFrame is null
+                ? local
+                : assemblyFrame.OfVector(local).Normalize();
+
+            // CropPaddingMm is for the 2D crop regions only.
+            var viewPadding = UnitUtils.ConvertToInternalUnits(
+                CropPaddingMm, UnitTypeId.Millimeters);
+
+            var sectionVft = ViewUtils.GetViewFamilyType(doc, ViewFamily.Section)
+                ?? throw new InvalidOperationException(
+                    "No Section view family type found in this project.");
+            var floorPlanVft = ViewUtils.GetViewFamilyType(doc, ViewFamily.FloorPlan)
+                ?? throw new InvalidOperationException(
+                    "No Floor Plan view family type found in this project.");
+
+            var bboxCenter = (bbox.Min + bbox.Max) / 2.0;
+
+            var level = LevelUtils.FindNearestLevel(doc, bboxCenter)
+                ?? throw new InvalidOperationException("No levels found in this project.");
+
+            foreach (var (key, lookDirection) in SideLookDirections)
+            {
+                detailViews[key] = ViewUtils.CreateOrthoSection(
+                    doc, sectionVft.Id, bbox, MapDirection(lookDirection), viewPadding);
+            }
+
+            // Plan and RCP views are born north-up, which puts them out of step
+            // with the sections. Turn them so their screen-right matches the
+            // plan reference direction, which is how the reference sheet reads.
+            var frontRight = XYZ.BasisZ
+                .CrossProduct(MapDirection(PlanLookReference).Normalize())
+                .Normalize();
+
+            // Fit, rotate, fit: the first fit keeps the crop small so the rotation's
+            // view-scoped lookup stays cheap, the second re-states the same extents
+            // in the turned frame. Both calls are the untouched fitting routine.
+            var topView = ViewPlan.Create(doc, floorPlanVft.Id, level.Id);
+            ViewUtils.FitViewRangeToBoundingBox(topView, bbox, level, viewPadding);
+            ViewUtils.FitCropBoxToBoundingBox(topView, bbox, viewPadding);
+            ViewUtils.RotateCropToRightDirection(doc, topView, frontRight, bboxCenter);
+            ViewUtils.FitCropBoxToBoundingBox(topView, bbox, viewPadding);
+            detailViews["TOP"] = topView;
+
+            // BOTTOM is an upward section, not a Reflected Ceiling Plan: an RCP
+            // mirrors what it draws and nothing in the API undoes that. It takes its
+            // crop from the creation box, exactly as the four side sections do, so
+            // it needs neither a view range nor a crop rotation.
+            var bottomView = ViewUtils.CreateUpwardSection(
+                doc, sectionVft.Id, bbox, frontRight, viewPadding);
+            detailViews["BOTTOM"] = bottomView;
+
+            foreach (var (key, view) in detailViews)
+            {
+                view.Name = viewNames.Reserve($"{assembly.Name} - {key}");
+                TryApplyTemplate(view, setup.V2d!.Id);
+                ViewUtils.IsolateAssemblyPermanently(doc, view, assembly);
+
+                if (ViewTitles.TryGetValue(key, out var title))
+                    ViewUtils.SetDescription(view, title);
+            }
+        }
+
+        return new AssemblySheetContext(
+            doc, assembly, titleblockId, sheetNames,
+            view3d, schedule, detailViews, modelW, modelH);
+    }
+
+    private static void TryApplyTemplate(View view, ElementId templateId)
+    {
+        try { view.ViewTemplateId = templateId; }
+        catch { /* template not valid for this view type; leave view without one */ }
+    }
+}
+
+/// <summary>Per-command wording and the layout that command draws with.</summary>
+internal sealed record AssemblyDrawingProfile(
+    string AlertTitle,
+    string TransactionName,
+    string ReportTitle,
+    Func<UIApplication, IAssemblySheetLayout?> CreateLayout,
+
+    /// <summary>
+    /// Settings file this command remembers its Window 1 picks in -- the three
+    /// view templates and the title block. Vendor and Korea share the window
+    /// and the settings type but not the file, so a template chosen in one
+    /// never resurfaces as the restored choice in the other.
+    /// </summary>
+    string TemplateSettingsFile,
+
+    /// <summary>
+    /// Build the six 2D views against the assembly's own coordinate system
+    /// (AssemblyInstance.GetTransform()) rather than the world axes, so they
+    /// follow a rotated Assembly Origin. Korea opts in; every other command
+    /// leaves this false and keeps world-aligned views.
+    /// </summary>
+    bool UseAssemblyCoordinateSystemFor2DViews = false);
+
+/// <summary>
+/// Drives the whole run: templates, assemblies, title block, settings, the
+/// per-assembly transaction loop and the report. Identical for every drawing
+/// command -- only the profile and its layout differ.
+/// </summary>
+internal static class AssemblyDrawingRunner
+{
+    public static Result Run(
+        UIApplication uiApp, AssemblyDrawingProfile profile, out string message)
+    {
+        message = string.Empty;
         var doc = uiApp.ActiveUIDocument.Document;
 
         try
@@ -2283,51 +3562,73 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
             var templates = ViewUtils.GetTemplates(doc);
             if (templates.Count == 0)
             {
-                AvControls.ShowAlert("Vendor Automation",
+                AvControls.ShowAlert(profile.AlertTitle,
                     "No view templates found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
-            var (tmpl3d, tmpl2d, tmplSched) =
-                TemplatePicker.PickTriple(templates, uiApp.MainWindowHandle);
-            if (tmpl3d is null || tmpl2d is null || tmplSched is null)
-                return Result.Cancelled;
+            // Loaded up front so the setup window can preselect the title block
+            // this command was last run with.
+            var saved = SettingsStore
+                .LoadOrDefault<VendorDrawingsSettings>(profile.TemplateSettingsFile);
 
+            // Collected before the setup window so its assembly column can offer
+            // them, already alphabetical from the shared collector.
             var assemblies = CollectAssemblies(doc);
             if (assemblies.Count == 0)
             {
-                AvControls.ShowAlert("Vendor Automation",
+                AvControls.ShowAlert(profile.AlertTitle,
                     "No assemblies found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
 
-            if (TitleblockUtils.FirstAvailable(doc) is not { } titleblock)
-            {
-                AvControls.ShowAlert("Vendor Automation",
-                    "No titleblock types found in this project.", AlertSeverity.Warning);
-                return Result.Failed;
-            }
+            var setup = TemplatePicker.PickSetup(
+                templates, doc, saved.TitleBlockName,
+                saved.View3DTemplateName, saved.View2DTemplateName,
+                saved.ScheduleTemplateName, assemblies,
+                profile.AlertTitle, uiApp.MainWindowHandle);
+            if (setup is null || !setup.IsComplete) return Result.Cancelled;
 
-            var settings = SettingsGate.ShowVendorDrawings(uiApp);
-            if (settings is null) return Result.Cancelled;
+            // Persisted before the settings dialog opens, so the dialog loads and
+            // re-saves the same choice rather than dropping it.
+            saved.TitleBlockName = TitleblockUtils.DisplayName(setup.Titleblock!);
+            saved.View3DTemplateName = setup.V3d?.Name;
+            saved.View2DTemplateName = setup.V2d?.Name;
+            saved.ScheduleTemplateName = setup.Sched?.Name;
+            SettingsStore.Save(profile.TemplateSettingsFile, saved);
+
+            if (profile.CreateLayout(uiApp) is not { } layout)
+                return Result.Cancelled;
+
+            // Section box padding is owned by the Assembly Drawings settings and
+            // read from there, so every command frames its 3D views identically
+            // rather than each keeping its own copy of the number.
+            var sectionBoxPadding = SettingsStore
+                .LoadOrDefault<AssemblyDrawingsSettings>("assembly-drawings.json")
+                .SectionBoxPaddingFt();
 
             var viewNames = BuildViewNameRegistry(doc);
             var sheetNames = BuildSheetNameRegistry(doc);
 
             var results = new List<(string Name, string? Error)>();
 
-            using var tx = new Transaction(doc, "Vendor Sheets - Batch");
+            using var tx = new Transaction(doc, profile.TransactionName);
             tx.Start();
             FailureHandling.SuppressWarnings(tx);
 
-            foreach (var assembly in assemblies)
+            foreach (var assembly in setup.SelectedAssemblies)
             {
                 using var sub = new SubTransaction(doc);
                 sub.Start();
                 try
                 {
-                    ProcessAssembly(doc, assembly, tmpl3d, tmpl2d, tmplSched,
-                        titleblock.Id, settings, viewNames, sheetNames);
+                    var ctx = AssemblyDrawingBuilder.Build(
+                        doc, assembly, setup,
+                        setup.Titleblock!.Id, sectionBoxPadding, viewNames, sheetNames,
+                        profile.UseAssemblyCoordinateSystemFor2DViews);
+
+                    layout.PlaceViews(ctx);
+
                     sub.Commit();
                     results.Add((assembly.Name, null));
                 }
@@ -2340,8 +3641,7 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
 
             tx.Commit();
 
-            Reporting.ShowResult("Vendor Drawing Automation", results,
-                uiApp.MainWindowHandle);
+            Reporting.ShowResult(profile.ReportTitle, results, uiApp.MainWindowHandle);
             return Result.Succeeded;
         }
         catch (Exception ex)
@@ -2351,62 +3651,85 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
         }
     }
 
-    private void ProcessAssembly(
-        Document doc,
-        AssemblyInstance assembly,
-        View tmpl3d, View tmpl2d, View tmplSched,
-        ElementId titleblockId,
-        VendorDrawingsSettings settings,
-        NameRegistry viewNames, NameRegistry sheetNames)
+    /// <summary>
+    /// Every assembly in the project, ordered by name so a batch processes them
+    /// in the same sequence every run. The collector itself yields Revit's
+    /// internal element order, which tracks creation order and is not a
+    /// meaningful ordering to a user.
+    /// </summary>
+    internal static List<AssemblyInstance> CollectAssemblies(Document doc) =>
+        new FilteredElementCollector(doc)
+            .OfCategory(BuiltInCategory.OST_Assemblies)
+            .WhereElementIsNotElementType()
+            .OfType<AssemblyInstance>()
+            .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    internal static NameRegistry BuildViewNameRegistry(Document doc) =>
+        new(new FilteredElementCollector(doc)
+            .OfClass(typeof(View))
+            .Cast<View>()
+            .Select(v => v.Name));
+
+    internal static NameRegistry BuildSheetNameRegistry(Document doc) =>
+        new(new FilteredElementCollector(doc)
+            .OfClass(typeof(ViewSheet))
+            .Cast<ViewSheet>()
+            .Select(s => s.Name));
+}
+
+/// <summary>
+/// The existing two-sheet A3 layout: 3D plus part list on sheet 1, the six
+/// orthographic views clustered in first-angle projection on sheet 2.
+/// </summary>
+internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAssemblySheetLayout
+{
+    public void PlaceViews(AssemblySheetContext ctx)
     {
-        var bbox = GeometryUtils.GetAssemblyBoundingBox(doc, assembly)
-            ?? throw new InvalidOperationException(
-                "Could not compute a bounding box for this assembly.");
-
-        var (sizeX, sizeY, sizeZ) = GeometryUtils.GetSize(bbox);
-        var modelW = Math.Max(sizeX, sizeY);
-        var modelH = sizeZ;
-
+        var doc = ctx.Doc;
         var offsetX = settings.OffsetXFt();
         var offsetY = settings.OffsetYFt();
 
-        var view3d = AssemblyViewUtils.Create3DOrthographic(doc, assembly.Id);
-        view3d.Name = viewNames.Reserve($"{assembly.Name} - 3D");
-        view3d.ViewTemplateId = tmpl3d.Id;
+        // Sheet 1 carries the 3D view and the schedule; sheet 2 carries the
+        // cluster. A sheet whose only contents were skipped in Step 5 is not
+        // created, so a partial run leaves no empty sheets behind.
+        var wantsSheet1 = ctx.View3D is not null || ctx.Schedule is not null;
+        var wantsSheet2 = ctx.DetailViews.Count > 0;
 
-        var schedule = AssemblyViewUtils.CreatePartList(doc, assembly.Id);
-        schedule.Name = viewNames.Reserve($"{assembly.Name} - Part List");
-        schedule.ViewTemplateId = tmplSched.Id;
-
-        var detailViews = ViewUtils.CreateDetailViews(
-            doc, assembly.Id, tmpl2d.Id, assembly.Name, viewNames, Orientations);
-
-        var sheet1 = ViewSheet.Create(doc, titleblockId);
-        sheet1.Name = sheetNames.Reserve($"V-ASM_{assembly.Name}_01");
-
-        var sheet2 = ViewSheet.Create(doc, titleblockId);
-        sheet2.Name = sheetNames.Reserve($"V-ASM_{assembly.Name}_02");
-
-        var view3dAvailW = RevitConstants.A3WidthFt * settings.LeftPercent
-                           - Math.Abs(settings.View3DOffsetXFt());
-        var view3dAvailH = RevitConstants.A3HeightFt
-                           - Math.Abs(settings.View3DOffsetYFt());
-
-        view3d.Scale = GeometryUtils.PickScale(modelW, modelH, view3dAvailW, view3dAvailH);
-
-        var reservedW = RevitConstants.A3WidthFt * settings.BottomRightReservedXPercent;
-        var reservedH = RevitConstants.A3HeightFt * settings.BottomRightReservedYPercent;
-        var scale2d = GeometryUtils.PickScale(
-            modelW * 3.0, modelH * 3.0,
-            RevitConstants.A3WidthFt - reservedW,
-            RevitConstants.A3HeightFt - reservedH);
-        foreach (var v in detailViews.Values) v.Scale = scale2d;
-
-        ViewUtils.SetDescription(view3d, ViewTitles["3D"]);
-        foreach (var (key, view) in detailViews)
+        ViewSheet? sheet1 = null;
+        if (wantsSheet1)
         {
-            if (ViewTitles.TryGetValue(key, out var title))
-                ViewUtils.SetDescription(view, title);
+            sheet1 = ViewSheet.Create(doc, ctx.TitleblockId);
+            sheet1.Name = ctx.SheetNames.Reserve($"V-ASM_{ctx.Assembly.Name}_01");
+        }
+
+        ViewSheet? sheet2 = null;
+        if (wantsSheet2)
+        {
+            sheet2 = ViewSheet.Create(doc, ctx.TitleblockId);
+            sheet2.Name = ctx.SheetNames.Reserve($"V-ASM_{ctx.Assembly.Name}_02");
+        }
+
+        if (ctx.View3D is { } view3d)
+        {
+            var view3dAvailW = RevitConstants.A3WidthFt * settings.LeftPercent
+                               - Math.Abs(settings.View3DOffsetXFt());
+            var view3dAvailH = RevitConstants.A3HeightFt
+                               - Math.Abs(settings.View3DOffsetYFt());
+
+            view3d.Scale = GeometryUtils.PickScale(
+                ctx.ModelWidth, ctx.ModelHeight, view3dAvailW, view3dAvailH);
+        }
+
+        if (wantsSheet2)
+        {
+            var reservedW = RevitConstants.A3WidthFt * settings.BottomRightReservedXPercent;
+            var reservedH = RevitConstants.A3HeightFt * settings.BottomRightReservedYPercent;
+            var scale2d = GeometryUtils.PickScale(
+                ctx.ModelWidth * 3.0, ctx.ModelHeight * 3.0,
+                RevitConstants.A3WidthFt - reservedW,
+                RevitConstants.A3HeightFt - reservedH);
+            foreach (var v in ctx.DetailViews.Values) v.Scale = scale2d;
         }
 
         var view3dPosition = new XYZ(
@@ -2419,15 +3742,20 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
             settings.ScheduleOffsetYFt() + offsetY,
             0);
 
-        Viewport.Create(doc, sheet1.Id, view3d.Id, view3dPosition);
-        ScheduleSheetInstance.Create(doc, sheet1.Id, schedule.Id, schedulePosition);
+        if (sheet1 is not null && ctx.View3D is { } placed3d)
+            Viewport.Create(doc, sheet1.Id, placed3d.Id, view3dPosition);
+
+        if (sheet1 is not null && ctx.Schedule is { } schedule)
+            ScheduleSheetInstance.Create(doc, sheet1.Id, schedule.Id, schedulePosition);
+
+        if (sheet2 is null) return;
 
         var spacing = RevitConstants.A3WidthFt * settings.ClusterSpacingFactor;
         var clusterCenter = new XYZ(offsetX, offsetY, 0);
 
         foreach (var (key, (dx, dy)) in BuildFirstAngleClusterPositions(spacing))
         {
-            if (!detailViews.TryGetValue(key, out var v)) continue;
+            if (!ctx.DetailViews.TryGetValue(key, out var v)) continue;
             Viewport.Create(doc, sheet2.Id, v.Id,
                 new XYZ(clusterCenter.X + dx, clusterCenter.Y + dy, 0));
         }
@@ -2444,30 +3772,616 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
             ["TOP"] = (0.0, -spacing),
             ["BOTTOM"] = (0.0, spacing),
         };
+}
 
-    internal static List<AssemblyInstance> CollectAssemblies(Document doc) =>
-        new FilteredElementCollector(doc)
-            .OfCategory(BuiltInCategory.OST_Assemblies)
-            .WhereElementIsNotElementType()
-            .OfType<AssemblyInstance>()
-            .ToList();
+/// <summary>
+/// <summary>
+/// Marks each sheet of a Korea drawing package with the assembly it documents
+/// and the role it plays, so an update can find the package by what a sheet IS
+/// rather than by what it is called. Users are then free to rename or renumber
+/// sheets without breaking the next run.
+/// <para>
+/// Packages created before this existed carry no stamp, so the lookup falls back
+/// to the old name pattern once and stamps whatever it finds -- after which that
+/// package no longer depends on its names either.
+/// </para>
+/// </summary>
+internal static class KoreaPackageStorage
+{
+    // Fixed for the life of the add-in: changing it orphans every stamped sheet.
+    private static readonly Guid SchemaGuid = new("6D6A5C41-9F27-4B8E-A0D3-27C58E1B7A94");
 
-    internal static NameRegistry BuildViewNameRegistry(Document doc) =>
-        new(new FilteredElementCollector(doc)
-            .OfClass(typeof(View))
-            .Cast<View>()
-            .Select(v => v.Name));
+    private const string SchemaName = "AVESKoreaDrawingPackage";
+    // Must match <VendorId> in AVES.addin exactly: with Vendor-level write
+    // access Revit compares the two and rejects every write when they differ.
+    // The manifest is the source of truth, so this follows it.
+    private const string VendorVendorId = "Development";
 
-    internal static NameRegistry BuildSheetNameRegistry(Document doc) =>
-        new(new FilteredElementCollector(doc)
-            .OfClass(typeof(ViewSheet))
-            .Cast<ViewSheet>()
-            .Select(s => s.Name));
+    private const string FieldAssemblyId = "AssemblyId";
+    private const string FieldAssemblyUniqueId = "AssemblyUniqueId";
+    private const string FieldPackageType = "PackageType";
+    private const string FieldSheetRole = "SheetRole";
+
+    public const string PackageTypeKorea = "Korea";
+
+    /// <summary>Role of the 3D / part list sheet.</summary>
+    public const string RoleFirstSheet = "Sheet1";
+
+    /// <summary>Role of a per-view sheet: FRONT becomes Front, and so on.</summary>
+    public static string RoleFor(string sheetOrderKey) =>
+        sheetOrderKey.Length == 0
+            ? sheetOrderKey
+            : char.ToUpperInvariant(sheetOrderKey[0]) + sheetOrderKey[1..].ToLowerInvariant();
+
+    /// <summary>
+    /// The schema, created on first use. Revit keeps schemas per session, so
+    /// Lookup succeeds on every later call in the same Revit run and on any
+    /// document that already holds stamped sheets.
+    /// </summary>
+    private static Autodesk.Revit.DB.ExtensibleStorage.Schema GetOrCreateSchema()
+    {
+        if (Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(SchemaGuid) is { } existing)
+            return existing;
+
+        using var builder = new Autodesk.Revit.DB.ExtensibleStorage.SchemaBuilder(SchemaGuid);
+
+        builder.SetSchemaName(SchemaName);
+        builder.SetVendorId(VendorVendorId);
+        builder.SetReadAccessLevel(Autodesk.Revit.DB.ExtensibleStorage.AccessLevel.Public);
+        builder.SetWriteAccessLevel(Autodesk.Revit.DB.ExtensibleStorage.AccessLevel.Vendor);
+
+        builder.AddSimpleField(FieldAssemblyId, typeof(ElementId));
+        builder.AddSimpleField(FieldAssemblyUniqueId, typeof(string));
+        builder.AddSimpleField(FieldPackageType, typeof(string));
+        builder.AddSimpleField(FieldSheetRole, typeof(string));
+
+        return builder.Finish();
+    }
+
+    /// <summary>Stamps one sheet as part of this assembly's Korea package.</summary>
+    public static void Stamp(ViewSheet sheet, AssemblyInstance assembly, string role)
+    {
+        var schema = GetOrCreateSchema();
+        var entity = new Autodesk.Revit.DB.ExtensibleStorage.Entity(schema);
+
+        entity.Set(FieldAssemblyId, assembly.Id);
+        entity.Set(FieldAssemblyUniqueId, assembly.UniqueId);
+        entity.Set(FieldPackageType, PackageTypeKorea);
+        entity.Set(FieldSheetRole, role);
+
+        sheet.SetEntity(entity);
+    }
+
+    /// <summary>
+    /// Every stamped sheet of this assembly's Korea package, keyed by role.
+    /// Empty when the package predates the stamp or does not exist.
+    /// <para>
+    /// TODO: this walks every sheet in the document once per assembly. A
+    /// document-wide cache built once per run would make it O(sheets) instead
+    /// of O(assemblies x sheets). Left as-is deliberately -- introduce it only
+    /// if profiling on a large model shows it matters.
+    /// </para>
+    /// </summary>
+    public static Dictionary<string, ViewSheet> FindPackageSheets(
+        Document doc, AssemblyInstance assembly)
+    {
+        var found = new Dictionary<string, ViewSheet>(StringComparer.OrdinalIgnoreCase);
+
+        if (Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(SchemaGuid) is not { } schema)
+            return found;
+
+        var uniqueId = assembly.UniqueId;
+
+        foreach (var sheet in new FilteredElementCollector(doc)
+                     .OfClass(typeof(ViewSheet))
+                     .Cast<ViewSheet>())
+        {
+            var entity = sheet.GetEntity(schema);
+            if (!entity.IsValid()) continue;
+
+            if (entity.Get<string>(FieldPackageType) != PackageTypeKorea) continue;
+            if (entity.Get<string>(FieldAssemblyUniqueId) != uniqueId) continue;
+
+            var role = entity.Get<string>(FieldSheetRole);
+            if (!string.IsNullOrEmpty(role))
+                found[role] = sheet;
+        }
+
+        return found;
+    }
+}
+
+/// One view per sheet: 3D plus part list on the first sheet, then a sheet each
+/// for Front, Back, Left, Right, Top and Bottom. Every 2D view is scaled so its
+/// viewport fills roughly <see cref="TargetHeightFraction"/> of the drawable
+/// height of its own sheet.
+/// </summary>
+internal sealed class KoreaSheetLayout(VendorDrawingsSettings settings) : IAssemblySheetLayout
+{
+    // Allowance for the title block's own borders and name block. The API can
+    // measure the sheet but not the frame drawn inside it, so this is the
+    // fraction of the sheet treated as drawable.
+    public const double UsableSheetFraction = 0.90;
+
+    // How much of that drawable height a placed 2D viewport should fill.
+    public const double TargetHeightFraction = 0.85;
+
+    // Order the per-view sheets are created and updated in, after the
+    // 3D/schedule sheet. Position in this array also fixes each sheet's name
+    // suffix: the first entry becomes _02, the last _07.
+    public static readonly string[] SheetOrder =
+        ["TOP", "BOTTOM", "FRONT", "BACK", "LEFT", "RIGHT"];
+
+    // The order sheets were named under before SheetOrder was changed. Frozen
+    // deliberately: it is used only to migrate a package that predates the
+    // Extensible Storage stamp, whose _02.._07 names were assigned under this
+    // sequence. Reading those names with the current SheetOrder would stamp the
+    // old Front sheet as Top and swap every role.
+    private static readonly string[] LegacySheetOrder =
+        ["FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"];
+
+    // Sheet 1 is the 3D/schedule sheet, so the per-view sheets start at 2.
+    private const int FirstDetailSheetIndex = 2;
+
+    public void PlaceViews(AssemblySheetContext ctx)
+    {
+        var doc = ctx.Doc;
+        var assemblyName = ctx.Assembly.Name;
+        var sheetIndex = 1;
+
+        // Same offsets the Vendor layout reads, off the same dialog. Vendor adds
+        // them to the sheet origin; here they are added to the measured frame
+        // centre, which is the same thing whenever the title block family is
+        // centred on its sheet and stays on-sheet when it is not.
+        var offsetX = settings.OffsetXFt();
+        var offsetY = settings.OffsetYFt();
+
+        // The 2D viewport offset is the same on every per-view sheet, so it is
+        // resolved once here and folded into the shared placement below.
+        var views2dX = settings.Views2DOffsetXFt();
+        var views2dY = settings.Views2DOffsetYFt();
+
+        // The sheets are the durable object; views and schedules on them are
+        // disposable. If this assembly already has a Korea package, refresh that
+        // one -- replacing only the categories Step 5 asked for, adding only what
+        // is missing -- rather than building a second package beside it. Running
+        // twice is therefore idempotent.
+        var existingSheets = ResolvePackageSheets(doc, ctx.Assembly);
+        if (existingSheets.Count > 0)
+        {
+            UpdateExistingPackage(ctx, existingSheets, offsetX, offsetY, views2dX, views2dY);
+            return;
+        }
+
+        // Sheet 1 exists only for the 3D view and the schedule; if Step 5 skipped
+        // both, it is not created. The per-view sheets below fall away on their
+        // own, because DetailViews is empty when 2D Views was unchecked.
+        if (ctx.View3D is not null || ctx.Schedule is not null)
+        {
+            var firstSheet = ViewSheet.Create(doc, ctx.TitleblockId);
+            firstSheet.Name = ctx.SheetNames.Reserve($"K-ASM_{assemblyName}_{sheetIndex:00}");
+            KoreaPackageStorage.Stamp(firstSheet, ctx.Assembly, KoreaPackageStorage.RoleFirstSheet);
+
+            var firstFrame = SheetFrame.Measure(doc, firstSheet, UsableSheetFraction);
+
+            if (ctx.View3D is { } view3d)
+            {
+                Scale3DView(ctx, view3d, firstFrame);
+
+                Viewport.Create(doc, firstSheet.Id, view3d.Id,
+                    View3DPoint(firstFrame, offsetX, offsetY));
+            }
+
+            if (ctx.Schedule is { } schedule)
+            {
+                ScheduleSheetInstance.Create(doc, firstSheet.Id, schedule.Id,
+                    SchedulePoint(firstFrame, offsetX, offsetY));
+            }
+        }
+
+        foreach (var key in SheetOrder)
+        {
+            if (!ctx.DetailViews.TryGetValue(key, out var view)) continue;
+
+            sheetIndex++;
+            PlaceOnNewSheet(ctx, $"K-ASM_{assemblyName}_{sheetIndex:00}",
+                KoreaPackageStorage.RoleFor(key), view,
+                offsetX, offsetY, views2dX, views2dY);
+        }
+    }
+
+    /// <summary>
+    /// The package's sheets, keyed by role. Extensible Storage is authoritative;
+    /// a package created before the stamp existed is located once by the old name
+    /// pattern and stamped on the spot, so the next run finds it by storage and
+    /// renaming the sheets stops mattering.
+    /// </summary>
+    private static Dictionary<string, ViewSheet> ResolvePackageSheets(
+        Document doc, AssemblyInstance assembly)
+    {
+        var stamped = KoreaPackageStorage.FindPackageSheets(doc, assembly);
+        if (stamped.Count > 0) return stamped;
+
+        var migrated = new Dictionary<string, ViewSheet>(StringComparer.OrdinalIgnoreCase);
+
+        AdoptByName(doc, assembly, migrated, 1, KoreaPackageStorage.RoleFirstSheet);
+
+        for (var i = 0; i < LegacySheetOrder.Length; i++)
+        {
+            AdoptByName(doc, assembly, migrated,
+                i + FirstDetailSheetIndex,
+                KoreaPackageStorage.RoleFor(LegacySheetOrder[i]));
+        }
+
+        return migrated;
+    }
+
+    /// <summary>Legacy name lookup, used only to migrate an unstamped package.</summary>
+    private static void AdoptByName(
+        Document doc, AssemblyInstance assembly,
+        Dictionary<string, ViewSheet> into, int sheetIndex, string role)
+    {
+        var sheetName = $"K-ASM_{assembly.Name}_{sheetIndex:00}";
+        if (ViewUtils.FindSheetByName(doc, sheetName) is not { } sheet) return;
+
+        KoreaPackageStorage.Stamp(sheet, assembly, role);
+        into[role] = sheet;
+    }
+
+    /// <summary>
+    /// Scale rule for the 3D view: the left share of the drawable width, less
+    /// whatever the dialog offset pushes it out by.
+    /// </summary>
+    private void Scale3DView(AssemblySheetContext ctx, View3D view3d, SheetFrame frame)
+    {
+        var availW = frame.UsableWidth * settings.LeftPercent
+                     - Math.Abs(settings.View3DOffsetXFt());
+        var availH = frame.UsableHeight
+                     - Math.Abs(settings.View3DOffsetYFt());
+
+        view3d.Scale = GeometryUtils.PickScale(
+            ctx.ModelWidth, ctx.ModelHeight, availW, availH);
+    }
+
+    private XYZ View3DPoint(SheetFrame frame, double offsetX, double offsetY) =>
+        new(frame.Center.X + settings.View3DOffsetXFt() + offsetX,
+            frame.Center.Y + settings.View3DOffsetYFt() + offsetY,
+            0);
+
+    private XYZ SchedulePoint(SheetFrame frame, double offsetX, double offsetY) =>
+        new(frame.Center.X + settings.ScheduleOffsetXFt() + offsetX,
+            frame.Center.Y + settings.ScheduleOffsetYFt() + offsetY,
+            0);
+
+    /// <summary>
+    /// Refreshes an existing package in place. Each category is handled only when
+    /// Step 5 asked for it -- the builder leaves View3D, Schedule and DetailViews
+    /// empty for anything unchecked -- so an unrequested category is neither
+    /// replaced nor deleted.
+    /// </summary>
+    private void UpdateExistingPackage(
+        AssemblySheetContext ctx, Dictionary<string, ViewSheet> existingSheets,
+        double offsetX, double offsetY, double views2dX, double views2dY)
+    {
+        if (ctx.View3D is not null || ctx.Schedule is not null)
+            UpdateFirstSheet(ctx, existingSheets, offsetX, offsetY);
+
+        if (ctx.DetailViews.Count > 0)
+            UpdateExisting2DPackage(ctx, existingSheets, offsetX, offsetY, views2dX, views2dY);
+    }
+
+    /// <summary>
+    /// Refreshes sheet 1 -- the 3D view and the part list. Creates the sheet only
+    /// when the package is missing it, so a partial package is repaired rather
+    /// than duplicated.
+    /// </summary>
+    private void UpdateFirstSheet(
+        AssemblySheetContext ctx, Dictionary<string, ViewSheet> existingSheets,
+        double offsetX, double offsetY)
+    {
+        var doc = ctx.Doc;
+
+        if (!existingSheets.TryGetValue(KoreaPackageStorage.RoleFirstSheet, out var sheet))
+        {
+            sheet = ViewSheet.Create(doc, ctx.TitleblockId);
+            sheet.Name = ctx.SheetNames.Reserve($"K-ASM_{ctx.Assembly.Name}_01");
+            KoreaPackageStorage.Stamp(sheet, ctx.Assembly, KoreaPackageStorage.RoleFirstSheet);
+        }
+
+        var frame = SheetFrame.Measure(doc, sheet, UsableSheetFraction);
+
+        if (ctx.View3D is { } view3d)
+        {
+            Scale3DView(ctx, view3d, frame);
+
+            // Sheet 1 carries at most one Viewport -- the schedule sits in a
+            // ScheduleSheetInstance, which is not a Viewport -- so the same swap
+            // the 2D sheets use applies here unchanged.
+            if (TryGetSingleViewport(doc, sheet) is { } viewport)
+                SwapViewportTo(doc, viewport, view3d);
+            else
+                Viewport.Create(doc, sheet.Id, view3d.Id, View3DPoint(frame, offsetX, offsetY));
+        }
+
+        if (ctx.Schedule is { } schedule)
+            ReplaceScheduleOnSheet(doc, sheet, schedule, frame, offsetX, offsetY);
+    }
+
+    /// <summary>
+    /// Swaps in a regenerated schedule.
+    /// <para>
+    /// ScheduleSheetInstance.ScheduleId is read-only in both 2025 and 2026, so a
+    /// placed schedule cannot be rebound to another schedule view the way a
+    /// Viewport can. The instance is therefore recreated -- but its exact point,
+    /// rotation and segment are carried over first, and the old schedule view is
+    /// deleted before the replacement takes its name, so nothing gains a "(1)"
+    /// suffix and the sheet looks unchanged apart from the contents.
+    /// </para>
+    /// </summary>
+    private void ReplaceScheduleOnSheet(
+        Document doc, ViewSheet sheet, ViewSchedule replacement,
+        SheetFrame frame, double offsetX, double offsetY)
+    {
+        // The dialog offsets are authoritative for the schedule, on a fresh
+        // sheet and on a replacement alike: changing Schedule offset X/Y in
+        // Window 2 must move it. This is the one deliberate difference from
+        // viewport replacement, which preserves whatever position it finds.
+        var point = SchedulePoint(frame, offsetX, offsetY);
+
+        // Title block revision schedules live on the same sheet and must not be
+        // mistaken for the part list.
+        var existing = new FilteredElementCollector(doc, sheet.Id)
+            .OfClass(typeof(ScheduleSheetInstance))
+            .Cast<ScheduleSheetInstance>()
+            .FirstOrDefault(s => !s.IsTitleblockRevisionSchedule);
+
+        if (existing is null)
+        {
+            ScheduleSheetInstance.Create(doc, sheet.Id, replacement.Id, point);
+            return;
+        }
+
+        // Rotation and segment carry over -- only the position is recomputed.
+        var rotation = existing.Rotation;
+        var segmentIndex = existing.SegmentIndex;
+
+        var oldScheduleId = existing.ScheduleId;
+        var oldScheduleName = (doc.GetElement(oldScheduleId) as View)?.Name;
+
+        // Instance first, then the view it pointed at: deleting the view would
+        // take the instance with it before rotation and segment are read.
+        doc.Delete(existing.Id);
+
+        if (oldScheduleId != ElementId.InvalidElementId)
+            doc.Delete(oldScheduleId);
+
+        if (!string.IsNullOrEmpty(oldScheduleName))
+            replacement.Name = oldScheduleName;
+
+        var placed = ScheduleSheetInstance.Create(
+            doc, sheet.Id, replacement.Id, point, segmentIndex);
+
+        placed.Point = point;
+        placed.Rotation = rotation;
+    }
+
+    /// <summary>
+    /// Refreshes the 2D half of the package: every sheet that is there has its
+    /// view replaced, and every sheet that is missing is created, so the package
+    /// comes out complete either way.
+    /// <para>
+    /// Sheets are found by name; the view on each is found by walking that
+    /// sheet's own viewport rather than by view name, because view names are not
+    /// unique across the Vendor, Korea and MT commands.
+    /// </para>
+    /// </summary>
+    private void UpdateExisting2DPackage(
+        AssemblySheetContext ctx, Dictionary<string, ViewSheet> existingSheets,
+        double offsetX, double offsetY, double views2dX, double views2dY)
+    {
+        var doc = ctx.Doc;
+        var assemblyName = ctx.Assembly.Name;
+
+        for (var i = 0; i < SheetOrder.Length; i++)
+        {
+            var key = SheetOrder[i];
+            if (!ctx.DetailViews.TryGetValue(key, out var replacement)) continue;
+
+            var role = KoreaPackageStorage.RoleFor(key);
+            var sheetName = $"K-ASM_{assemblyName}_{i + FirstDetailSheetIndex:00}";
+            existingSheets.TryGetValue(role, out var sheet);
+
+            if (sheet is null)
+            {
+                // Missing from the package -- add just this sheet.
+                PlaceOnNewSheet(ctx, sheetName, role, replacement,
+                    offsetX, offsetY, views2dX, views2dY);
+                continue;
+            }
+
+            if (TryGetSingleViewport(doc, sheet) is { } viewport)
+            {
+                ScaleToSheet(doc, sheet, replacement);
+                SwapViewportTo(doc, viewport, replacement);
+            }
+            else
+            {
+                // The sheet is there but carries no viewport we can safely swap,
+                // so place the replacement on it rather than leave it unplaced.
+                PlaceOnExistingSheet(doc, sheet, replacement,
+                    offsetX, offsetY, views2dX, views2dY);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The sheet's single viewport, or null when it carries none or more than
+    /// one -- anything else is not a package this command produced, so it is not
+    /// guessed at.
+    /// </summary>
+    private static Viewport? TryGetSingleViewport(Document doc, ViewSheet sheet)
+    {
+        var viewportIds = sheet.GetAllViewports();
+        if (viewportIds.Count != 1) return null;
+
+        return doc.GetElement(viewportIds.First()) as Viewport;
+    }
+
+    /// <summary>
+    /// Points an existing viewport at <paramref name="replacement"/>, deletes the
+    /// view it displaced and hands its name over.
+    /// <para>
+    /// The viewport element itself is never destroyed, so its position, rotation
+    /// and label survive; they are captured and restored anyway so the result
+    /// does not depend on ViewportPositioning.
+    /// </para>
+    /// </summary>
+    private static void SwapViewportTo(Document doc, Viewport viewport, View replacement)
+    {
+        if (!viewport.IsViewIdValidForViewport(replacement.Id)) return;
+
+        var oldViewId = viewport.ViewId;
+        var oldViewName = (doc.GetElement(oldViewId) as View)?.Name;
+
+        // Captured before the swap so the viewport lands exactly where it was.
+        var boxCenter = viewport.GetBoxCenter();
+        var rotation = viewport.Rotation;
+        var labelOffset = viewport.LabelOffset;
+        var labelLineLength = viewport.LabelLineLength;
+
+        viewport.ViewId = replacement.Id;
+
+        viewport.SetBoxCenter(boxCenter);
+        viewport.Rotation = rotation;
+        viewport.LabelOffset = labelOffset;
+        viewport.LabelLineLength = labelLineLength;
+
+        // Delete first, then rename: the old name is only free once the old view
+        // is gone, and the replacement carries a "(1)" suffix until then.
+        if (oldViewId != ElementId.InvalidElementId)
+            doc.Delete(oldViewId);
+
+        if (!string.IsNullOrEmpty(oldViewName))
+            replacement.Name = oldViewName;
+    }
+
+    /// <summary>Creates one per-view sheet and places the view on it.</summary>
+    private void PlaceOnNewSheet(
+        AssemblySheetContext ctx, string sheetName, string role, View view,
+        double offsetX, double offsetY, double views2dX, double views2dY)
+    {
+        var doc = ctx.Doc;
+
+        var sheet = ViewSheet.Create(doc, ctx.TitleblockId);
+        sheet.Name = ctx.SheetNames.Reserve(sheetName);
+        KoreaPackageStorage.Stamp(sheet, ctx.Assembly, role);
+
+        PlaceOnExistingSheet(doc, sheet, view, offsetX, offsetY, views2dX, views2dY);
+    }
+
+    /// <summary>Scales the view to the sheet and drops a viewport at its centre.</summary>
+    private static void PlaceOnExistingSheet(
+        Document doc, ViewSheet sheet, View view,
+        double offsetX, double offsetY, double views2dX, double views2dY)
+    {
+        var frame = ScaleToSheet(doc, sheet, view);
+
+        Viewport.Create(doc, sheet.Id, view.Id,
+            new XYZ(frame.Center.X + offsetX + views2dX,
+                    frame.Center.Y + offsetY + views2dY, 0));
+    }
+
+    /// <summary>
+    /// Scales the view off its own crop -- what the viewport actually draws,
+    /// which differs per view -- against the sheet drawable area.
+    /// </summary>
+    private static SheetFrame ScaleToSheet(Document doc, ViewSheet sheet, View view)
+    {
+        var frame = SheetFrame.Measure(doc, sheet, UsableSheetFraction);
+
+        var crop = view.CropBox;
+        var viewWidth = Math.Abs(crop.Max.X - crop.Min.X);
+        var viewHeight = Math.Abs(crop.Max.Y - crop.Min.Y);
+
+        view.Scale = GeometryUtils.PickScale(
+            viewWidth, viewHeight,
+            frame.UsableWidth,
+            frame.UsableHeight * TargetHeightFraction);
+
+        return frame;
+    }
 }
 
 
 // =============================================================================
-// 7. BUTTON 2 — Cmd_AssemblyDrawings (bolt clustering, one sheet per assembly)
+// 8. BUTTON 1 — Cmd_VendorDrawings (A3, two sheets per assembly)
+// =============================================================================
+
+[Transaction(TransactionMode.Manual)]
+public sealed class Cmd_VendorDrawings : IExternalCommand
+{
+    private static readonly VendorLayoutDescriptor Descriptor =
+        VendorLayoutDescriptor.Vendor;
+
+    private static readonly AssemblyDrawingProfile Profile = new(
+        "Vendor Automation",
+        "Vendor Sheets - Batch",
+        "Vendor Drawing Automation",
+        uiApp => Descriptor.CreateLayoutFrom(uiApp),
+        TemplateSettingsFile: "vendor-drawings.json");
+
+    public Result Execute(ExternalCommandData commandData, ref string message,
+        ElementSet elements)
+    {
+        var result = AssemblyDrawingRunner.Run(
+            commandData.Application, Profile, out var failure);
+        if (failure.Length > 0) message = failure;
+        return result;
+    }
+
+    // Kept as forwarders: Cmd_MTDrawings calls these by name.
+    internal static List<AssemblyInstance> CollectAssemblies(Document doc) =>
+        AssemblyDrawingRunner.CollectAssemblies(doc);
+
+    internal static NameRegistry BuildViewNameRegistry(Document doc) =>
+        AssemblyDrawingRunner.BuildViewNameRegistry(doc);
+
+    internal static NameRegistry BuildSheetNameRegistry(Document doc) =>
+        AssemblyDrawingRunner.BuildSheetNameRegistry(doc);
+}
+
+
+// =============================================================================
+// 9. BUTTON 4 — Cmd_KoreaDrawings (one view per sheet)
+// =============================================================================
+
+[Transaction(TransactionMode.Manual)]
+public sealed class Cmd_KoreaDrawings : IExternalCommand
+{
+    private static readonly VendorLayoutDescriptor Descriptor =
+        VendorLayoutDescriptor.Korea;
+
+    private static readonly AssemblyDrawingProfile Profile = new(
+        "Korea Automation",
+        "Korea Sheets - Batch",
+        "Korea Drawing Automation",
+        uiApp => Descriptor.CreateLayoutFrom(uiApp),
+        TemplateSettingsFile: "korea-drawings.json",
+        UseAssemblyCoordinateSystemFor2DViews: true);
+
+    public Result Execute(ExternalCommandData commandData, ref string message,
+        ElementSet elements)
+    {
+        var result = AssemblyDrawingRunner.Run(
+            commandData.Application, Profile, out var failure);
+        if (failure.Length > 0) message = failure;
+        return result;
+    }
+}
+
+
+// =============================================================================
+// 10. BUTTON 2 — Cmd_AssemblyDrawings (bolt clustering, one sheet per assembly)
 // =============================================================================
 
 [Transaction(TransactionMode.Manual)]
@@ -2516,10 +4430,10 @@ public sealed class Cmd_AssemblyDrawings : IExternalCommand
 
         try
         {
-            var assemblies = new FilteredElementCollector(doc)
-                .OfClass(typeof(AssemblyInstance))
-                .Cast<AssemblyInstance>()
-                .ToList();
+            // Shared collector, so this command processes assemblies in the same
+            // alphabetical order as Vendor, Korea and MT rather than keeping its
+            // own copy of the query and the sort.
+            var assemblies = AssemblyDrawingRunner.CollectAssemblies(doc);
 
             if (assemblies.Count == 0)
             {
@@ -2539,12 +4453,32 @@ public sealed class Cmd_AssemblyDrawings : IExternalCommand
                 return Result.Failed;
             }
 
-            if (TitleblockUtils.FirstAvailable(doc) is not { } titleblock)
+            // This command has no setup window to pick a title block in, so it
+            // resolves the one stored in its own settings, falling back to the
+            // first available if that type has since left the project.
+            var titleblocks = TitleblockUtils.CollectSymbols(doc);
+            var savedAsm = SettingsStore
+                .LoadOrDefault<AssemblyDrawingsSettings>("assembly-drawings.json");
+
+            if (TitleblockUtils.Resolve(titleblocks, savedAsm.TitleBlockName, out var fellBack)
+                is not { } titleblock)
             {
                 AvControls.ShowAlert("Assembly Bolt Automation",
                     "No title block found in this project.", AlertSeverity.Warning);
                 return Result.Failed;
             }
+
+            if (fellBack)
+            {
+                AvControls.ShowAlert("Assembly Bolt Automation",
+                    $"The saved title block \"{savedAsm.TitleBlockName}\" is no longer " +
+                    "in this project.\n\n" +
+                    $"\"{TitleblockUtils.DisplayName(titleblock)}\" has been used instead.",
+                    AlertSeverity.Warning);
+            }
+
+            savedAsm.TitleBlockName = TitleblockUtils.DisplayName(titleblock);
+            SettingsStore.Save("assembly-drawings.json", savedAsm);
 
             var missingTemplates = new List<string>();
             foreach (var ctx in contexts)
@@ -2703,14 +4637,17 @@ public sealed class Cmd_AssemblyDrawings : IExternalCommand
         var template = ctx.Template!;
 
         var asmViewName = $"ASM_{asmName}_3D";
-        var asmView = ViewUtils.Find3DViewByName(doc, asmViewName);
-        if (asmView is null)
+        // Reuse an existing view where one is already there, but always refit
+        // its section box -- the assembly may have moved or changed since.
+        if (ViewUtils.Find3DViewByName(doc, asmViewName) is { } existing)
         {
-            asmView = View3D.CreateIsometric(doc, vft3d.Id);
-            asmView.Name = asmViewName;
-            asmView.ViewTemplateId = template.Id;
+            ViewUtils.ApplySectionBox(existing, ctx.BoundingBox, padding);
         }
-        ViewUtils.ApplySectionBox(asmView, ctx.BoundingBox, padding);
+        else
+        {
+            ViewUtils.CreateOrthographic3D(
+                doc, vft3d, asmViewName, template.Id, ctx.BoundingBox, padding);
+        }
 
         foreach (var ct in ctx.BoltClusterTypes)
         {
@@ -2718,10 +4655,8 @@ public sealed class Cmd_AssemblyDrawings : IExternalCommand
             var boltViewName = $"ASM_{asmName}_BOLT_{safeName}_{ct.DirectionKey}";
             if (ViewUtils.Find3DViewByName(doc, boltViewName) is not null) continue;
 
-            var boltView = View3D.CreateIsometric(doc, vft3d.Id);
-            boltView.Name = boltViewName;
-            boltView.ViewTemplateId = template.Id;
-            ViewUtils.ApplySectionBox(boltView, ct.BoundingBox, padding);
+            ViewUtils.CreateOrthographic3D(
+                doc, vft3d, boltViewName, template.Id, ct.BoundingBox, padding);
         }
     }
 
@@ -2762,7 +4697,7 @@ public sealed class Cmd_AssemblyDrawings : IExternalCommand
 
 
 // =============================================================================
-// 7. BUTTON 3 — Cmd_MTDrawings (A1, single sheet per assembly)
+// 11. BUTTON 3 — Cmd_MTDrawings (A1, single sheet per assembly)
 // =============================================================================
 
 [Transaction(TransactionMode.Manual)]
@@ -2810,11 +4745,13 @@ public sealed class Cmd_MTDrawings : IExternalCommand
                 return Result.Failed;
             }
 
-            var (tmpl3d, tmpl2d, tmplSched) =
-                TemplatePicker.PickTriple(templates, uiApp.MainWindowHandle);
-            if (tmpl3d is null || tmpl2d is null || tmplSched is null)
-                return Result.Cancelled;
+            // Loaded up front so the setup window can preselect the title block
+            // this command was last run with.
+            var savedMt = SettingsStore
+                .LoadOrDefault<MTDrawingsSettings>("mtq-drawings.json");
 
+            // Collected before the setup window so its assembly column can offer
+            // them, already alphabetical from the shared collector.
             var assemblies = Cmd_VendorDrawings.CollectAssemblies(doc);
             if (assemblies.Count == 0)
             {
@@ -2823,12 +4760,18 @@ public sealed class Cmd_MTDrawings : IExternalCommand
                 return Result.Failed;
             }
 
-            if (TitleblockUtils.FirstAvailable(doc) is not { } titleblock)
-            {
-                AvControls.ShowAlert("Vendor Automation (Single Sheet)",
-                    "No titleblock types found in this project.", AlertSeverity.Warning);
-                return Result.Failed;
-            }
+            var setup = TemplatePicker.PickSetup(
+                templates, doc, savedMt.TitleBlockName,
+                savedMt.View3DTemplateName, savedMt.View2DTemplateName,
+                savedMt.ScheduleTemplateName, assemblies,
+                "Vendor Automation (Single Sheet)", uiApp.MainWindowHandle);
+            if (setup is null || !setup.IsComplete) return Result.Cancelled;
+
+            savedMt.TitleBlockName = TitleblockUtils.DisplayName(setup.Titleblock!);
+            savedMt.View3DTemplateName = setup.V3d?.Name;
+            savedMt.View2DTemplateName = setup.V2d?.Name;
+            savedMt.ScheduleTemplateName = setup.Sched?.Name;
+            SettingsStore.Save("mtq-drawings.json", savedMt);
 
             var settings = SettingsGate.ShowMTDrawings(uiApp);
             if (settings is null) return Result.Cancelled;
@@ -2842,14 +4785,14 @@ public sealed class Cmd_MTDrawings : IExternalCommand
             tx.Start();
             FailureHandling.SuppressWarnings(tx);
 
-            foreach (var assembly in assemblies)
+            foreach (var assembly in setup.SelectedAssemblies)
             {
                 using var sub = new SubTransaction(doc);
                 sub.Start();
                 try
                 {
-                    ProcessAssembly(doc, assembly, tmpl3d, tmpl2d, tmplSched,
-                        titleblock.Id, settings, viewNames, sheetNames);
+                    ProcessAssembly(doc, assembly, setup,
+                        setup.Titleblock!.Id, settings, viewNames, sheetNames);
                     sub.Commit();
                     results.Add((assembly.Name, null));
                 }
@@ -2876,7 +4819,7 @@ public sealed class Cmd_MTDrawings : IExternalCommand
     private static void ProcessAssembly(
         Document doc,
         AssemblyInstance assembly,
-        View tmpl3d, View tmpl2d, View tmplSched,
+        DrawingSetup setup,
         ElementId titleblockId,
         MTDrawingsSettings settings,
         NameRegistry viewNames, NameRegistry sheetNames)
@@ -2889,18 +4832,30 @@ public sealed class Cmd_MTDrawings : IExternalCommand
         var modelH = sizeZ;
 
         var offsetX = settings.OffsetXFt();
+
         var offsetY = settings.OffsetYFt();
+        // Each category is gated by its Step 5 flag; a skipped one creates
+        // nothing and leaves what is already in the model alone.
+        View3D? view3d = null;
+        if (setup.Generate3DViews)
+        {
+            view3d = AssemblyViewUtils.Create3DOrthographic(doc, assembly.Id);
+            view3d.Name = viewNames.Reserve($"{assembly.Name} - 3D");
+            view3d.ViewTemplateId = setup.V3d!.Id;
+        }
 
-        var view3d = AssemblyViewUtils.Create3DOrthographic(doc, assembly.Id);
-        view3d.Name = viewNames.Reserve($"{assembly.Name} - 3D");
-        view3d.ViewTemplateId = tmpl3d.Id;
+        ViewSchedule? schedule = null;
+        if (setup.GenerateSchedules)
+        {
+            schedule = AssemblyViewUtils.CreatePartList(doc, assembly.Id);
+            schedule.Name = viewNames.Reserve($"{assembly.Name} - Part List");
+            schedule.ViewTemplateId = setup.Sched!.Id;
+        }
 
-        var schedule = AssemblyViewUtils.CreatePartList(doc, assembly.Id);
-        schedule.Name = viewNames.Reserve($"{assembly.Name} - Part List");
-        schedule.ViewTemplateId = tmplSched.Id;
-
-        var detailViews = ViewUtils.CreateDetailViews(
-            doc, assembly.Id, tmpl2d.Id, assembly.Name, viewNames, Orientations);
+        var detailViews = setup.Generate2DViews
+            ? ViewUtils.CreateDetailViews(
+                doc, assembly.Id, setup.V2d!.Id, assembly.Name, viewNames, Orientations)
+            : new Dictionary<string, View>();
 
         var sheet = ViewSheet.Create(doc, titleblockId);
         sheet.Name = sheetNames.Reserve($"MT-{assembly.Name}");
@@ -2912,10 +4867,14 @@ public sealed class Cmd_MTDrawings : IExternalCommand
             modelW, modelH,
             Left3DZoneWidth, RevitConstants.A1HeightFt);
 
-        view3d.Scale = scale3d;
+        if (view3d is not null)
+        {
+            view3d.Scale = scale3d;
+            ViewUtils.SetDescription(view3d, ViewTitles["3D"]);
+        }
+
         foreach (var v in detailViews.Values) v.Scale = scale2d;
 
-        ViewUtils.SetDescription(view3d, ViewTitles["3D"]);
         foreach (var (key, view) in detailViews)
         {
             if (ViewTitles.TryGetValue(key, out var title))
@@ -2944,17 +4903,23 @@ public sealed class Cmd_MTDrawings : IExternalCommand
                 Viewport.Create(doc, sheet.Id, view.Id, pos);
         }
 
-        Viewport.Create(doc, sheet.Id, view3d.Id,
-            new XYZ(left3dZoneCenterX + settings.View3DOffsetXFt(),
-                    offsetY + settings.View3DOffsetYFt(),
-                    0));
+        if (view3d is not null)
+        {
+            Viewport.Create(doc, sheet.Id, view3d.Id,
+                new XYZ(left3dZoneCenterX + settings.View3DOffsetXFt(),
+                        offsetY + settings.View3DOffsetYFt(),
+                        0));
+        }
 
-        var scheduleBaseX = rightHalfCenterX + (RightHalfWidth * -0.10) + offsetX;
-        var scheduleBaseY = (RevitConstants.A1HeightFt * 0.40) + offsetY;
-        ScheduleSheetInstance.Create(doc, sheet.Id, schedule.Id,
-            new XYZ(scheduleBaseX + settings.PartListOffsetXFt(),
-                    scheduleBaseY + settings.PartListOffsetYFt(),
-                    0));
+        if (schedule is not null)
+        {
+            var scheduleBaseX = rightHalfCenterX + (RightHalfWidth * -0.10) + offsetX;
+            var scheduleBaseY = (RevitConstants.A1HeightFt * 0.40) + offsetY;
+            ScheduleSheetInstance.Create(doc, sheet.Id, schedule.Id,
+                new XYZ(scheduleBaseX + settings.PartListOffsetXFt(),
+                        scheduleBaseY + settings.PartListOffsetYFt(),
+                        0));
+        }
     }
 
     private static IReadOnlyDictionary<string, XYZ> BuildFirstAngleProjectionPositions(
