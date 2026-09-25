@@ -645,13 +645,24 @@ namespace AVES.Core
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 ToolTip = value
             };
+            // Trimming and tooltip to match the value above, which has had both
+            // all along. Without them a label too wide for its tile was simply cut
+            // off mid-word with nothing to show it had happened -- and tiles are
+            // laid out in equal star columns, so how much room a label gets
+            // depends on how many tiles share the row and how far the window has
+            // been dragged in, neither of which the label can know.
+            //
+            // No visible change at sizes where the label already fitted. Where it
+            // did not, a hard cut becomes an ellipsis with the full text on hover.
             var k = new TextBlock
             {
                 Text = label,
                 FontFamily = AvTokens.Ui,
                 FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.B(AvTokens.TextFaint)
+                Foreground = AvTokens.B(AvTokens.TextFaint),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                ToolTip = label
             };
             var stack = new StackPanel();
             stack.Children.Add(v);
