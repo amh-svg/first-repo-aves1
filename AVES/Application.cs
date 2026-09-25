@@ -123,6 +123,17 @@ namespace AVES
 
             #endregion
 
+            #region Modeling Panel
+
+            // Create Modeling panel
+            var panelModeling = uiCtlApp.Ext_AddRibbonPanel(Globals.AddinName, "Modeling");
+
+            // Add button to panel
+            var buttonMekanoGenerator = panelModeling.Ext_AddPushButton("Mekano\nGenerator", "AVES.Cmds_Button_MG1.Cmd_MG1");
+            var buttonMekanoBolts = panelModeling.Ext_AddPushButton("Add\nBolts", "AVES.Cmds_MG2.Cmd_MG2");
+
+            #endregion
+
             #endregion
 
             // Final return
