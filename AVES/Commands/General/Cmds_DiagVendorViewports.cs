@@ -5,11 +5,14 @@
 //          viewport: ids, the view it shows, that view's name / title on
 //          sheet / orientation, the viewport's position, rotation and label,
 //          and every Extensible Storage entity on the sheet, viewport and
-//          view (including AssemblyOrientationStorage's stamp once packages
-//          are regenerated under it). Also prints a per-assembly geometry
-//          report -- extents/ratio, centroid offset, members ranked along
-//          each local axis -- so a Front/Back or Left/Right sign check has an
-//          identifiable real element to look for instead of an impression.
+//          view. Also prints a per-assembly geometry report -- centroid
+//          offset, members ranked along each local axis -- so a Front/Back
+//          or Left/Right sign check has an identifiable real element to look
+//          for instead of an impression. Front/Back is a fixed convention in
+//          production now (AssemblyDrawingBuilder.SideLookDirections), not a
+//          derivation, so this report no longer carries extents, a long/
+//          short ratio, or a stamp comparison -- those existed to protect a
+//          derived choice that no longer exists.
 // Key logic: Read-only against the model. The one write is an optional
 //            probe that attaches a throwaway entity to a viewport and its
 //            view inside a transaction that is always rolled back, to prove
@@ -29,9 +32,6 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.ExtensibleStorage;
 using Autodesk.Revit.UI;
 using AVES.Core;
-// Production's real orientation stamp -- read here, not reimplemented, so the
-// diagnostic reports what the builder actually did, not a guess at it.
-using AVES.Cmds_PullDownCreateSheets;
 using Grid = System.Windows.Controls.Grid;
 using TextBox = System.Windows.Controls.TextBox;
 using Button = System.Windows.Controls.Button;
@@ -77,23 +77,22 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
     // local-frame vector is now also printed for every view, so this table is a
     // convenience hint, not the ground truth.
     //
-    // IMPORTANT, updated once production changed: this whole table describes the
-    // OLD fixed SideLookDirections/CreateUpwardSection convention, which no longer
-    // exists in production -- FRONT/BACK/LEFT/RIGHT are now derived per assembly
-    // (AssemblyDrawingBuilder.DeriveFrontAxis), not fixed to X/Y. ClassifyByDirection
-    // therefore does NOT match a view against ITS OWN key's slot; it reports
-    // whichever table key's vector happens to equal that view's reported direction,
-    // and for a horizontal, current production's four directions are always some
-    // permutation of the same four unit vectors this table also uses -- so the
-    // "Direction match" label a view gets is frequently a DIFFERENT key than the
-    // view's own name (e.g. a FRONT view reporting "KEY RIGHT" is expected, not a
-    // fault), and the per-sheet "resolved N/6" tally still means what it always
-    // meant (does every one of the 6 table slots get claimed by exactly one view).
-    // BOTTOM was fixed to (0,0,-1) to match CreateUpwardSection's corrected sign
-    // (Cmds_PullDown2.cs:396, was (0,0,-1) declared/colliding with TOP, now
-    // (0,0,1) declared -> (0,0,-1) reported) -- before this fix every current-
-    // builder package read "missing BOTTOM" here, which was this stale entry,
-    // not a regression in production.
+    // IMPORTANT, updated more than once as production changed underneath it:
+    // production went fixed table (X-axis Front) -> geometry-derived per
+    // assembly -> fixed table again (Y-axis Front, the project's own assembly-
+    // origin convention -- see AssemblyDrawingBuilder.SideLookDirections). This
+    // table's own vectors were never updated to match that final state (still
+    // X-axis Front/Back below) and are not being changed now either -- the raw
+    // local-frame vector is printed for every view specifically so nothing has
+    // to trust this table for ground truth. What DOES still hold regardless of
+    // which production generation a sample came from: ClassifyByDirection does
+    // NOT match a view against ITS OWN key's slot, it reports whichever table
+    // key's vector happens to equal that view's reported direction, so a
+    // "Direction match" label frequently names a DIFFERENT key than the view's
+    // own name -- expected, not a fault -- and the per-sheet "resolved N/6"
+    // tally means: does every one of the 6 table slots get claimed by exactly
+    // one view (using THIS table's own, possibly-mismatched-to-production,
+    // vectors as the yardstick).
     private static readonly (string Key, XYZ Dir)[] ExpectedViewDirections =
     [
         ("FRONT", new XYZ(1, 0, 0)),
@@ -105,14 +104,6 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
     ];
 
     private static readonly Regex CollisionSuffix = new(@" \(\d+\)$", RegexOptions.Compiled);
-
-    // Maps a sheet name's <PREFIX>-ASM_ prefix to the PackageType string
-    // AssemblyOrientationStorage.Stamp actually writes (Cmds_PullDown2.cs, the
-    // two AssemblyDrawingProfile definitions) -- "K"/"V" is a sheet-naming
-    // convention, "Korea"/"Vendor" is the stamped data. Extend if MT ever gets
-    // a real -ASM_ sheet name and a PackageType of its own.
-    private static readonly Dictionary<string, string> PackageTypeByPrefix =
-        new() { ["K"] = "Korea", ["V"] = "Vendor" };
 
     /// <summary>One resolved view, kept for the cross-package comparison that runs
     /// after every selected sheet has been dumped.</summary>
@@ -254,7 +245,7 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
                               $"(IsAxisAlignedRotation's current tolerance: componentwise " +
                               $"1e-6, roughly equivalent to ~0.0001 deg for a single-axis tilt)");
 
-                PrintAssemblyGeometryReport(doc, assembly, packagePrefix, sb);
+                PrintAssemblyGeometryReport(doc, assembly, sb);
             }
         }
 
@@ -376,18 +367,27 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
     private readonly record struct MemberSample(Element El, XYZ Local);
 
     /// <summary>
-    /// Per-assembly geometry report for the Front/Back and Left/Right sign
-    /// check: local extents and long/short ratio (Amendment 3, DX/DY/DZ +
-    /// ratio vs. the 1.15 warning threshold), the centroid's signed offset
-    /// from the bounding-box centre along each local axis, member elements
-    /// ranked along each local axis with enough identity to find them in the
-    /// model, today's prediction (the same rule AssemblyDrawingBuilder.
-    /// DeriveFrontAxis uses), and whatever is ACTUALLY stamped -- read through
-    /// the real production AssemblyOrientationStorage.TryFindExisting, not
-    /// reimplemented here.
+    /// Per-assembly geometry report for the remaining Front/Back and Left/
+    /// Right sign check: the centroid's signed offset from the bounding-box
+    /// centre along each local axis, and member elements ranked along each
+    /// local axis with enough identity to find them in the model.
+    /// <para>
+    /// Everything else this report used to carry -- DX/DY/DZ extents, the
+    /// long/short ratio and its 1.15 warning, and a comparison against a
+    /// stamped axis/sign -- was in service of a geometry-DERIVED Front/Back
+    /// choice that turned out to be wrong (this project's assembly origins
+    /// place +Y as Front deliberately; it is not inferred from proportions).
+    /// Production no longer derives or stamps an axis/sign at all
+    /// (AssemblyDrawingBuilder.SideLookDirections is a fixed table now), so
+    /// there is nothing left to measure a projection error against, no tie to
+    /// warn about, and no stamp to compare -- all of that is gone from here
+    /// too, not left printing numbers for a question production no longer
+    /// asks. predictedAxis/sideAxis below are the same fixed constants
+    /// production uses, not a computation.
+    /// </para>
     /// </summary>
     private static void PrintAssemblyGeometryReport(
-        Document doc, AssemblyInstance assembly, string packagePrefix, StringBuilder sb)
+        Document doc, AssemblyInstance assembly, StringBuilder sb)
     {
         var assemblyFrame = assembly.GetTransform();
         var inverse = assemblyFrame.Inverse;
@@ -439,48 +439,23 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
             : new XYZ(members.Average(m => m.Local.X), members.Average(m => m.Local.Y),
                       members.Average(m => m.Local.Z));
 
-        var dx = maxX - minX;
-        var dy = maxY - minY;
-        var dz = maxZ - minZ;
-        var shortSpan = Math.Min(dx, dy);
-        var longSpan = Math.Max(dx, dy);
-        var ratio = shortSpan > 1e-9 ? longSpan / shortSpan : double.PositiveInfinity;
-
-        // Same rule as AssemblyDrawingBuilder.DeriveFrontAxis's fresh-compute
-        // branch: short axis, FRONT negative.
-        var predictedAxis = dx <= dy ? "X" : "Y";
-        const int predictedSign = -1;
-        var sideAxis = predictedAxis == "X" ? "Y" : "X";
+        // Fixed convention, matching AssemblyDrawingBuilder.SideLookDirections
+        // exactly -- not computed. Front/Back always ride local Y (the
+        // project's own assembly-origin placement convention: +Y faces the
+        // part's front); Left/Right always ride local X.
+        const string predictedAxis = "Y";
+        const int predictedSign = 1;
+        const string sideAxis = "X";
 
         sb.AppendLine($"  GEOMETRY REPORT for {assembly.Name} (all values in ASSEMBLY axes)");
-        sb.AppendLine($"    DX={ToMm(dx):0} mm  DY={ToMm(dy):0} mm  DZ={ToMm(dz):0} mm  " +
-                      $"long/short ratio={ratio:0.00}  (warns below 1.15)");
         sb.AppendLine($"    Centroid offset from bounding-box centre: " +
                       $"local X={SignedMm(centroid.X - localCenter.X)} mm, " +
                       $"local Y={SignedMm(centroid.Y - localCenter.Y)} mm, " +
                       $"local Z={SignedMm(centroid.Z - localCenter.Z)} mm");
-        sb.AppendLine($"    PREDICTED by today's rule: Front/Back on local {predictedAxis} " +
-                      $"(the short axis); FRONT = {AxisLabel(predictedAxis, predictedSign)}, " +
+        sb.AppendLine($"    FIXED convention: Front/Back on local {predictedAxis}; " +
+                      $"FRONT = {AxisLabel(predictedAxis, predictedSign)}, " +
                       $"BACK = {AxisLabel(predictedAxis, -predictedSign)}; RIGHT = " +
                       $"{AxisLabel(sideAxis, -1)}, LEFT = {AxisLabel(sideAxis, 1)}");
-
-        var packageType = PackageTypeByPrefix.GetValueOrDefault(packagePrefix, packagePrefix);
-        var stamped = AssemblyOrientationStorage.TryFindExisting(doc, assembly.UniqueId, packageType);
-        if (stamped is { } s)
-        {
-            var restated = AssemblyOrientationStorage.DescribeStampedWarning(
-                s.WarningFlags, s.FrontAxis, s.ExtentDx, s.ExtentDy, dx, dy);
-            sb.AppendLine($"    ACTUAL stamp for package \"{packageType}\": axis={s.FrontAxis}  " +
-                          $"sign={s.FrontSign}  warningFlags={s.WarningFlags}  " +
-                          $"stampedDX={ToMm(s.ExtentDx):0} mm  stampedDY={ToMm(s.ExtentDy):0} mm  " +
-                          $"stampedDZ={ToMm(s.ExtentDz):0} mm " +
-                          (restated is null ? "(clean)" : $"-- {restated}"));
-        }
-        else
-        {
-            sb.AppendLine($"    ACTUAL stamp for package \"{packageType}\": none yet " +
-                          "(not generated under this schema, or not generated at all).");
-        }
 
         var sortedByX = members.OrderBy(m => m.Local.X).ToList();
         var sortedByY = members.OrderBy(m => m.Local.Y).ToList();
@@ -500,9 +475,9 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
                 return (v(sorted[0]), v(sorted[^1]));
             }
 
-            var front = PickAxisWitness(SortedBy(predictedAxis), wantNegativeEnd: true,
+            var front = PickAxisWitness(SortedBy(predictedAxis), wantNegativeEnd: false,
                 AxisValue(sideAxis), RangeOf(sideAxis));
-            var back = PickAxisWitness(SortedBy(predictedAxis), wantNegativeEnd: false,
+            var back = PickAxisWitness(SortedBy(predictedAxis), wantNegativeEnd: true,
                 AxisValue(sideAxis), RangeOf(sideAxis));
             var right = PickAxisWitness(SortedBy(sideAxis), wantNegativeEnd: true,
                 AxisValue(predictedAxis), RangeOf(predictedAxis));
@@ -514,8 +489,8 @@ public sealed class Cmd_DiagVendorViewports : IExternalCommand
                           "evidence for that ONE check, not both at once (a corner member that is " +
                           "extreme on both axes proves nothing, since it would show up on either " +
                           "sheet regardless of which sign is right):");
-            AppendWitnessLine(sb, "FRONT", "BACK", "local " + predictedAxis + " negative", front);
-            AppendWitnessLine(sb, "BACK", "FRONT", "local " + predictedAxis + " positive", back);
+            AppendWitnessLine(sb, "FRONT", "BACK", "local " + predictedAxis + " positive", front);
+            AppendWitnessLine(sb, "BACK", "FRONT", "local " + predictedAxis + " negative", back);
             AppendWitnessLine(sb, "RIGHT", "LEFT", "local " + sideAxis + " negative", right);
             AppendWitnessLine(sb, "LEFT", "RIGHT", "local " + sideAxis + " positive", left);
         }
