@@ -81,8 +81,6 @@ namespace AVES
             pulldown2.Ext_AddPushButton("MT Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_MTDrawings");
             pulldown2.Ext_AddPushButton("Vendor Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_VendorDrawings");
             pulldown2.Ext_AddPushButton("Korea Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_KoreaDrawings");
-            // TEMPORARY diagnostic -- remove with Cmds_DiagVendorViewports.cs
-            pulldown2.Ext_AddPushButton("DIAG: Vendor Viewports", "AVES.Cmds_DiagVendorViewports.Cmd_DiagVendorViewports");
 
             // Add "Add Dimensions" pulldownbutton to panel
             var pulldown3 = panelSheets.Ext_AddPulldownButton("Auto-add\nDimensions", "AVES.Cmds_PullDownAutoDimension");

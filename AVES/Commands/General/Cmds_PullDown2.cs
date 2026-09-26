@@ -331,6 +331,15 @@ internal static class ViewUtils
     /// <summary>
     /// Creates an orthographic section looking along <paramref name="lookDirection"/>,
     /// sized to <paramref name="worldBbox"/> (plus padding) in every axis.
+    /// <para>
+    /// Note for future direction-sign work: Revit reports the resulting
+    /// view's <see cref="View.ViewDirection"/> as the NEGATION of the
+    /// <c>BasisZ</c> requested here, not the same vector. Verified
+    /// empirically while investigating a Front/Back sign bug, including at a
+    /// non-orthogonal transform -- it is not an axis-aligned rounding
+    /// artifact. Nothing here currently reads ViewDirection back, but
+    /// anything that starts doing so needs to negate it first.
+    /// </para>
     /// </summary>
     public static ViewSection CreateOrthoSection(
         Document doc,
@@ -3345,28 +3354,6 @@ internal readonly record struct SheetFrame(XYZ Center, double UsableWidth, doubl
 }
 
 /// <summary>
-/// Stamps each 2D detail view (FRONT/BACK/LEFT/RIGHT/TOP/BOTTOM) with the
-/// Front/Back axis and sign AssemblyDrawingBuilder derived for its assembly,
-/// and with the view's own direction key.
-/// <para>
-/// A second schema, deliberately separate from KoreaPackageStorage below:
-/// Extensible Storage's field set is frozen the moment a schema is first
-/// finished (SchemaBuilder.Finish() locks it for the schema's lifetime, per
-/// the Revit API), and KoreaPackageStorage's four fields are already live in
-/// stamped documents -- a fifth field cannot be added to that GUID.
-/// </para>
-/// <para>
-/// Read by AssemblyDrawingBuilder.Build before it derives an axis from
-/// geometry: if any existing view for this (assembly, package type) already
-/// carries a stamp, that axis/sign is reused rather than recomputed, so a
-/// borderline footprint or a later geometry edit cannot silently re-face a
-/// package that was already generated. The ViewKey field is written for every
-/// view from day one but not read anywhere yet -- reserved for the in-place
-/// re-run work's viewport-to-view matching, designed in now while nothing
-/// depends on it rather than migrated in later.
-/// </para>
-/// </summary>
-/// <summary>
 /// Stamps each 2D detail view with its own direction key (FRONT/BACK/LEFT/
 /// RIGHT/TOP/BOTTOM), the assembly it belongs to, and which package drew it.
 /// <para>
@@ -3427,6 +3414,10 @@ internal static class AssemblyOrientationStorage
         builder.AddSimpleField(FieldAssemblyUniqueId, typeof(string));
         builder.AddSimpleField(FieldPackageType, typeof(string));
         builder.AddSimpleField(FieldViewKey, typeof(string));
+        // All string fields, so nothing here needs it, but: a double field
+        // added later MUST call FieldBuilder.SetSpec(...) before Finish() or
+        // Finish() throws "Units are required for field X" at runtime -- a
+        // clean build will not catch a missing SetSpec.
 
         return builder.Finish();
     }
