@@ -81,8 +81,10 @@ namespace AVES
             pulldown2.Ext_AddPushButton("MT Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_MTDrawings");
             pulldown2.Ext_AddPushButton("Vendor Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_VendorDrawings");
             pulldown2.Ext_AddPushButton("Korea Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_KoreaDrawings");
-            // TEMPORARY diagnostic -- remove with Cmds_DiagViewportState.cs
+            // TEMPORARY diagnostics -- remove together with their files once
+            // Vendor's in-place re-run Stage 3 is confirmed
             pulldown2.Ext_AddPushButton("DIAG: Viewport State", "AVES.Cmds_DiagViewportState.Cmd_DiagViewportState");
+            pulldown2.Ext_AddPushButton("DIAG: Strip ViewKey Stamp", "AVES.Cmds_DiagStripViewKeyStamp.Cmd_DiagStripViewKeyStamp");
 
             // Add "Add Dimensions" pulldownbutton to panel
             var pulldown3 = panelSheets.Ext_AddPulldownButton("Auto-add\nDimensions", "AVES.Cmds_PullDownAutoDimension");

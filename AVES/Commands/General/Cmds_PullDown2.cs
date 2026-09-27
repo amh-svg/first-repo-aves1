@@ -3554,6 +3554,23 @@ internal static class AssemblyOrientationStorage
         viewKey = entity.Get<string>(FieldViewKey);
         return true;
     }
+
+    /// <summary>
+    /// Removes this view's stamp, if it has one. Not called by the normal
+    /// build/re-run pipeline -- a fresh re-run always writes a new stamp via
+    /// Stamp() regardless of what a view previously carried, so nothing needs
+    /// to clear one first. Exists for Cmd_DiagStripViewKeyStamp, which uses it
+    /// to construct a genuinely unstamped package for testing Vendor's
+    /// name-matching fallback (Step B) against, since no such package
+    /// currently exists to test it on otherwise.
+    /// </summary>
+    public static void ClearStamp(View view)
+    {
+        if (Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(SchemaGuid) is not { } schema)
+            return;
+
+        view.DeleteEntity(schema);
+    }
 }
 
 /// <summary>
@@ -4259,28 +4276,17 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
         var offsetY = settings.OffsetYFt();
 
         // The sheets are the durable object; views and schedules on them are
-        // disposable. If this assembly already has a Vendor package, sheet 1
-        // is refreshed in place rather than duplicated -- see UpdateFirstSheet.
-        // Sheet 2 does not have this treatment yet (Stage 3 of the in-place
-        // re-run work): it always creates fresh below, same as before this
-        // stage, so a re-run still duplicates it. ResolvePackageSheets still
-        // discovers and stamps sheet 2 by name when it finds one, ahead of
-        // that work actually using it.
+        // disposable. If this assembly already has a Vendor package, both
+        // sheets are refreshed in place rather than duplicated.
         var existingSheets = ResolvePackageSheets(doc, ctx.Assembly);
         existingSheets.TryGetValue(VendorPackageStorage.RoleSheet1, out var existingSheet1);
+        existingSheets.TryGetValue(VendorPackageStorage.RoleSheet2, out var existingSheet2);
 
         // Sheet 1 carries the 3D view and the schedule; sheet 2 carries the
         // cluster. A sheet whose only contents were skipped in Step 5 is not
         // created (or updated), so a partial run leaves no empty sheets behind.
         var wantsSheet1 = ctx.View3D is not null || ctx.Schedule is not null;
         var wantsSheet2 = ctx.DetailViews.Count > 0;
-
-        ViewSheet? sheet2 = null;
-        if (wantsSheet2)
-        {
-            sheet2 = ViewSheet.Create(doc, ctx.TitleblockId);
-            sheet2.Name = ctx.SheetNames.Reserve($"V-ASM_{ctx.Assembly.Name}_02");
-        }
 
         if (ctx.View3D is { } view3d)
         {
@@ -4322,7 +4328,17 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
                 CreateFirstSheet(ctx, view3dPosition, schedulePosition);
         }
 
-        if (sheet2 is null) return;
+        if (!wantsSheet2) return;
+
+        if (existingSheet2 is not null)
+        {
+            UpdateSecondSheet(ctx, existingSheet2, offsetX, offsetY);
+            return;
+        }
+
+        var sheet2 = ViewSheet.Create(doc, ctx.TitleblockId);
+        sheet2.Name = ctx.SheetNames.Reserve($"V-ASM_{ctx.Assembly.Name}_02");
+        VendorPackageStorage.Stamp(sheet2, ctx.Assembly, VendorPackageStorage.RoleSheet2);
 
         var spacing = RevitConstants.A3WidthFt * settings.ClusterSpacingFactor;
         var clusterCenter = new XYZ(offsetX, offsetY, 0);
@@ -4334,6 +4350,209 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
                 new XYZ(clusterCenter.X + dx, clusterCenter.Y + dy, 0));
         }
     }
+
+    /// <summary>
+    /// Matches sheet 2's existing viewports to FRONT/BACK/LEFT/RIGHT/TOP/
+    /// BOTTOM and swaps each one to its freshly built replacement, in place
+    /// of duplicating the sheet.
+    /// <para>
+    /// Resolution is two steps, in order, no third: (A) read
+    /// AssemblyOrientationStorage's ViewKey stamp off the viewport's current
+    /// view, requiring AssemblyUniqueId to match this assembly and ViewKey to
+    /// be one of the six known keys; (B), for anything Step A did not claim,
+    /// strip a NameRegistry " (n)" collision suffix and match a trailing
+    /// " - KEY" (case-insensitive) -- the naming every 2D view has carried
+    /// since before the ViewKey stamp existed. No geometry-derived fallback:
+    /// that shape of thing is exactly what this whole investigation spent
+    /// its effort removing.
+    /// </para>
+    /// <para>
+    /// An unresolved key's handling depends on whether ANY viewport on THIS
+    /// SHEET actually resolved via the ViewKey stamp (Step A) this run --
+    /// not on how the sheet itself was found. Those are different questions:
+    /// VendorPackageStorage's sheet-level stamp, once written on a sheet's
+    /// first re-run, stays forever regardless of what the individual views on
+    /// it carry, so a sheet can be "stamped" at the VendorPackageStorage
+    /// level while every one of its views has since lost its ViewKey stamp
+    /// (exactly what stripping it for a test produces). The case rule needs
+    /// the second question, not the first: on a sheet where Step A is
+    /// demonstrably still working (something else on it resolved that way
+    /// this run), a missing key means the viewport was genuinely deleted --
+    /// Step A would have found a merely-renamed one regardless of its name --
+    /// so it is recreated at its standard cluster position. On a sheet where
+    /// nothing resolved via Step A this run, "genuinely missing" and "present
+    /// but renamed and unstamped" are indistinguishable, so it is left alone
+    /// and warned about rather than guessed at. Two viewports claiming the
+    /// same key are both left alone and warned about, naming both. A
+    /// viewport neither step claims (user-added, or a view renamed on an
+    /// already-stamped package that somehow lost its stamp) is left alone
+    /// with no warning -- it is still sitting there, visibly untouched,
+    /// which is the correct outcome for something this code does not
+    /// recognize as its own.
+    /// </para>
+    /// <para>
+    /// Exception: if literally none of the six keys resolve (every viewport
+    /// deleted, or every view renamed beyond recognition), the conservative
+    /// per-key rule above would warn six times and place nothing -- and since
+    /// nothing here ever gets swapped, nothing gets re-stamped either, so a
+    /// later run lands in the exact same unresolvable state forever. That
+    /// case is handled separately, before the per-key loop: build a fresh
+    /// sheet 2 beside the unrecoverable one (today's pre-Stage-3 behavior)
+    /// and say so once, rather than leave the package permanently stuck. The
+    /// old sheet is left untouched either way.
+    /// </para>
+    /// <para>
+    /// TEMPORARY: warnings surface via AvControls.ShowAlert, a stand-in for
+    /// Stage 4's per-row warning column on the results table, which does not
+    /// exist yet. Remove this alert once ReportRow carries a "warn" status.
+    /// </para>
+    /// </summary>
+    private void UpdateSecondSheet(
+        AssemblySheetContext ctx, ViewSheet sheet2, double offsetX, double offsetY)
+    {
+        var doc = ctx.Doc;
+        var assembly = ctx.Assembly;
+
+        var allViewports = sheet2.GetAllViewports()
+            .Select(id => doc.GetElement(id) as Viewport)
+            .Where(v => v is not null)
+            .Cast<Viewport>()
+            .ToList();
+
+        var claimsByKey = new Dictionary<string, List<Viewport>>(StringComparer.OrdinalIgnoreCase);
+        var anyResolvedByStamp = false;
+
+        foreach (var vp in allViewports)
+        {
+            if (doc.GetElement(vp.ViewId) is not View view) continue;
+
+            string? key = null;
+
+            if (AssemblyOrientationStorage.TryRead(
+                    view, out var stampedAssemblyId, out _, out var stampedKey)
+                && stampedAssemblyId == assembly.UniqueId
+                && IsKnownKey(stampedKey))
+            {
+                key = stampedKey;
+                anyResolvedByStamp = true;
+            }
+            else if (ViewKeyNameMatch.KeyFromViewName(view.Name) is { } nameKey)
+            {
+                key = nameKey;
+            }
+
+            if (key is null) continue;
+
+            if (!claimsByKey.TryGetValue(key, out var claimants))
+                claimsByKey[key] = claimants = [];
+            claimants.Add(vp);
+        }
+
+        var spacing = RevitConstants.A3WidthFt * settings.ClusterSpacingFactor;
+        var clusterCenter = new XYZ(offsetX, offsetY, 0);
+        var clusterPositions = BuildFirstAngleClusterPositions(spacing);
+
+        if (claimsByKey.Count == 0)
+        {
+            // Nothing on this sheet resolved to any key -- every viewport was
+            // either deleted or renamed beyond recognition. The per-key rule
+            // below would warn on all six and place none of them, and since
+            // nothing here ever gets swapped, nothing gets re-stamped either
+            // -- the next run would land in this exact same state, forever.
+            // Rather than leave the package permanently stuck, build a fresh
+            // sheet 2 beside the unrecoverable one -- the same thing a run
+            // would have done before this stage existed -- and say so once,
+            // instead of six warnings naming a problem nothing can act on
+            // without opening the model by hand. The old sheet is left
+            // completely untouched.
+            var freshSheet2 = ViewSheet.Create(doc, ctx.TitleblockId);
+            freshSheet2.Name = ctx.SheetNames.Reserve($"V-ASM_{assembly.Name}_02");
+            VendorPackageStorage.Stamp(freshSheet2, assembly, VendorPackageStorage.RoleSheet2);
+
+            foreach (var (key, (dx, dy)) in clusterPositions)
+            {
+                if (!ctx.DetailViews.TryGetValue(key, out var v)) continue;
+                Viewport.Create(doc, freshSheet2.Id, v.Id,
+                    new XYZ(clusterCenter.X + dx, clusterCenter.Y + dy, 0));
+            }
+
+            AvControls.ShowAlert(
+                "Vendor re-run: sheet 2 could not be matched",
+                $"{assembly.Name}: none of the six viewports on the existing sheet " +
+                $"(\"{sheet2.SheetNumber} - {sheet2.Name}\") could be matched to FRONT/BACK/" +
+                "LEFT/RIGHT/TOP/BOTTOM -- every view was either deleted or renamed beyond " +
+                $"recognition. Built a new sheet (\"{freshSheet2.SheetNumber} - " +
+                $"{freshSheet2.Name}\") instead of leaving the package with no drawings. " +
+                "The old sheet was left untouched -- delete it by hand if it's no longer needed.",
+                AlertSeverity.Warning);
+
+            return;
+        }
+
+        var warnings = new List<string>();
+
+        foreach (var (key, replacement) in ctx.DetailViews)
+        {
+            claimsByKey.TryGetValue(key, out var claimants);
+
+            if (claimants is { Count: 1 })
+            {
+                PackageSheetHelpers.SwapOrRecreateViewport(doc, claimants[0], replacement);
+                continue;
+            }
+
+            if (claimants is { Count: > 1 })
+            {
+                var named = string.Join(", ", claimants.Select(vp =>
+                {
+                    var v = doc.GetElement(vp.ViewId) as View;
+                    return $"\"{v?.Name}\" (view Id={vp.ViewId}, viewport Id={vp.Id})";
+                }));
+                warnings.Add($"{key}: {claimants.Count} viewports claim this key -- " +
+                              $"left untouched: {named}");
+                // This run's freshly built replacement for this key is not
+                // going anywhere -- delete it, or it sits in the document
+                // unplaced, holding the canonical name, and pushes every
+                // later attempt at this key into a " (1)", " (2)", ...
+                // collision with itself.
+                doc.Delete(replacement.Id);
+                continue;
+            }
+
+            // No existing viewport resolved to this key.
+            if (anyResolvedByStamp)
+            {
+                var (dx, dy) = clusterPositions[key];
+                Viewport.Create(doc, sheet2.Id, replacement.Id,
+                    new XYZ(clusterCenter.X + dx, clusterCenter.Y + dy, 0));
+            }
+            else
+            {
+                warnings.Add(
+                    $"{key}: no viewport on this sheet resolves to this key, and this " +
+                    $"package has no ViewKey stamp to fall back on for {key} -- if a view for " +
+                    $"{key} still exists but was renamed, rename it back to end in \" - {key}\" " +
+                    "and it will be picked up (and permanently protected against this " +
+                    "happening again) on the next re-run. Left unplaced rather than guess " +
+                    "which viewport it might be.");
+                // Same leak as the conflict case above: this run's fresh
+                // replacement is unused and would otherwise sit around
+                // colliding with itself on every future attempt.
+                doc.Delete(replacement.Id);
+            }
+        }
+
+        if (warnings.Count > 0)
+        {
+            AvControls.ShowAlert(
+                "Vendor re-run: sheet 2 needs a look",
+                $"{assembly.Name}, sheet 2:\n\n" + string.Join("\n", warnings),
+                AlertSeverity.Warning);
+        }
+    }
+
+    private static bool IsKnownKey(string key) =>
+        key is "FRONT" or "BACK" or "LEFT" or "RIGHT" or "TOP" or "BOTTOM";
 
     /// <summary>Creates sheet 1 fresh: no existing package was found for this
     /// assembly, or Step 5's 3D/Schedule categories were never requested
@@ -4378,26 +4597,38 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
 
     /// <summary>
     /// The package's sheets, keyed by role. Extensible Storage is
-    /// authoritative; a package created before the stamp existed -- every
-    /// Vendor package as of this feature shipping -- is located once by the
-    /// exact V-ASM_&lt;name&gt;_01 / _02 name pattern and stamped on the
-    /// spot, so the next run finds it by storage and renaming the sheets
-    /// stops mattering. Simpler than KoreaSheetLayout's version: Vendor's
+    /// authoritative; whichever role a package created before the stamp
+    /// existed -- every Vendor package as of this feature shipping -- is
+    /// missing gets located once by its exact V-ASM_&lt;name&gt;_01 / _02
+    /// name and stamped on the spot, so the next run finds it by storage and
+    /// renaming the sheet stops mattering.
+    /// <para>
+    /// Each role is backfilled independently rather than adopting by name
+    /// only when NEITHER role is stamped: a package can legitimately end up
+    /// with one role stamped and the other not (its sheet 2 never existed
+    /// yet on an earlier run that only touched sheet 1, for one), and
+    /// short-circuiting on "any role stamped" would leave that other role
+    /// undiscoverable by name forever after, indistinguishable from a
+    /// genuinely missing sheet.
+    /// </para>
+    /// <para>
+    /// Simpler than KoreaSheetLayout's version in one respect: Vendor's
     /// sheet numbering has never changed, so there is no legacy-order table
     /// to fall back through.
+    /// </para>
     /// </summary>
     private static Dictionary<string, ViewSheet> ResolvePackageSheets(
         Document doc, AssemblyInstance assembly)
     {
-        var stamped = VendorPackageStorage.FindPackageSheets(doc, assembly);
-        if (stamped.Count > 0) return stamped;
+        var found = VendorPackageStorage.FindPackageSheets(doc, assembly);
 
-        var adopted = new Dictionary<string, ViewSheet>(StringComparer.OrdinalIgnoreCase);
+        if (!found.ContainsKey(VendorPackageStorage.RoleSheet1))
+            AdoptByName(doc, assembly, found, "_01", VendorPackageStorage.RoleSheet1);
 
-        AdoptByName(doc, assembly, adopted, "_01", VendorPackageStorage.RoleSheet1);
-        AdoptByName(doc, assembly, adopted, "_02", VendorPackageStorage.RoleSheet2);
+        if (!found.ContainsKey(VendorPackageStorage.RoleSheet2))
+            AdoptByName(doc, assembly, found, "_02", VendorPackageStorage.RoleSheet2);
 
-        return adopted;
+        return found;
     }
 
     /// <summary>Legacy name lookup, used only to migrate an unstamped package.</summary>
