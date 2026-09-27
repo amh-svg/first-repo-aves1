@@ -4258,18 +4258,22 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
         var offsetX = settings.OffsetXFt();
         var offsetY = settings.OffsetYFt();
 
+        // The sheets are the durable object; views and schedules on them are
+        // disposable. If this assembly already has a Vendor package, sheet 1
+        // is refreshed in place rather than duplicated -- see UpdateFirstSheet.
+        // Sheet 2 does not have this treatment yet (Stage 3 of the in-place
+        // re-run work): it always creates fresh below, same as before this
+        // stage, so a re-run still duplicates it. ResolvePackageSheets still
+        // discovers and stamps sheet 2 by name when it finds one, ahead of
+        // that work actually using it.
+        var existingSheets = ResolvePackageSheets(doc, ctx.Assembly);
+        existingSheets.TryGetValue(VendorPackageStorage.RoleSheet1, out var existingSheet1);
+
         // Sheet 1 carries the 3D view and the schedule; sheet 2 carries the
         // cluster. A sheet whose only contents were skipped in Step 5 is not
-        // created, so a partial run leaves no empty sheets behind.
+        // created (or updated), so a partial run leaves no empty sheets behind.
         var wantsSheet1 = ctx.View3D is not null || ctx.Schedule is not null;
         var wantsSheet2 = ctx.DetailViews.Count > 0;
-
-        ViewSheet? sheet1 = null;
-        if (wantsSheet1)
-        {
-            sheet1 = ViewSheet.Create(doc, ctx.TitleblockId);
-            sheet1.Name = ctx.SheetNames.Reserve($"V-ASM_{ctx.Assembly.Name}_01");
-        }
 
         ViewSheet? sheet2 = null;
         if (wantsSheet2)
@@ -4310,11 +4314,13 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
             settings.ScheduleOffsetYFt() + offsetY,
             0);
 
-        if (sheet1 is not null && ctx.View3D is { } placed3d)
-            Viewport.Create(doc, sheet1.Id, placed3d.Id, view3dPosition);
-
-        if (sheet1 is not null && ctx.Schedule is { } schedule)
-            ScheduleSheetInstance.Create(doc, sheet1.Id, schedule.Id, schedulePosition);
+        if (wantsSheet1)
+        {
+            if (existingSheet1 is not null)
+                UpdateFirstSheet(ctx, existingSheet1, view3dPosition, schedulePosition);
+            else
+                CreateFirstSheet(ctx, view3dPosition, schedulePosition);
+        }
 
         if (sheet2 is null) return;
 
@@ -4327,6 +4333,83 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
             Viewport.Create(doc, sheet2.Id, v.Id,
                 new XYZ(clusterCenter.X + dx, clusterCenter.Y + dy, 0));
         }
+    }
+
+    /// <summary>Creates sheet 1 fresh: no existing package was found for this
+    /// assembly, or Step 5's 3D/Schedule categories were never requested
+    /// before now.</summary>
+    private void CreateFirstSheet(AssemblySheetContext ctx, XYZ view3dPosition, XYZ schedulePosition)
+    {
+        var doc = ctx.Doc;
+
+        var sheet1 = ViewSheet.Create(doc, ctx.TitleblockId);
+        sheet1.Name = ctx.SheetNames.Reserve($"V-ASM_{ctx.Assembly.Name}_01");
+        VendorPackageStorage.Stamp(sheet1, ctx.Assembly, VendorPackageStorage.RoleSheet1);
+
+        if (ctx.View3D is { } view3d)
+            Viewport.Create(doc, sheet1.Id, view3d.Id, view3dPosition);
+
+        if (ctx.Schedule is { } schedule)
+            ScheduleSheetInstance.Create(doc, sheet1.Id, schedule.Id, schedulePosition);
+    }
+
+    /// <summary>
+    /// Refreshes an existing sheet 1 in place: the 3D viewport is swapped (or
+    /// recreated, if Revit refuses the swap) to the freshly built 3D view,
+    /// and the schedule is replaced -- both via the same shared helpers
+    /// Korea's sheet 1 uses, so the two commands behave identically here.
+    /// </summary>
+    private static void UpdateFirstSheet(
+        AssemblySheetContext ctx, ViewSheet sheet1, XYZ view3dPosition, XYZ schedulePosition)
+    {
+        var doc = ctx.Doc;
+
+        if (ctx.View3D is { } view3d)
+        {
+            if (PackageSheetHelpers.TryGetSingleViewport(doc, sheet1) is { } viewport)
+                PackageSheetHelpers.SwapOrRecreateViewport(doc, viewport, view3d);
+            else
+                Viewport.Create(doc, sheet1.Id, view3d.Id, view3dPosition);
+        }
+
+        if (ctx.Schedule is { } schedule)
+            PackageSheetHelpers.ReplaceScheduleOnSheet(doc, sheet1, schedule, schedulePosition);
+    }
+
+    /// <summary>
+    /// The package's sheets, keyed by role. Extensible Storage is
+    /// authoritative; a package created before the stamp existed -- every
+    /// Vendor package as of this feature shipping -- is located once by the
+    /// exact V-ASM_&lt;name&gt;_01 / _02 name pattern and stamped on the
+    /// spot, so the next run finds it by storage and renaming the sheets
+    /// stops mattering. Simpler than KoreaSheetLayout's version: Vendor's
+    /// sheet numbering has never changed, so there is no legacy-order table
+    /// to fall back through.
+    /// </summary>
+    private static Dictionary<string, ViewSheet> ResolvePackageSheets(
+        Document doc, AssemblyInstance assembly)
+    {
+        var stamped = VendorPackageStorage.FindPackageSheets(doc, assembly);
+        if (stamped.Count > 0) return stamped;
+
+        var adopted = new Dictionary<string, ViewSheet>(StringComparer.OrdinalIgnoreCase);
+
+        AdoptByName(doc, assembly, adopted, "_01", VendorPackageStorage.RoleSheet1);
+        AdoptByName(doc, assembly, adopted, "_02", VendorPackageStorage.RoleSheet2);
+
+        return adopted;
+    }
+
+    /// <summary>Legacy name lookup, used only to migrate an unstamped package.</summary>
+    private static void AdoptByName(
+        Document doc, AssemblyInstance assembly,
+        Dictionary<string, ViewSheet> into, string sheetSuffix, string role)
+    {
+        var sheetName = $"V-ASM_{assembly.Name}{sheetSuffix}";
+        if (ViewUtils.FindSheetByName(doc, sheetName) is not { } sheet) return;
+
+        VendorPackageStorage.Stamp(sheet, assembly, role);
+        into[role] = sheet;
     }
 
     private static IReadOnlyDictionary<string, (double X, double Y)>
