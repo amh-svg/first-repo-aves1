@@ -3521,10 +3521,12 @@ internal readonly record struct SheetFrame(XYZ Center, double UsableWidth, doubl
 /// derivation (near-tie ratio, angular-margin non-orthogonal check, drift
 /// comparison, re-baselining, SchemaVersion) was removed with it, not kept
 /// around unused. ONLY ViewKey survives that removal -- it has an actual
-/// future consumer (C13's in-place re-run, matching an old viewport's role to
-/// the new view that should replace it) that AssemblyUniqueId/PackageType
-/// alone would not serve, since without them a bare "FRONT" string on some
-/// view in the document does not say which package or assembly it belongs to.
+/// consumer, not just a planned one: VendorSheetLayout.UpdateSecondSheet
+/// reads it (via TryRead below) to match an old viewport's role to the new
+/// view that should replace it on Vendor's in-place re-run. AssemblyUniqueId/
+/// PackageType alone would not serve that on their own, since without them a
+/// bare "FRONT" string on some view in the document does not say which
+/// package or assembly it belongs to.
 /// </para>
 /// <para>
 /// New GUID, deliberately: the previous schema's field set was already
@@ -3609,30 +3611,14 @@ internal static class AssemblyOrientationStorage
         viewKey = entity.Get<string>(FieldViewKey);
         return true;
     }
-
-    /// <summary>
-    /// Removes this view's stamp, if it has one. Not called by the normal
-    /// build/re-run pipeline -- a fresh re-run always writes a new stamp via
-    /// Stamp() regardless of what a view previously carried, so nothing needs
-    /// to clear one first. Exists for Cmd_DiagStripViewKeyStamp, which uses it
-    /// to construct a genuinely unstamped package for testing Vendor's
-    /// name-matching fallback (Step B) against, since no such package
-    /// currently exists to test it on otherwise.
-    /// </summary>
-    public static void ClearStamp(View view)
-    {
-        if (Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(SchemaGuid) is not { } schema)
-            return;
-
-        view.DeleteEntity(schema);
-    }
 }
 
 /// <summary>
 /// Recovers a 2D view's FRONT/BACK/LEFT/RIGHT/TOP/BOTTOM key from its name,
-/// for views that predate AssemblyOrientationStorage's ViewKey stamp -- the
-/// fallback step of Vendor's in-place re-run viewport matching (wired in once
-/// that work lands; unused for now).
+/// for views that predate AssemblyOrientationStorage's ViewKey stamp -- Step
+/// B of Vendor's in-place re-run viewport matching, used by
+/// VendorSheetLayout.UpdateSecondSheet when Step A (the stamp) does not
+/// claim a viewport.
 /// <para>
 /// Strips a NameRegistry collision suffix (" (n)", see NameRegistry.Reserve)
 /// before matching the trailing " - KEY" every 2D view is named with (see
@@ -3784,10 +3770,11 @@ internal enum ViewportSwapResult
 
 /// <summary>
 /// Viewport/schedule replacement shared by every package layout that places
-/// at most one viewport per sheet (Korea's seven sheets today; Vendor's
-/// sheet 1 once its in-place re-run lands). Hoisted out of KoreaSheetLayout,
-/// which had been the only caller, so Vendor can reuse it byte-for-byte
-/// rather than keeping a second copy in step with the first.
+/// at most one viewport per sheet -- Korea's seven sheets, and Vendor's
+/// sheet 1. Hoisted out of KoreaSheetLayout, which had been the only caller,
+/// so Vendor can reuse it byte-for-byte rather than keeping a second copy in
+/// step with the first. Vendor's sheet 2 (six viewports) needs its own
+/// matching logic instead -- see VendorSheetLayout.UpdateSecondSheet.
 /// </summary>
 internal static class PackageSheetHelpers
 {
@@ -4139,9 +4126,11 @@ internal static class AssemblyDrawingBuilder
                 if (ViewTitles.TryGetValue(key, out var title))
                     ViewUtils.SetDescription(view, title);
 
-                // ViewKey only, for C13's future viewport-to-view matching --
-                // there is no axis/sign left to stamp once Front/Back is a
-                // fixed convention rather than a per-assembly derivation.
+                // ViewKey only -- Vendor's in-place re-run reads this to match
+                // an old viewport to the new view that should replace it (see
+                // VendorSheetLayout.UpdateSecondSheet). No axis/sign left to
+                // stamp once Front/Back is a fixed convention rather than a
+                // per-assembly derivation.
                 AssemblyOrientationStorage.Stamp(view, assembly.UniqueId, packageType, key);
             }
         }
@@ -4175,8 +4164,9 @@ internal sealed record AssemblyDrawingProfile(
 
     /// <summary>
     /// "Korea" or "Vendor" -- scopes AssemblyOrientationStorage's per-view
-    /// key stamp to this command, so a future viewport-to-view matching pass
-    /// (C13) can tell Korea's and Vendor's views of the same assembly apart.
+    /// key stamp to this command, so Vendor's in-place re-run viewport
+    /// matching (VendorSheetLayout.UpdateSecondSheet) can tell Korea's and
+    /// Vendor's views of the same assembly apart.
     /// </summary>
     string PackageType);
 
