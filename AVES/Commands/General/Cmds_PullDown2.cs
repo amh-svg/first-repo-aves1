@@ -2143,6 +2143,16 @@ public sealed class VendorDrawingsSettings : ICloneableSettings<VendorDrawingsSe
     public double BottomRightReservedXPercent { get; set; } = 0.35;
     public double BottomRightReservedYPercent { get; set; } = 0.35;
 
+    /// <summary>
+    /// One-time migration marker (see SettingsGate.LoadOffsetsSettings): false
+    /// on any file written before Vendor and Korea got separate offsets files.
+    /// Once true, this file is never touched by the seed-from-Vendor step
+    /// again, on the vendor file as much as the Korea one. Not meant to be
+    /// hand-edited; safe to delete this property in a later cleanup once the
+    /// migration has run for every user.
+    /// </summary>
+    public bool OffsetsSeeded { get; set; } = false;
+
     public VendorDrawingsSettings Clone() => (VendorDrawingsSettings)MemberwiseClone();
 
     public double OffsetXFt() => UnitUtils.ConvertToInternalUnits(OffsetXMm, UnitTypeId.Millimeters);
@@ -2794,8 +2804,15 @@ internal abstract class VendorLayoutDescriptor
     /// Shows the settings dialog for this layout and builds the layout from
     /// what came back, or null if the user cancelled.
     /// </summary>
-    public IAssemblySheetLayout? CreateLayoutFrom(UIApplication uiApp) =>
-        SettingsGate.ShowVendorDrawings(uiApp, this) is { } settings
+    /// <param name="uiApp">The active Revit UI application.</param>
+    /// <param name="settingsFile">
+    /// The command's own offsets file (e.g. "vendor-drawings.json" or
+    /// "korea-drawings.json") -- the same name that command already uses for
+    /// AssemblyDrawingProfile.TemplateSettingsFile, so each command has
+    /// exactly one settings file, not two names to keep in sync.
+    /// </param>
+    public IAssemblySheetLayout? CreateLayoutFrom(UIApplication uiApp, string settingsFile) =>
+        SettingsGate.ShowVendorDrawings(uiApp, this, settingsFile) is { } settings
             ? CreateLayout(settings)
             : null;
 
@@ -2951,18 +2968,25 @@ internal sealed class VendorDrawingsSettingsDialog
     // that builds the layout doing the actual placement.
     private readonly VendorLayoutDescriptor _descriptor;
 
+    // The calling command's own offsets file -- see CreateLayoutFrom. "Make
+    // Default" must persist to the SAME file this dialog was loaded from, or
+    // Korea and Vendor go back to overwriting each other's settings.
+    private readonly string _settingsFile;
+
     public VendorDrawingsSettingsDialog(
         VendorDrawingsSettings initial,
         IntPtr revitHandle,
-        VendorLayoutDescriptor descriptor)
+        VendorLayoutDescriptor descriptor,
+        string settingsFile)
         : base(initial, descriptor.DialogTitle, revitHandle)
     {
         _descriptor = descriptor;
+        _settingsFile = settingsFile;
         RebuildAll();
     }
 
     protected override void SaveDefault() =>
-        SettingsStore.Save("vendor-drawings.json", Working);
+        SettingsStore.Save(_settingsFile, Working);
 
     protected override void BuildControls()
     {
@@ -3234,17 +3258,88 @@ internal sealed class MTDrawingsSettingsDialog
 
 internal static class SettingsGate
 {
+    // The one place both commands' offsets file names are spelled out --
+    // Cmd_VendorDrawings and Cmd_KoreaDrawings reference these same constants
+    // (also for AssemblyDrawingProfile.TemplateSettingsFile) rather than each
+    // holding its own copy of the literal.
+    public const string VendorOffsetsFile = "vendor-drawings.json";
+    public const string KoreaOffsetsFile = "korea-drawings.json";
+
     public static VendorDrawingsSettings? ShowVendorDrawings(
-        UIApplication uiApp, VendorLayoutDescriptor descriptor)
+        UIApplication uiApp, VendorLayoutDescriptor descriptor, string settingsFile)
     {
-        var initial = SettingsStore.LoadOrDefault<VendorDrawingsSettings>("vendor-drawings.json");
+        var initial = LoadOffsetsSettings(settingsFile);
         var dlg = new VendorDrawingsSettingsDialog(
-            initial, uiApp.MainWindowHandle, descriptor);
+            initial, uiApp.MainWindowHandle, descriptor, settingsFile);
         if (dlg.ShowDialog() != true) return null;
         var result = dlg.Result;
         if (result is null) return null;
-        SettingsStore.Save("vendor-drawings.json", result);
+        SettingsStore.Save(settingsFile, result);
         return result;
+    }
+
+    /// <summary>
+    /// Loads one command's offsets settings, migrating Korea's file the one
+    /// time it has never been through this path before. Before offsets were
+    /// split per command, BOTH Vendor and Korea's dialogs read and wrote
+    /// vendor-drawings.json -- Korea's own file exists (Run() already writes
+    /// template picks to it) but its offset fields were never anything but
+    /// class defaults, since nothing had ever saved real offsets into it.
+    /// Loading it plainly post-split would silently reset Korea's offsets to
+    /// those defaults; this copies Korea's last-effective values (whatever
+    /// vendor-drawings.json currently holds -- see the fix commit for why
+    /// that snapshot's provenance is ambiguous) into Korea's own file instead,
+    /// exactly once.
+    /// <para>
+    /// Guarded by file identity, not just the marker: the copy only ever runs
+    /// when <paramref name="settingsFile"/> IS KoreaOffsetsFile. A
+    /// vendor-drawings.json that itself still lacks the marker (true the
+    /// first time this ships) is never a seed TARGET -- it only gets the
+    /// marker set on it, so it can never end up "seeded from itself".
+    /// </para>
+    /// </summary>
+    private static VendorDrawingsSettings LoadOffsetsSettings(string settingsFile)
+    {
+        var settings = SettingsStore.LoadOrDefault<VendorDrawingsSettings>(settingsFile);
+        if (settings.OffsetsSeeded) return settings;
+
+        if (settingsFile == KoreaOffsetsFile)
+        {
+            var vendorFilePath = Path.Combine(SettingsStore.DefaultFolder, VendorOffsetsFile);
+            if (File.Exists(vendorFilePath))
+            {
+                var vendorSettings = SettingsStore.LoadOrDefault<VendorDrawingsSettings>(VendorOffsetsFile);
+                CopyOffsetFields(from: vendorSettings, to: settings);
+            }
+            // Else: fresh install, nothing to seed from. settings already
+            // holds class defaults from LoadOrDefault above -- correct
+            // behavior, not an error.
+        }
+
+        settings.OffsetsSeeded = true;
+        SettingsStore.Save(settingsFile, settings);
+        return settings;
+    }
+
+    /// <summary>
+    /// Every field either dialog can actually edit -- deliberately excludes
+    /// TitleBlockName and the three template names, which are already
+    /// correctly separate per command and must not be overwritten here.
+    /// </summary>
+    private static void CopyOffsetFields(VendorDrawingsSettings from, VendorDrawingsSettings to)
+    {
+        to.OffsetXMm = from.OffsetXMm;
+        to.OffsetYMm = from.OffsetYMm;
+        to.View3DOffsetXMm = from.View3DOffsetXMm;
+        to.View3DOffsetYMm = from.View3DOffsetYMm;
+        to.ScheduleOffsetXMm = from.ScheduleOffsetXMm;
+        to.ScheduleOffsetYMm = from.ScheduleOffsetYMm;
+        to.ClusterSpacingFactor = from.ClusterSpacingFactor;
+        to.Views2DOffsetXMm = from.Views2DOffsetXMm;
+        to.Views2DOffsetYMm = from.Views2DOffsetYMm;
+        to.LeftPercent = from.LeftPercent;
+        to.BottomRightReservedXPercent = from.BottomRightReservedXPercent;
+        to.BottomRightReservedYPercent = from.BottomRightReservedYPercent;
     }
 
     public static AssemblyDrawingsSettings? ShowAssemblyDrawings(UIApplication uiApp)
@@ -4448,8 +4543,8 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
         "Vendor Automation",
         "Vendor Sheets - Batch",
         "Vendor Drawing Automation",
-        uiApp => Descriptor.CreateLayoutFrom(uiApp),
-        TemplateSettingsFile: "vendor-drawings.json",
+        uiApp => Descriptor.CreateLayoutFrom(uiApp, SettingsGate.VendorOffsetsFile),
+        TemplateSettingsFile: SettingsGate.VendorOffsetsFile,
         PackageType: "Vendor");
 
     public Result Execute(ExternalCommandData commandData, ref string message,
@@ -4487,8 +4582,8 @@ public sealed class Cmd_KoreaDrawings : IExternalCommand
         "Korea Automation",
         "Korea Sheets - Batch",
         "Korea Drawing Automation",
-        uiApp => Descriptor.CreateLayoutFrom(uiApp),
-        TemplateSettingsFile: "korea-drawings.json",
+        uiApp => Descriptor.CreateLayoutFrom(uiApp, SettingsGate.KoreaOffsetsFile),
+        TemplateSettingsFile: SettingsGate.KoreaOffsetsFile,
         PackageType: "Korea");
 
     public Result Execute(ExternalCommandData commandData, ref string message,
