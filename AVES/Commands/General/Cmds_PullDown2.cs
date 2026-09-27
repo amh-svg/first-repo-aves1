@@ -723,7 +723,7 @@ internal sealed class ReportRow
 {
     public int Index { get; init; }
     public string Name { get; init; } = "";
-    public string Status { get; init; } = "";   // "ok" | "fail"
+    public string Status { get; init; } = "";   // "ok" | "warn" | "fail"
     public string Details { get; init; } = "";
 }
 
@@ -798,6 +798,43 @@ internal static class Reporting
                 Name = r.Name,
                 Status = string.IsNullOrEmpty(r.Error) ? "ok" : "fail",
                 Details = r.Error ?? "",
+            })
+            .ToList();
+
+        new ReportWindow(title, rows, ok, bad, revitHandle).ShowDialog();
+    }
+
+    /// <summary>
+    /// Three-state overload: an assembly can succeed cleanly, succeed with a
+    /// warning that needs a look, or fail outright. Warning rows count
+    /// toward "ok" in the stat tiles -- the run did not fail, something just
+    /// needs attention -- and the per-row Warning pill (BuildStatusCellTemplate
+    /// already defines it; nothing produced it before this) carries the
+    /// distinction instead of a fourth tile.
+    /// <para>
+    /// Used only by AssemblyDrawingRunner.Run (Vendor and Korea both go
+    /// through it, though only Vendor's sheet-2 matching currently produces a
+    /// warning -- see that method's own note). Cmd_AssemblyDrawings and
+    /// Cmd_MTDrawings keep the two-state overload above, unchanged.
+    /// </para>
+    /// </summary>
+    public static void ShowResult(
+        string title,
+        IReadOnlyList<(string Name, string? Error, string? Warning)> results,
+        IntPtr revitHandle = default)
+    {
+        int ok = results.Count(r => string.IsNullOrEmpty(r.Error));
+        int bad = results.Count - ok;
+
+        var rows = results
+            .Select((r, i) => new ReportRow
+            {
+                Index = i + 1,
+                Name = r.Name,
+                Status = !string.IsNullOrEmpty(r.Error) ? "fail"
+                       : !string.IsNullOrEmpty(r.Warning) ? "warn"
+                       : "ok",
+                Details = r.Error ?? r.Warning ?? "",
             })
             .ToList();
 
@@ -1061,6 +1098,14 @@ internal sealed class ReportWindow : Window
         s.Setters.Add(new Setter(TextBlock.PaddingProperty, new Thickness(10, 0, 10, 0)));
         s.Setters.Add(new Setter(TextBlock.TextWrappingProperty, TextWrapping.NoWrap));
         s.Setters.Add(new Setter(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis));
+        // Rows are a fixed 38px, so wrapping isn't an option without changing
+        // every row's height for every command that shares this window --
+        // a tooltip surfaces the untruncated text without touching that.
+        // Harmless on short text: a tooltip that matches the visible text
+        // exactly is a no-op the user never needs to notice.
+        s.Setters.Add(new Setter(
+            FrameworkElement.ToolTipProperty,
+            new System.Windows.Data.Binding(nameof(ReportRow.Details))));
         return s;
     }
 
@@ -3401,6 +3446,16 @@ internal sealed class AssemblySheetContext(
 
     /// <summary>Vertical span of the assembly.</summary>
     public double ModelHeight { get; } = modelHeight;
+
+    /// <summary>
+    /// Non-fatal issues found while placing this assembly's views, surfaced
+    /// as a "warn" row in the results table (see AssemblyDrawingRunner.Run
+    /// and Reporting's three-state ShowResult overload) rather than a
+    /// dialog. Empty on a clean run. Only VendorSheetLayout.UpdateSecondSheet
+    /// currently populates this; KoreaSheetLayout has no branch that ever
+    /// declines to place a view, so it never has anything to add here.
+    /// </summary>
+    public List<string> Warnings { get; } = [];
 }
 
 /// <summary>
@@ -4191,7 +4246,7 @@ internal static class AssemblyDrawingRunner
             var viewNames = BuildViewNameRegistry(doc);
             var sheetNames = BuildSheetNameRegistry(doc);
 
-            var results = new List<(string Name, string? Error)>();
+            var results = new List<(string Name, string? Error, string? Warning)>();
 
             using var tx = new Transaction(doc, profile.TransactionName);
             tx.Start();
@@ -4211,21 +4266,28 @@ internal static class AssemblyDrawingRunner
                     layout.PlaceViews(ctx);
 
                     sub.Commit();
-                    results.Add((assembly.Name, null));
+                    var warning = ctx.Warnings.Count > 0
+                        ? string.Join("\n", ctx.Warnings)
+                        : null;
+                    results.Add((assembly.Name, null, warning));
                 }
                 catch (Exception ex)
                 {
                     sub.RollBack();
-                    results.Add((assembly.Name, ex.Message));
+                    results.Add((assembly.Name, ex.Message, null));
                 }
             }
 
             tx.Commit();
 
-            // No orientation-warning alert here any more: Front/Back is a
-            // fixed convention now (AssemblyDrawingBuilder.SideLookDirections),
-            // not a per-assembly derivation, so there is nothing left to warn
-            // about how it was chosen.
+            // A warning (Vendor's sheet-2 matching could not confidently
+            // place every viewport -- see VendorSheetLayout.UpdateSecondSheet
+            // and AssemblySheetContext.Warnings) surfaces as a "warn" row on
+            // the table below via Reporting's three-state ShowResult
+            // overload, not a dialog. Korea never populates ctx.Warnings
+            // today -- KoreaSheetLayout has no branch that declines to place
+            // a view -- so this state is currently Vendor-only in practice,
+            // even though both commands go through this same runner.
             Reporting.ShowResult(profile.ReportTitle, results, uiApp.MainWindowHandle);
             return Result.Succeeded;
         }
@@ -4402,9 +4464,10 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
     /// old sheet is left untouched either way.
     /// </para>
     /// <para>
-    /// TEMPORARY: warnings surface via AvControls.ShowAlert, a stand-in for
-    /// Stage 4's per-row warning column on the results table, which does not
-    /// exist yet. Remove this alert once ReportRow carries a "warn" status.
+    /// Warnings are appended to ctx.Warnings, not shown directly -- see
+    /// AssemblyDrawingRunner.Run, which reads them after PlaceViews returns
+    /// and reports them as a "warn" row on the results table rather than a
+    /// dialog.
     /// </para>
     /// </summary>
     private void UpdateSecondSheet(
@@ -4476,20 +4539,16 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
                     new XYZ(clusterCenter.X + dx, clusterCenter.Y + dy, 0));
             }
 
-            AvControls.ShowAlert(
-                "Vendor re-run: sheet 2 could not be matched",
-                $"{assembly.Name}: none of the six viewports on the existing sheet " +
+            ctx.Warnings.Add(
+                $"Sheet 2: none of the six viewports on the existing sheet " +
                 $"(\"{sheet2.SheetNumber} - {sheet2.Name}\") could be matched to FRONT/BACK/" +
                 "LEFT/RIGHT/TOP/BOTTOM -- every view was either deleted or renamed beyond " +
                 $"recognition. Built a new sheet (\"{freshSheet2.SheetNumber} - " +
                 $"{freshSheet2.Name}\") instead of leaving the package with no drawings. " +
-                "The old sheet was left untouched -- delete it by hand if it's no longer needed.",
-                AlertSeverity.Warning);
+                "The old sheet was left untouched -- delete it by hand if it's no longer needed.");
 
             return;
         }
-
-        var warnings = new List<string>();
 
         foreach (var (key, replacement) in ctx.DetailViews)
         {
@@ -4508,8 +4567,8 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
                     var v = doc.GetElement(vp.ViewId) as View;
                     return $"\"{v?.Name}\" (view Id={vp.ViewId}, viewport Id={vp.Id})";
                 }));
-                warnings.Add($"{key}: {claimants.Count} viewports claim this key -- " +
-                              $"left untouched: {named}");
+                ctx.Warnings.Add($"Sheet 2, {key}: {claimants.Count} viewports claim this key " +
+                                  $"-- left untouched: {named}");
                 // This run's freshly built replacement for this key is not
                 // going anywhere -- delete it, or it sits in the document
                 // unplaced, holding the canonical name, and pushes every
@@ -4528,26 +4587,18 @@ internal sealed class VendorSheetLayout(VendorDrawingsSettings settings) : IAsse
             }
             else
             {
-                warnings.Add(
-                    $"{key}: no viewport on this sheet resolves to this key, and this " +
-                    $"package has no ViewKey stamp to fall back on for {key} -- if a view for " +
-                    $"{key} still exists but was renamed, rename it back to end in \" - {key}\" " +
-                    "and it will be picked up (and permanently protected against this " +
-                    "happening again) on the next re-run. Left unplaced rather than guess " +
-                    "which viewport it might be.");
+                ctx.Warnings.Add(
+                    $"Sheet 2, {key}: no viewport on this sheet resolves to this key, and " +
+                    $"this package has no ViewKey stamp to fall back on for {key} -- if a " +
+                    $"view for {key} still exists but was renamed, rename it back to end in " +
+                    $"\" - {key}\" and it will be picked up (and permanently protected " +
+                    "against this happening again) on the next re-run. Left unplaced rather " +
+                    "than guess which viewport it might be.");
                 // Same leak as the conflict case above: this run's fresh
                 // replacement is unused and would otherwise sit around
                 // colliding with itself on every future attempt.
                 doc.Delete(replacement.Id);
             }
-        }
-
-        if (warnings.Count > 0)
-        {
-            AvControls.ShowAlert(
-                "Vendor re-run: sheet 2 needs a look",
-                $"{assembly.Name}, sheet 2:\n\n" + string.Join("\n", warnings),
-                AlertSeverity.Warning);
         }
     }
 
