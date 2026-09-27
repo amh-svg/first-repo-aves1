@@ -3528,6 +3528,358 @@ internal static class AssemblyOrientationStorage
 
         view.SetEntity(entity);
     }
+
+    /// <summary>
+    /// Reads the stamp off a view, for Vendor's in-place re-run to identify
+    /// which of a sheet's several viewports is FRONT, TOP, and so on. False
+    /// when the view was never stamped (predates this schema) or belongs to a
+    /// different assembly/package -- callers fall back to name matching in
+    /// that case rather than treating it as an error.
+    /// </summary>
+    public static bool TryRead(
+        View view, out string assemblyUniqueId, out string packageType, out string viewKey)
+    {
+        assemblyUniqueId = "";
+        packageType = "";
+        viewKey = "";
+
+        if (Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(SchemaGuid) is not { } schema)
+            return false;
+
+        var entity = view.GetEntity(schema);
+        if (!entity.IsValid()) return false;
+
+        assemblyUniqueId = entity.Get<string>(FieldAssemblyUniqueId);
+        packageType = entity.Get<string>(FieldPackageType);
+        viewKey = entity.Get<string>(FieldViewKey);
+        return true;
+    }
+}
+
+/// <summary>
+/// Recovers a 2D view's FRONT/BACK/LEFT/RIGHT/TOP/BOTTOM key from its name,
+/// for views that predate AssemblyOrientationStorage's ViewKey stamp -- the
+/// fallback step of Vendor's in-place re-run viewport matching (wired in once
+/// that work lands; unused for now).
+/// <para>
+/// Strips a NameRegistry collision suffix (" (n)", see NameRegistry.Reserve)
+/// before matching the trailing " - KEY" every 2D view is named with (see
+/// AssemblyDrawingBuilder.Build). Returns null on no match -- an
+/// unrecognized name is left alone, not guessed at.
+/// </para>
+/// </summary>
+internal static class ViewKeyNameMatch
+{
+    private static readonly string[] Keys = ["FRONT", "BACK", "LEFT", "RIGHT", "TOP", "BOTTOM"];
+
+    public static string? KeyFromViewName(string viewName)
+    {
+        var stripped = StripCollisionSuffix(viewName);
+        foreach (var key in Keys)
+        {
+            if (stripped.EndsWith($" - {key}", StringComparison.OrdinalIgnoreCase))
+                return key;
+        }
+        return null;
+    }
+
+    private static string StripCollisionSuffix(string name)
+    {
+        var openParen = name.LastIndexOf(" (", StringComparison.Ordinal);
+        if (openParen < 0 || !name.EndsWith(")", StringComparison.Ordinal))
+            return name;
+
+        var digits = name[(openParen + 2)..^1];
+        return digits.Length > 0 && digits.All(char.IsDigit)
+            ? name[..openParen]
+            : name;
+    }
+}
+
+/// <summary>
+/// Marks each sheet of a Vendor drawing package with the assembly it
+/// documents and the role it plays -- Sheet1 (3D + part list) or Sheet2
+/// (six-view cluster) -- the same shape as KoreaPackageStorage below, under
+/// its own GUID.
+/// <para>
+/// A separate schema from KoreaPackageStorage, deliberately, rather than a
+/// generalized "PackageType" parameter added to it: Korea's schema and its
+/// Stamp/FindPackageSheets methods are already live in stamped documents, and
+/// coupling Vendor's package discovery to code Korea depends on means a
+/// future Korea-only change could silently affect Vendor too. Same reasoning
+/// AssemblyOrientationStorage got its own GUID for instead of extending
+/// KoreaPackageStorage.
+/// </para>
+/// </summary>
+internal static class VendorPackageStorage
+{
+    // Fixed for the life of the add-in: changing it orphans every stamped sheet.
+    private static readonly Guid SchemaGuid = new("18FCD00C-254D-4620-9875-CE6CA438EC00");
+
+    private const string SchemaName = "AVESVendorDrawingPackage";
+    // Must match <VendorId> in AVES.addin exactly -- see KoreaPackageStorage's
+    // identical note.
+    private const string VendorVendorId = "Development";
+
+    private const string FieldAssemblyId = "AssemblyId";
+    private const string FieldAssemblyUniqueId = "AssemblyUniqueId";
+    private const string FieldPackageType = "PackageType";
+    private const string FieldSheetRole = "SheetRole";
+
+    public const string PackageTypeVendor = "Vendor";
+
+    /// <summary>Role of the 3D / part list sheet.</summary>
+    public const string RoleSheet1 = "Sheet1";
+
+    /// <summary>Role of the six-view cluster sheet.</summary>
+    public const string RoleSheet2 = "Sheet2";
+
+    private static Autodesk.Revit.DB.ExtensibleStorage.Schema GetOrCreateSchema()
+    {
+        if (Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(SchemaGuid) is { } existing)
+            return existing;
+
+        using var builder = new Autodesk.Revit.DB.ExtensibleStorage.SchemaBuilder(SchemaGuid);
+
+        builder.SetSchemaName(SchemaName);
+        builder.SetVendorId(VendorVendorId);
+        builder.SetReadAccessLevel(Autodesk.Revit.DB.ExtensibleStorage.AccessLevel.Public);
+        builder.SetWriteAccessLevel(Autodesk.Revit.DB.ExtensibleStorage.AccessLevel.Vendor);
+
+        builder.AddSimpleField(FieldAssemblyId, typeof(ElementId));
+        builder.AddSimpleField(FieldAssemblyUniqueId, typeof(string));
+        builder.AddSimpleField(FieldPackageType, typeof(string));
+        builder.AddSimpleField(FieldSheetRole, typeof(string));
+
+        return builder.Finish();
+    }
+
+    /// <summary>Stamps one sheet as part of this assembly's Vendor package.</summary>
+    public static void Stamp(ViewSheet sheet, AssemblyInstance assembly, string role)
+    {
+        var schema = GetOrCreateSchema();
+        var entity = new Autodesk.Revit.DB.ExtensibleStorage.Entity(schema);
+
+        entity.Set(FieldAssemblyId, assembly.Id);
+        entity.Set(FieldAssemblyUniqueId, assembly.UniqueId);
+        entity.Set(FieldPackageType, PackageTypeVendor);
+        entity.Set(FieldSheetRole, role);
+
+        sheet.SetEntity(entity);
+    }
+
+    /// <summary>
+    /// Every stamped sheet of this assembly's Vendor package, keyed by role.
+    /// Empty when the package predates the stamp or does not exist.
+    /// </summary>
+    public static Dictionary<string, ViewSheet> FindPackageSheets(
+        Document doc, AssemblyInstance assembly)
+    {
+        var found = new Dictionary<string, ViewSheet>(StringComparer.OrdinalIgnoreCase);
+
+        if (Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(SchemaGuid) is not { } schema)
+            return found;
+
+        var uniqueId = assembly.UniqueId;
+
+        foreach (var sheet in new FilteredElementCollector(doc)
+                     .OfClass(typeof(ViewSheet))
+                     .Cast<ViewSheet>())
+        {
+            var entity = sheet.GetEntity(schema);
+            if (!entity.IsValid()) continue;
+
+            if (entity.Get<string>(FieldPackageType) != PackageTypeVendor) continue;
+            if (entity.Get<string>(FieldAssemblyUniqueId) != uniqueId) continue;
+
+            var role = entity.Get<string>(FieldSheetRole);
+            if (!string.IsNullOrEmpty(role))
+                found[role] = sheet;
+        }
+
+        return found;
+    }
+}
+
+/// <summary>Whether a swap replaced the viewport's view directly, or -- because
+/// Revit refused that -- the old viewport was deleted and a new one created
+/// at the same position instead.</summary>
+internal enum ViewportSwapResult
+{
+    Swapped,
+    Recreated,
+}
+
+/// <summary>
+/// Viewport/schedule replacement shared by every package layout that places
+/// at most one viewport per sheet (Korea's seven sheets today; Vendor's
+/// sheet 1 once its in-place re-run lands). Hoisted out of KoreaSheetLayout,
+/// which had been the only caller, so Vendor can reuse it byte-for-byte
+/// rather than keeping a second copy in step with the first.
+/// </summary>
+internal static class PackageSheetHelpers
+{
+    /// <summary>
+    /// The sheet's single viewport, or null when it carries none or more than
+    /// one -- anything else is not a package this command produced, so it is
+    /// not guessed at.
+    /// </summary>
+    public static Viewport? TryGetSingleViewport(Document doc, ViewSheet sheet)
+    {
+        var viewportIds = sheet.GetAllViewports();
+        if (viewportIds.Count != 1) return null;
+
+        return doc.GetElement(viewportIds.First()) as Viewport;
+    }
+
+    /// <summary>
+    /// Points an existing viewport at <paramref name="replacement"/>. When
+    /// Revit refuses that (IsViewIdValidForViewport false -- a view-class
+    /// mismatch on the existing Viewport element, such as a legacy assembly
+    /// view swapping to a different view family), deletes the old viewport
+    /// and creates a new one at the same position instead, copying the old
+    /// viewport's type across explicitly so the replacement does not default
+    /// to whatever type the document last used -- a swap never touches type,
+    /// so both paths leave every viewport on a sheet looking consistent with
+    /// its neighbours.
+    /// <para>
+    /// Either path deletes the old view and hands the replacement its name,
+    /// so nothing is left orphaned and nothing keeps a "(1)" suffix once the
+    /// transaction commits.
+    /// </para>
+    /// <para>
+    /// Never silently no-ops on refusal: the version this replaced returned
+    /// without doing anything, which left the sheet showing stale content
+    /// with nothing reported anywhere -- exactly the failure mode this whole
+    /// investigation kept surfacing. The caller gets back which path was
+    /// taken so a recreate can be reported as a warning.
+    /// </para>
+    /// <para>
+    /// The recreate branch below is defensive, not confirmed: no view pairing
+    /// this project could construct was ever actually refused by
+    /// IsViewIdValidForViewport, including a cross-family one (section to
+    /// plan) that was assumed refusable and was not. Same-family swaps
+    /// (Korea's actual production usage, both ViewSection and ViewPlan keys)
+    /// were confirmed on live packages to preserve box centre, rotation,
+    /// label offset and label line length exactly, with no regenerate call
+    /// needed between the ViewId assignment and SetBoxCenter below. The one
+    /// tested cross-family pairing that Revit DID allow -- section to plan,
+    /// going through THIS swap branch, not the recreate one -- silently
+    /// moved the box centre by several inches and did not restore
+    /// LabelLineLength. That pairing can only arise from adopting a package
+    /// old enough to carry a different view class per key than the current
+    /// builder produces; nothing in current usage constructs one. Left
+    /// undesigned-around rather than chased further, since the migration
+    /// case it would affect may never occur at all -- see VendorPackageStorage
+    /// and the Vendor re-run design notes for why.
+    /// </para>
+    /// </summary>
+    public static ViewportSwapResult SwapOrRecreateViewport(
+        Document doc, Viewport viewport, View replacement)
+    {
+        var oldViewId = viewport.ViewId;
+        var oldViewName = (doc.GetElement(oldViewId) as View)?.Name;
+        var boxCenter = viewport.GetBoxCenter();
+
+        if (viewport.IsViewIdValidForViewport(replacement.Id))
+        {
+            // Captured before the swap so the viewport lands exactly where it
+            // was; restored explicitly so the result does not depend on
+            // ViewportPositioning. Confirmed exact on same-family swaps with
+            // no intervening regenerate; NOT confirmed exact on a cross-family
+            // pairing Revit happens to allow through this branch -- see this
+            // method's class-level remarks.
+            var rotation = viewport.Rotation;
+            var labelOffset = viewport.LabelOffset;
+            var labelLineLength = viewport.LabelLineLength;
+
+            viewport.ViewId = replacement.Id;
+
+            viewport.SetBoxCenter(boxCenter);
+            viewport.Rotation = rotation;
+            viewport.LabelOffset = labelOffset;
+            viewport.LabelLineLength = labelLineLength;
+
+            // Delete first, then rename: the old name is only free once the
+            // old view is gone, and the replacement carries a "(1)" suffix
+            // until then.
+            if (oldViewId != ElementId.InvalidElementId)
+                doc.Delete(oldViewId);
+            if (!string.IsNullOrEmpty(oldViewName))
+                replacement.Name = oldViewName;
+
+            return ViewportSwapResult.Swapped;
+        }
+
+        // Refused: this Viewport element cannot be repointed to replacement's
+        // view class. Capture what a fresh Viewport.Create cannot supply on
+        // its own, then delete the old view -- which cascades to delete the
+        // now-unreferenced viewport, since a Viewport cannot outlive its view.
+        var sheetId = viewport.SheetId;
+        var oldTypeId = viewport.GetTypeId();
+
+        if (oldViewId != ElementId.InvalidElementId)
+            doc.Delete(oldViewId);
+        if (!string.IsNullOrEmpty(oldViewName))
+            replacement.Name = oldViewName;
+
+        var newViewport = Viewport.Create(doc, sheetId, replacement.Id, boxCenter);
+        newViewport.SetBoxCenter(boxCenter);
+        newViewport.ChangeTypeId(oldTypeId);
+
+        return ViewportSwapResult.Recreated;
+    }
+
+    /// <summary>
+    /// Swaps in a regenerated schedule.
+    /// <para>
+    /// ScheduleSheetInstance.ScheduleId is read-only in both 2025 and 2026, so a
+    /// placed schedule cannot be rebound to another schedule view the way a
+    /// Viewport can. The instance is therefore recreated -- but its exact point,
+    /// rotation and segment are carried over first, and the old schedule view is
+    /// deleted before the replacement takes its name, so nothing gains a "(1)"
+    /// suffix and the sheet looks unchanged apart from the contents.
+    /// </para>
+    /// </summary>
+    public static void ReplaceScheduleOnSheet(
+        Document doc, ViewSheet sheet, ViewSchedule replacement, XYZ point)
+    {
+        // Title block revision schedules live on the same sheet and must not be
+        // mistaken for the part list.
+        var existing = new FilteredElementCollector(doc, sheet.Id)
+            .OfClass(typeof(ScheduleSheetInstance))
+            .Cast<ScheduleSheetInstance>()
+            .FirstOrDefault(s => !s.IsTitleblockRevisionSchedule);
+
+        if (existing is null)
+        {
+            ScheduleSheetInstance.Create(doc, sheet.Id, replacement.Id, point);
+            return;
+        }
+
+        // Rotation and segment carry over -- only the position is recomputed.
+        var rotation = existing.Rotation;
+        var segmentIndex = existing.SegmentIndex;
+
+        var oldScheduleId = existing.ScheduleId;
+        var oldScheduleName = (doc.GetElement(oldScheduleId) as View)?.Name;
+
+        // Instance first, then the view it pointed at: deleting the view would
+        // take the instance with it before rotation and segment are read.
+        doc.Delete(existing.Id);
+
+        if (oldScheduleId != ElementId.InvalidElementId)
+            doc.Delete(oldScheduleId);
+
+        if (!string.IsNullOrEmpty(oldScheduleName))
+            replacement.Name = oldScheduleName;
+
+        var placed = ScheduleSheetInstance.Create(
+            doc, sheet.Id, replacement.Id, point, segmentIndex);
+
+        placed.Point = point;
+        placed.Rotation = rotation;
+    }
 }
 
 /// <summary>
@@ -4313,72 +4665,15 @@ internal sealed class KoreaSheetLayout(VendorDrawingsSettings settings) : IAssem
             // Sheet 1 carries at most one Viewport -- the schedule sits in a
             // ScheduleSheetInstance, which is not a Viewport -- so the same swap
             // the 2D sheets use applies here unchanged.
-            if (TryGetSingleViewport(doc, sheet) is { } viewport)
-                SwapViewportTo(doc, viewport, view3d);
+            if (PackageSheetHelpers.TryGetSingleViewport(doc, sheet) is { } viewport)
+                PackageSheetHelpers.SwapOrRecreateViewport(doc, viewport, view3d);
             else
                 Viewport.Create(doc, sheet.Id, view3d.Id, View3DPoint(frame, offsetX, offsetY));
         }
 
         if (ctx.Schedule is { } schedule)
-            ReplaceScheduleOnSheet(doc, sheet, schedule, frame, offsetX, offsetY);
-    }
-
-    /// <summary>
-    /// Swaps in a regenerated schedule.
-    /// <para>
-    /// ScheduleSheetInstance.ScheduleId is read-only in both 2025 and 2026, so a
-    /// placed schedule cannot be rebound to another schedule view the way a
-    /// Viewport can. The instance is therefore recreated -- but its exact point,
-    /// rotation and segment are carried over first, and the old schedule view is
-    /// deleted before the replacement takes its name, so nothing gains a "(1)"
-    /// suffix and the sheet looks unchanged apart from the contents.
-    /// </para>
-    /// </summary>
-    private void ReplaceScheduleOnSheet(
-        Document doc, ViewSheet sheet, ViewSchedule replacement,
-        SheetFrame frame, double offsetX, double offsetY)
-    {
-        // The dialog offsets are authoritative for the schedule, on a fresh
-        // sheet and on a replacement alike: changing Schedule offset X/Y in
-        // Window 2 must move it. This is the one deliberate difference from
-        // viewport replacement, which preserves whatever position it finds.
-        var point = SchedulePoint(frame, offsetX, offsetY);
-
-        // Title block revision schedules live on the same sheet and must not be
-        // mistaken for the part list.
-        var existing = new FilteredElementCollector(doc, sheet.Id)
-            .OfClass(typeof(ScheduleSheetInstance))
-            .Cast<ScheduleSheetInstance>()
-            .FirstOrDefault(s => !s.IsTitleblockRevisionSchedule);
-
-        if (existing is null)
-        {
-            ScheduleSheetInstance.Create(doc, sheet.Id, replacement.Id, point);
-            return;
-        }
-
-        // Rotation and segment carry over -- only the position is recomputed.
-        var rotation = existing.Rotation;
-        var segmentIndex = existing.SegmentIndex;
-
-        var oldScheduleId = existing.ScheduleId;
-        var oldScheduleName = (doc.GetElement(oldScheduleId) as View)?.Name;
-
-        // Instance first, then the view it pointed at: deleting the view would
-        // take the instance with it before rotation and segment are read.
-        doc.Delete(existing.Id);
-
-        if (oldScheduleId != ElementId.InvalidElementId)
-            doc.Delete(oldScheduleId);
-
-        if (!string.IsNullOrEmpty(oldScheduleName))
-            replacement.Name = oldScheduleName;
-
-        var placed = ScheduleSheetInstance.Create(
-            doc, sheet.Id, replacement.Id, point, segmentIndex);
-
-        placed.Point = point;
-        placed.Rotation = rotation;
+            PackageSheetHelpers.ReplaceScheduleOnSheet(
+                doc, sheet, schedule, SchedulePoint(frame, offsetX, offsetY));
     }
 
     /// <summary>
@@ -4415,10 +4710,10 @@ internal sealed class KoreaSheetLayout(VendorDrawingsSettings settings) : IAssem
                 continue;
             }
 
-            if (TryGetSingleViewport(doc, sheet) is { } viewport)
+            if (PackageSheetHelpers.TryGetSingleViewport(doc, sheet) is { } viewport)
             {
                 ScaleToSheet(doc, sheet, replacement);
-                SwapViewportTo(doc, viewport, replacement);
+                PackageSheetHelpers.SwapOrRecreateViewport(doc, viewport, replacement);
             }
             else
             {
@@ -4428,57 +4723,6 @@ internal sealed class KoreaSheetLayout(VendorDrawingsSettings settings) : IAssem
                     offsetX, offsetY, views2dX, views2dY);
             }
         }
-    }
-
-    /// <summary>
-    /// The sheet's single viewport, or null when it carries none or more than
-    /// one -- anything else is not a package this command produced, so it is not
-    /// guessed at.
-    /// </summary>
-    private static Viewport? TryGetSingleViewport(Document doc, ViewSheet sheet)
-    {
-        var viewportIds = sheet.GetAllViewports();
-        if (viewportIds.Count != 1) return null;
-
-        return doc.GetElement(viewportIds.First()) as Viewport;
-    }
-
-    /// <summary>
-    /// Points an existing viewport at <paramref name="replacement"/>, deletes the
-    /// view it displaced and hands its name over.
-    /// <para>
-    /// The viewport element itself is never destroyed, so its position, rotation
-    /// and label survive; they are captured and restored anyway so the result
-    /// does not depend on ViewportPositioning.
-    /// </para>
-    /// </summary>
-    private static void SwapViewportTo(Document doc, Viewport viewport, View replacement)
-    {
-        if (!viewport.IsViewIdValidForViewport(replacement.Id)) return;
-
-        var oldViewId = viewport.ViewId;
-        var oldViewName = (doc.GetElement(oldViewId) as View)?.Name;
-
-        // Captured before the swap so the viewport lands exactly where it was.
-        var boxCenter = viewport.GetBoxCenter();
-        var rotation = viewport.Rotation;
-        var labelOffset = viewport.LabelOffset;
-        var labelLineLength = viewport.LabelLineLength;
-
-        viewport.ViewId = replacement.Id;
-
-        viewport.SetBoxCenter(boxCenter);
-        viewport.Rotation = rotation;
-        viewport.LabelOffset = labelOffset;
-        viewport.LabelLineLength = labelLineLength;
-
-        // Delete first, then rename: the old name is only free once the old view
-        // is gone, and the replacement carries a "(1)" suffix until then.
-        if (oldViewId != ElementId.InvalidElementId)
-            doc.Delete(oldViewId);
-
-        if (!string.IsNullOrEmpty(oldViewName))
-            replacement.Name = oldViewName;
     }
 
     /// <summary>Creates one per-view sheet and places the view on it.</summary>
