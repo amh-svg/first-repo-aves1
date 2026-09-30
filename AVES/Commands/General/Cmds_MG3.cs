@@ -11,10 +11,21 @@
 //
 // Locked findings (each confirmed empirically before being relied on here):
 //   - Tray frame: instance transform x MG1Shared.Compose(Rotate XY/XZ/YZ),
-//     read from the tray's own parameters at runtime, never hardcoded.
-//     See MG3Shared.TryGetTrayFrame.
-//   - The frame's origin sits at the centre of the run: local X spans
-//     -L/2 to +L/2.
+//     read from the tray's own parameters at runtime, never hardcoded. The
+//     RUN AXIS is then found from the tray's own solid geometry, not
+//     assumed to be X: different tray families model their geometry along
+//     different native axes (SPB-RF50 along local X; another family found
+//     modelled along local Z, which came out vertical and was wrongly
+//     rejected before this was measured instead of assumed). The run is
+//     whichever of the three rotated axes has both a solid-geometry extent
+//     matching Length and a horizontal tilt. See MG3Shared.TryGetTrayFrame /
+//     TryMeasureAxisCandidates.
+//   - The frame's origin sits at the centre of the run — local X spans
+//     -L/2 to +L/2 — but this is VERIFIED per tray from the same geometry
+//     measurement, not assumed from SPB-RF50's own confirmed case: a tray
+//     whose instance transform origin does not sit at the centre of the
+//     matched axis's measured extent is rejected rather than given a
+//     silently off-centre frame.
 //   - Fasteners: NewFamilyInstance's reference direction is built from
 //     HandOrientationLocal. FacingOrientationLocal was measured 90 degrees
 //     off on every one of 8 fasteners tested — it is not read at all.
@@ -103,6 +114,17 @@ namespace AVES.Cmds_MG3
         // straight horizontal run. Production only ever handles horizontal
         // segments, so this is a real gate, not a display rounding.
         internal const double MAX_HORIZONTAL_TILT_DEG = 1.0;
+
+        // How closely a rotated candidate axis's measured solid-geometry
+        // extent must match the tray's own Length to count as the run axis,
+        // and how closely the instance transform's origin must sit at the
+        // midpoint of that extent to count as centred. Confirmed necessary,
+        // not a display rounding: different tray families model their
+        // geometry along different native axes (SPB-RF50 along local X;
+        // another family tested along local Z), so which of the three
+        // rotated axes is the run has to be measured per tray, never assumed
+        // to be X. See TryGetTrayFrame.
+        internal const double RUN_AXIS_LENGTH_TOLERANCE_MM = 1.0;
 
         // How far outside the reference tray's own bare extents — its own
         // centreline in Y/Z only, NEVER its Length along X — the sample's
@@ -259,54 +281,159 @@ namespace AVES.Cmds_MG3
         }
 
         /// <summary>
+        /// One of the three rotated candidate axes (BasisX/Y/Z of instance
+        /// transform x R), with its measured solid-geometry span and tilt —
+        /// see TryMeasureAxisCandidates.
+        /// </summary>
+        private readonly struct AxisCandidate
+        {
+            internal string Name { get; }
+            internal XYZ Axis { get; }
+            internal double MinMm { get; }
+            internal double MaxMm { get; }
+            internal double ExtentMm { get; }
+            internal double TiltDeg { get; }
+
+            internal AxisCandidate(string name, XYZ axis, double minMm, double maxMm, double tiltDeg)
+            {
+                Name = name;
+                Axis = axis;
+                MinMm = minMm;
+                MaxMm = maxMm;
+                ExtentMm = maxMm - minMm;
+                TiltDeg = tiltDeg;
+            }
+        }
+
+        /// <summary>
+        /// Measures the tray's solids once, projecting every tessellated edge
+        /// point onto all three of <paramref name="combined"/>'s rotated
+        /// basis vectors in the same pass — one geometry read, not three.
+        /// This is what lets TryGetTrayFrame find the run axis by evidence
+        /// instead of assuming it is always X: different tray families model
+        /// their geometry along different native axes (SPB-RF50 along local
+        /// X; another family tested along local Z), so the axis whose extent
+        /// matches Length has to be measured per tray.
+        ///
+        /// Called from IsTray on every pick-validation, so this is kept to
+        /// the minimum work possible for the requirement: exactly one pass
+        /// over the solids' edges, three dot products per point, no repeated
+        /// geometry collection.
+        /// </summary>
+        private static bool TryMeasureAxisCandidates(
+            Element tray, Transform combined, out List<AxisCandidate> candidates)
+        {
+            candidates = new List<AxisCandidate>();
+
+            double minX = double.MaxValue, maxX = double.MinValue;
+            double minY = double.MaxValue, maxY = double.MinValue;
+            double minZ = double.MaxValue, maxZ = double.MinValue;
+
+            foreach (Solid solid in MG2.SolidsOf(tray))
+            {
+                foreach (Edge edge in solid.Edges)
+                {
+                    IList<XYZ> points;
+                    try { points = edge.Tessellate(); }
+                    catch { continue; }
+
+                    foreach (XYZ worldPoint in points)
+                    {
+                        XYZ delta = worldPoint - combined.Origin;
+                        double px = delta.DotProduct(combined.BasisX);
+                        double py = delta.DotProduct(combined.BasisY);
+                        double pz = delta.DotProduct(combined.BasisZ);
+
+                        if (px < minX) minX = px; if (px > maxX) maxX = px;
+                        if (py < minY) minY = py; if (py > maxY) maxY = py;
+                        if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
+                    }
+                }
+            }
+
+            if (minX > maxX) return false;
+
+            static double TiltOf(XYZ axis) => Math.Asin(Math.Clamp(Math.Abs(axis.Z), -1.0, 1.0)) * 180.0 / Math.PI;
+
+            candidates.Add(new AxisCandidate("X", combined.BasisX, Mm(minX), Mm(maxX), TiltOf(combined.BasisX)));
+            candidates.Add(new AxisCandidate("Y", combined.BasisY, Mm(minY), Mm(maxY), TiltOf(combined.BasisY)));
+            candidates.Add(new AxisCandidate("Z", combined.BasisZ, Mm(minZ), Mm(maxZ), TiltOf(combined.BasisZ)));
+
+            return true;
+        }
+
+        /// <summary>
         /// Builds a tray's local frame — LOCKED FINDING: instance transform x
         /// R, where R = Rz(XY) * Rx(YZ) * Ry(XZ) is built from the tray's own
         /// Rotate XY/XZ/YZ parameters (MG1Shared.Compose, referenced not
         /// rederived), read fresh from the tray every time this is called,
-        /// never hardcoded. The plain instance transform alone is measurably
-        /// wrong: its local axes do not line up with the tray's true run
-        /// direction until this rotation is applied. The frame's origin
-        /// therefore sits at the centre of the run (local X spans -L/2 to
-        /// +L/2) — confirmed empirically, not assumed.
+        /// never hardcoded.
+        ///
+        /// The run axis is NOT assumed to be X after that rotation — a family
+        /// whose geometry is modelled along a different native axis (found in
+        /// practice: local Z) would otherwise come out vertical and be
+        /// rejected outright. Instead, the tray's solids are measured once
+        /// (TryMeasureAxisCandidates) against all three of the rotated
+        /// BasisX/Y/Z, and the run is whichever ONE of them has both a
+        /// solid-geometry extent matching Length (within
+        /// RUN_AXIS_LENGTH_TOLERANCE_MM) and a horizontal tilt (within
+        /// MAX_HORIZONTAL_TILT_DEG).
+        ///
+        /// The origin stays the instance transform's origin — NOT forced to
+        /// the centre of the run. A centred origin is a property SPB-RF50
+        /// happens to have (confirmed empirically), not a rule the math
+        /// enforces or requires: <paramref name="minXMm"/>/<paramref name="maxXMm"/>
+        /// return the actual measured run range relative to that origin, from
+        /// the SAME geometry pass that picked the axis, and every caller uses
+        /// this range directly instead of assuming it is symmetric.
         ///
         /// Also returns the tray's Length (exact-name parameter): every
-        /// caller needs both together, and a frame without a Length is not
-        /// usable for distribution anyway, so this fails outright rather
-        /// than making the caller ask twice.
+        /// caller needs it too, and a frame without a Length is not usable
+        /// for distribution anyway, so this fails outright rather than making
+        /// the caller ask twice.
         ///
         /// Fails when the element is not a FamilyInstance, when Rotate
-        /// XY/XZ/YZ are not all present as numeric parameters, when the
-        /// resulting run axis is degenerate or parallel to world Z (no
-        /// horizontal frame to build), or when Length is missing.
+        /// XY/XZ/YZ or Length are not all present as numeric parameters, or
+        /// when no rotated axis matches (or more than one matches) Length and
+        /// horizontal. See DescribeTrayFailure for a per-axis breakdown of
+        /// which of these actually failed.
         /// </summary>
-        internal static bool TryGetTrayFrame(Element tray, out TrayFrame? frame, out double lengthMm)
+        internal static bool TryGetTrayFrame(
+            Element tray, out TrayFrame? frame, out double lengthMm, out double minXMm, out double maxXMm)
         {
             frame = null;
             lengthMm = 0.0;
+            minXMm = 0.0;
+            maxXMm = 0.0;
 
             if (tray is not FamilyInstance familyInstance) return false;
 
             RotationParams rotation = ReadRotationParams(familyInstance);
             if (!rotation.Found) return false;
 
+            (bool lengthFound, double lm) = ReadLengthMm(tray, PARAM_LENGTH);
+            if (!lengthFound) return false;
+
             Transform instanceTransform = familyInstance.GetTransform();
             Transform rotationTransform =
                 MG1.Compose(rotation.RotateXYRad, rotation.RotateXZRad, rotation.RotateYZRad);
             Transform combined = instanceTransform.Multiply(rotationTransform);
 
-            XYZ axisX = combined.BasisX;
-            if (axisX.GetLength() <= AXIS_EPSILON) return false;
+            if (!TryMeasureAxisCandidates(tray, combined, out List<AxisCandidate> candidates)) return false;
 
-            XYZ axisXNormalized = axisX.Normalize();
+            List<AxisCandidate> matches = candidates
+                .Where(c => Math.Abs(c.ExtentMm - lm) <= RUN_AXIS_LENGTH_TOLERANCE_MM
+                            && c.TiltDeg <= MAX_HORIZONTAL_TILT_DEG)
+                .ToList();
 
-            // A run parallel to world Z has no horizontal frame — Z × X collapses.
-            if (XYZ.BasisZ.CrossProduct(axisXNormalized).GetLength() < AXIS_EPSILON) return false;
+            if (matches.Count != 1) return false;
 
-            (bool lengthFound, double lm) = ReadLengthMm(tray, PARAM_LENGTH);
-            if (!lengthFound) return false;
+            AxisCandidate winner = matches[0];
 
-            frame = new TrayFrame(combined.Origin, axisXNormalized);
+            frame = new TrayFrame(combined.Origin, winner.Axis.Normalize());
             lengthMm = lm;
+            minXMm = winner.MinMm;
+            maxXMm = winner.MaxMm;
             return true;
         }
 
@@ -334,15 +461,213 @@ namespace AVES.Cmds_MG3
             }
             catch { }
 
-            return TryGetTrayFrame(elem, out _, out _);
+            return TryGetTrayFrame(elem, out _, out _, out _, out _);
         }
 
-        /// <summary>Accepts a tray, and only a tray — see IsTray. Used for both reference-tray and target-tray picking.</summary>
+        /// <summary>
+        /// Accepts anything with a category except a native Revit cable tray
+        /// or fitting. Deliberately NOT the full IsTray check: an
+        /// ISelectionFilter that fails silently refuses the click with no
+        /// explanation at all — the user just can't select the element and
+        /// never learns why one of IsTray's other requirements (a misnamed or
+        /// wrong-type Rotate XY/XZ/YZ, a missing Length, a link, a group)
+        /// failed. Category is cheap and unambiguous enough to gate on here;
+        /// every other requirement is verified AFTER the pick instead, in
+        /// Cmd_MG3, which can then show exactly what failed via
+        /// DescribeTrayFailure and let the user pick again.
+        /// </summary>
         internal sealed class TrayElementFilter : ISelectionFilter
         {
-            public bool AllowElement(Element elem) => IsTray(elem);
+            public bool AllowElement(Element elem)
+            {
+                Category? category = elem.Category;
+                if (category is null) return false;
+
+                try
+                {
+                    BuiltInCategory bic = category.BuiltInCategory;
+                    if (bic == BuiltInCategory.OST_CableTray || bic == BuiltInCategory.OST_CableTrayFitting)
+                    {
+                        return false;
+                    }
+                }
+                catch { }
+
+                return true;
+            }
 
             public bool AllowReference(Reference reference, XYZ position) => false;
+        }
+
+        /// <summary>One parameter's storage type and, for a Double, its spec — "Double / Length", "Double / Angle", "String", etc.</summary>
+        private static string DescribeStorageAndSpec(Parameter param)
+        {
+            string storage = param.StorageType.ToString();
+            if (param.StorageType != StorageType.Double) return storage;
+
+            try
+            {
+                if (param.Definition?.GetDataType() == SpecTypeId.Length) return $"{storage} / Length";
+                if (param.Definition?.GetDataType() == SpecTypeId.Angle) return $"{storage} / Angle";
+                if (param.Definition?.GetDataType() == SpecTypeId.Number) return $"{storage} / Number";
+                return $"{storage} / {param.Definition?.GetDataType().TypeId ?? "(unknown)"}";
+            }
+            catch
+            {
+                return $"{storage} / (spec unreadable)";
+            }
+        }
+
+        /// <summary>
+        /// Explains, in detail, why an element cannot be used as a tray —
+        /// every requirement TryGetTrayFrame/IsTray check, checked and
+        /// reported individually rather than collapsed into one pass/fail.
+        /// Built for the picker: TrayElementFilter only screens by category,
+        /// so every other requirement is verified after the pick, and this is
+        /// what tells the user which one failed and why, instead of the
+        /// element simply being unselectable with no explanation.
+        /// </summary>
+        internal static string DescribeTrayFailure(Element elem)
+        {
+            var sb = new StringBuilder();
+
+            if (elem is RevitLinkInstance)
+            {
+                sb.AppendLine(
+                    "- This is a linked model instance, not the tray itself — picking a tray inside a " +
+                    "link isn't supported here. Open the host model that contains the tray and pick it there.");
+                return sb.ToString();
+            }
+
+            Category? category = elem.Category;
+
+            if (category is null)
+            {
+                sb.AppendLine("- Category: none.");
+            }
+            else
+            {
+                try
+                {
+                    BuiltInCategory bic = category.BuiltInCategory;
+                    bool excluded = bic == BuiltInCategory.OST_CableTray || bic == BuiltInCategory.OST_CableTrayFitting;
+
+                    sb.AppendLine(
+                        $"- Category: \"{category.Name}\" ({bic})" +
+                        (excluded ? " — EXCLUDED: native Revit cable tray/fitting." : " — OK."));
+                }
+                catch (Exception ex)
+                {
+                    sb.AppendLine($"- Category: \"{category.Name}\" — could not read BuiltInCategory ({ex.Message}).");
+                }
+            }
+
+            try
+            {
+                if (elem.GroupId != ElementId.InvalidElementId)
+                {
+                    sb.AppendLine($"- Group: this element is inside group {elem.GroupId}.");
+                }
+            }
+            catch { }
+
+            void DescribeParam(string name)
+            {
+                Parameter? instanceParam = elem.LookupParameter(name);
+                Parameter? typeParam = instanceParam is null ? (elem as FamilyInstance)?.Symbol?.LookupParameter(name) : null;
+                Parameter? found = instanceParam ?? typeParam;
+
+                if (found is null)
+                {
+                    sb.AppendLine($"- \"{name}\": not found on the instance or its type.");
+                    return;
+                }
+
+                string source = instanceParam is not null ? "instance" : "type";
+                string valueText = found.HasValue ? (MG2.ParameterText(found) ?? "(unreadable)") : "(no value)";
+
+                sb.AppendLine($"- \"{name}\": found on {source}, {DescribeStorageAndSpec(found)}, value = {valueText}");
+            }
+
+            DescribeParam(PARAM_LENGTH);
+            DescribeParam(MG1.PARAM_ROTATE_XY);
+            DescribeParam(MG1.PARAM_ROTATE_XZ);
+            DescribeParam(MG1.PARAM_ROTATE_YZ);
+
+            if (elem is not FamilyInstance familyInstance)
+            {
+                sb.AppendLine("- Frame: element is not a FamilyInstance — GetTransform() is unavailable.");
+                return sb.ToString();
+            }
+
+            RotationParams rotation = ReadRotationParams(familyInstance);
+
+            if (!rotation.Found)
+            {
+                sb.AppendLine("- Frame: Rotate XY/XZ/YZ are not all present as numeric parameters — cannot build B+R.");
+                return sb.ToString();
+            }
+
+            (bool lengthFound, double lengthMm) = ReadLengthMm(elem, PARAM_LENGTH);
+
+            if (!lengthFound)
+            {
+                sb.AppendLine(
+                    $"- Frame: Rotate XY/XZ/YZ are present, but \"{PARAM_LENGTH}\" was not found as a " +
+                    "numeric parameter.");
+                return sb.ToString();
+            }
+
+            Transform instanceTransform = familyInstance.GetTransform();
+            Transform rotationTransform =
+                MG1.Compose(rotation.RotateXYRad, rotation.RotateXZRad, rotation.RotateYZRad);
+            Transform combined = instanceTransform.Multiply(rotationTransform);
+
+            if (!TryMeasureAxisCandidates(elem, combined, out List<AxisCandidate> candidates))
+            {
+                sb.AppendLine("- Frame: no usable solid geometry was found to measure the run axis against.");
+                return sb.ToString();
+            }
+
+            sb.AppendLine(
+                $"- Frame: measuring the rotated X/Y/Z axes against Length {lengthMm:0.##} mm " +
+                $"(tolerance {RUN_AXIS_LENGTH_TOLERANCE_MM:0.##} mm) and horizontal tilt " +
+                $"(limit {MAX_HORIZONTAL_TILT_DEG:0.##} deg):");
+
+            var matches = new List<AxisCandidate>();
+
+            foreach (AxisCandidate candidate in candidates)
+            {
+                bool lengthOk = Math.Abs(candidate.ExtentMm - lengthMm) <= RUN_AXIS_LENGTH_TOLERANCE_MM;
+                bool tiltOk = candidate.TiltDeg <= MAX_HORIZONTAL_TILT_DEG;
+                if (lengthOk && tiltOk) matches.Add(candidate);
+
+                sb.AppendLine(
+                    $"    {candidate.Name}: extent {candidate.ExtentMm:0.##} mm " +
+                    $"({(lengthOk ? "matches Length" : "does not match Length")}), " +
+                    $"tilt {candidate.TiltDeg:0.##} deg ({(tiltOk ? "horizontal" : "not horizontal")})");
+            }
+
+            if (matches.Count == 0)
+            {
+                sb.AppendLine("- Frame: no axis matches both Length and horizontal — cannot determine the run direction.");
+            }
+            else if (matches.Count > 1)
+            {
+                sb.AppendLine(
+                    $"- Frame: {matches.Count} axes match both Length and horizontal " +
+                    $"({string.Join(", ", matches.Select(m => m.Name))}) — the run direction is ambiguous.");
+            }
+            else
+            {
+                AxisCandidate winner = matches[0];
+                sb.AppendLine(
+                    $"- Frame: axis {winner.Name} matches (local {winner.Name} runs {winner.MinMm:0.##} to " +
+                    $"{winner.MaxMm:0.##} mm) — this should have built successfully. If it still fails, " +
+                    "something changed between this check and TryGetTrayFrame.");
+            }
+
+            return sb.ToString();
         }
 
         /// <summary>
@@ -1116,13 +1441,22 @@ namespace AVES.Cmds_MG3
             internal Element Tray { get; }
             internal MG3Shared.TrayFrame Frame { get; }
             internal double LengthMm { get; }
+
+            /// <summary>The tray's actual measured run range (local X), from the same solid-geometry pass that picked the run axis — NOT assumed symmetric about the origin.</summary>
+            internal double MinXMm { get; }
+            internal double MaxXMm { get; }
+
             internal bool IsReferenceTray { get; }
 
-            internal ValidTray(Element tray, MG3Shared.TrayFrame frame, double lengthMm, bool isReferenceTray)
+            internal ValidTray(
+                Element tray, MG3Shared.TrayFrame frame, double lengthMm,
+                double minXMm, double maxXMm, bool isReferenceTray)
             {
                 Tray = tray;
                 Frame = frame;
                 LengthMm = lengthMm;
+                MinXMm = minXMm;
+                MaxXMm = maxXMm;
                 IsReferenceTray = isReferenceTray;
             }
         }
@@ -1277,7 +1611,8 @@ namespace AVES.Cmds_MG3
                 Element referenceTray;
                 MG3Shared.TrayFrame referenceFrame;
                 double referenceLengthMm;
-                MG3Shared.LocalExtent referenceExtents;
+                double referenceMinXMm;
+                double referenceMaxXMm;
 
                 const string pickPrompt = "Select the cable tray the sample armour is on, then click to finish.";
 
@@ -1303,17 +1638,38 @@ namespace AVES.Cmds_MG3
                         return Result.Failed;
                     }
 
-                    if (!MG3Shared.TryGetTrayFrame(picked, out MG3Shared.TrayFrame? pickedFrame, out double pickedLengthMm)
-                        || pickedFrame is null)
+                    if (!MG3Shared.IsTray(picked))
                     {
                         AvControls.ShowAlert(
                             MG3Shared.DIALOG_TITLE,
-                            $"Could not build a frame for the selected tray, or its \"{MG3Shared.PARAM_LENGTH}\" " +
-                            "parameter is missing. Select the tray the sample armour is on.",
+                            "This element cannot be used as a tray:\n\n" + MG3Shared.DescribeTrayFailure(picked) +
+                            "\nSelect the tray the sample armour is on.",
                             AlertSeverity.Warning);
                         continue;
                     }
 
+                    if (!MG3Shared.TryGetTrayFrame(
+                            picked, out MG3Shared.TrayFrame? pickedFrame, out double pickedLengthMm,
+                            out double pickedMinXMm, out double pickedMaxXMm)
+                        || pickedFrame is null)
+                    {
+                        // IsTray just said this should succeed — treat a
+                        // mismatch as unexpected rather than silently
+                        // retrying with stale assumptions.
+                        AvControls.ShowAlert(
+                            MG3Shared.DIALOG_TITLE,
+                            "Unexpected: the frame could not be built even though this element passed every " +
+                            "check. Select the tray the sample armour is on.",
+                            AlertSeverity.Error);
+                        continue;
+                    }
+
+                    // Y/Z still need a fresh solid-geometry read in the final
+                    // frame (its Y/Z axes are re-orthogonalised around world
+                    // up, so they are not simply the rotated candidates
+                    // TryGetTrayFrame already measured); X does not — the
+                    // measured run range it returned IS the local X extent in
+                    // this same frame, no second read needed for that part.
                     List<Solid> pickedSolids = MG2.SolidsOf(picked);
                     MG3Shared.LocalExtent pickedExtents =
                         MG3Shared.ComputeLocalExtents(pickedSolids, pickedFrame, pickedLengthMm);
@@ -1322,19 +1678,21 @@ namespace AVES.Cmds_MG3
                     // Never continues with one that fails it — a wrong pick
                     // means picking again, not a hard command failure.
                     //
-                    // X gets NO tolerance: it must fall strictly within
-                    // [-L/2, L/2]. A sample sitting ~35 mm from a joint
+                    // X gets NO tolerance: it must fall strictly within the
+                    // tray's own measured [min, max] run range — NOT assumed
+                    // to be [-L/2, L/2], since the origin is not required to
+                    // be centred. A sample sitting ~35 mm from a joint
                     // between two trays would pass a tolerant X test against
                     // the WRONG neighbouring tray — REFERENCE_TRAY_TOLERANCE_MM
                     // is for the Y/Z cross-section check only.
                     XYZ localCentroid = pickedFrame.ToLocalPoint(sampleCentroid);
-                    double halfLengthFt = MG3Shared.Ft(pickedLengthMm / 2.0);
+                    double localCentroidXmm = MG3Shared.Mm(localCentroid.X);
                     double localCentroidYmm = MG3Shared.Mm(localCentroid.Y);
                     double localCentroidZmm = MG3Shared.Mm(localCentroid.Z);
 
                     bool sampleOnThisTray =
-                        localCentroid.X >= -halfLengthFt
-                        && localCentroid.X <= halfLengthFt
+                        localCentroidXmm >= pickedMinXMm
+                        && localCentroidXmm <= pickedMaxXMm
                         && localCentroidYmm >= pickedExtents.MinYMm - MG3Shared.REFERENCE_TRAY_TOLERANCE_MM
                         && localCentroidYmm <= pickedExtents.MaxYMm + MG3Shared.REFERENCE_TRAY_TOLERANCE_MM
                         && localCentroidZmm >= pickedExtents.MinZMm - MG3Shared.REFERENCE_TRAY_TOLERANCE_MM
@@ -1352,7 +1710,8 @@ namespace AVES.Cmds_MG3
                     referenceTray = picked;
                     referenceFrame = pickedFrame;
                     referenceLengthMm = pickedLengthMm;
-                    referenceExtents = pickedExtents;
+                    referenceMinXMm = pickedMinXMm;
+                    referenceMaxXMm = pickedMaxXMm;
                     break;
                 }
 
@@ -1368,25 +1727,10 @@ namespace AVES.Cmds_MG3
                     return Result.Failed;
                 }
 
-                // referenceExtents was already measured against this same
-                // Length while picking the tray, in step 2 — no need to
-                // measure it again.
-                if (!referenceExtents.LengthMatchesX)
-                {
-                    AvControls.ShowAlert(
-                        MG3Shared.DIALOG_TITLE,
-                        "Frame verification failed: the reference tray's own Length does not match its " +
-                        "local X extent, measured from its solid geometry.\n\n" +
-                        $"Length: {referenceLengthMm:0.##} mm\n" +
-                        $"Local X extent: {referenceExtents.MaxXMm - referenceExtents.MinXMm:0.##} mm\n" +
-                        $"Local Y extent: {referenceExtents.MaxYMm - referenceExtents.MinYMm:0.##} mm\n" +
-                        $"Local Z extent: {referenceExtents.MaxZMm - referenceExtents.MinZMm:0.##} mm\n" +
-                        $"Closest-matching axis: {referenceExtents.LengthMatchedAxis}\n\n" +
-                        "Nothing was placed.",
-                        AlertSeverity.Error);
-                    return Result.Failed;
-                }
-
+                // No separate "Length matches local X extent" check here:
+                // TryGetTrayFrame only ever picks an axis whose measured
+                // extent already matches Length within tolerance, so that is
+                // guaranteed by construction, not re-verified.
                 if (armourSet.SelfCheckMaxPositionDeviationMm > MG3Shared.SAMPLE_SELF_CHECK_MAX_POSITION_DEVIATION_MM
                     || armourSet.SelfCheckMaxAngleDeviationDeg > MG3Shared.SAMPLE_SELF_CHECK_MAX_ANGLE_DEVIATION_DEG)
                 {
@@ -1446,16 +1790,23 @@ namespace AVES.Cmds_MG3
 
                     if (isReference)
                     {
-                        validTrays.Add(new ValidTray(tray, referenceFrame, referenceLengthMm, true));
+                        validTrays.Add(
+                            new ValidTray(tray, referenceFrame, referenceLengthMm, referenceMinXMm, referenceMaxXMm, true));
                         continue;
                     }
 
-                    if (!MG3Shared.TryGetTrayFrame(tray, out MG3Shared.TrayFrame? trayFrame, out double lengthMm)
+                    if (!MG3Shared.IsTray(tray))
+                    {
+                        skipped.Add($"{label}:\n{MG3Shared.DescribeTrayFailure(tray)}");
+                        continue;
+                    }
+
+                    if (!MG3Shared.TryGetTrayFrame(
+                            tray, out MG3Shared.TrayFrame? trayFrame, out double lengthMm,
+                            out double minXMm, out double maxXMm)
                         || trayFrame is null)
                     {
-                        skipped.Add(
-                            $"{label}: no usable frame could be built, or its \"{MG3Shared.PARAM_LENGTH}\" " +
-                            "parameter is missing.");
+                        skipped.Add($"{label}: unexpected — frame build failed even though every check passed.");
                         continue;
                     }
 
@@ -1482,7 +1833,7 @@ namespace AVES.Cmds_MG3
                         continue;
                     }
 
-                    validTrays.Add(new ValidTray(tray, trayFrame, lengthMm, false));
+                    validTrays.Add(new ValidTray(tray, trayFrame, lengthMm, minXMm, maxXMm, false));
                 }
 
                 if (validTrays.Count == 0)
@@ -1511,22 +1862,26 @@ namespace AVES.Cmds_MG3
                         // Anchored to the sample: new sets step out from the
                         // sample's own captured centre, never at it — the
                         // sample stays exactly where it was hand-placed.
-                        double halfExtentMm = validTray.LengthMm / 2.0 - clearanceMm - armourThicknessMm / 2.0;
-                        bool sampleWithinClearance = Math.Abs(armourCentreMm) <= halfExtentMm;
+                        // Bounds come from the tray's own MEASURED run range
+                        // (MinXMm/MaxXMm), not an assumed symmetric ±L/2 — the
+                        // origin is not required to sit at the centre.
+                        double upperBoundMm = validTray.MaxXMm - clearanceMm - armourThicknessMm / 2.0;
+                        double lowerBoundMm = validTray.MinXMm + clearanceMm + armourThicknessMm / 2.0;
+                        bool sampleWithinClearance = armourCentreMm >= lowerBoundMm && armourCentreMm <= upperBoundMm;
 
                         var newCentresMm = new List<double>();
 
                         for (int k = 1; ; k++)
                         {
                             double x = armourCentreMm + k * spacingMm;
-                            if (x > halfExtentMm) break;
+                            if (x > upperBoundMm) break;
                             newCentresMm.Add(x);
                         }
 
                         for (int k = 1; ; k++)
                         {
                             double x = armourCentreMm - k * spacingMm;
-                            if (x < -halfExtentMm) break;
+                            if (x < lowerBoundMm) break;
                             newCentresMm.Add(x);
                         }
 
@@ -1535,8 +1890,8 @@ namespace AVES.Cmds_MG3
                         double outermostNegativeMm =
                             newCentresMm.Where(c => c < armourCentreMm).DefaultIfEmpty(armourCentreMm).Min();
 
-                        double gapPositiveEndMm = validTray.LengthMm / 2.0 - (outermostPositiveMm + armourThicknessMm / 2.0);
-                        double gapNegativeEndMm = validTray.LengthMm / 2.0 + (outermostNegativeMm - armourThicknessMm / 2.0);
+                        double gapPositiveEndMm = validTray.MaxXMm - (outermostPositiveMm + armourThicknessMm / 2.0);
+                        double gapNegativeEndMm = (outermostNegativeMm - armourThicknessMm / 2.0) - validTray.MinXMm;
 
                         plans.Add(new TrayPlan(validTray, armourCentreMm, armourThicknessMm, newCentresMm)
                         {
@@ -1549,7 +1904,13 @@ namespace AVES.Cmds_MG3
                     }
                     else
                     {
-                        double usableMm = validTray.LengthMm - 2.0 * clearanceMm - armourThicknessMm;
+                        // Sets are centred on the MEASURED midpoint of the
+                        // tray's own run range, not on local X = 0 — the two
+                        // coincide only when the origin happens to be centred
+                        // (true for SPB-RF50, not required in general).
+                        double spanMm = validTray.MaxXMm - validTray.MinXMm;
+                        double midpointMm = (validTray.MinXMm + validTray.MaxXMm) / 2.0;
+                        double usableMm = spanMm - 2.0 * clearanceMm - armourThicknessMm;
 
                         if (usableMm < 0.0)
                         {
@@ -1565,7 +1926,7 @@ namespace AVES.Cmds_MG3
                         var setCentresMm = new List<double>(setCount);
                         for (int i = 0; i < setCount; i++)
                         {
-                            setCentresMm.Add(-(setCount - 1) * spacingMm / 2.0 + i * spacingMm);
+                            setCentresMm.Add(midpointMm + (-(setCount - 1) * spacingMm / 2.0 + i * spacingMm));
                         }
 
                         double actualEndGapMm = clearanceMm + (usableMm - (setCount - 1) * spacingMm) / 2.0;
