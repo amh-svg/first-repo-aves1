@@ -132,6 +132,7 @@ namespace AVES
             // Add button to panel
             var buttonMekanoGenerator = panelModeling.Ext_AddPushButton("Mekano\nGenerator", "AVES.Cmds_Button_MG1.Cmd_MG1");
             var buttonMekanoBolts = panelModeling.Ext_AddPushButton("Add\nBolts", "AVES.Cmds_MG2.Cmd_MG2");
+            var buttonMG3 = panelModeling.Ext_AddPushButton("Cable Tray\nArmour", "AVES.Cmds_MG3.Cmd_MG3");
 
             #endregion
 
