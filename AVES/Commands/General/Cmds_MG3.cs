@@ -72,11 +72,15 @@ using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
 // AVES
 using AVES.Core;
-// WPF, for the spacing/clearance and sample-confirmation dialogs. Grid
-// collides with Autodesk.Revit.DB and TextBox with Autodesk.Revit.UI (a
-// ribbon control) — both need an alias; nothing else here does.
+// WPF, for the setup and report windows. Grid collides with
+// Autodesk.Revit.DB, TextBox with Autodesk.Revit.UI (a ribbon control), and
+// Binding with Autodesk.Revit.DB's own ElementBinding/InstanceBinding base
+// class — all three need an alias; nothing else here does.
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using WpfBinding = System.Windows.Data.Binding;
+using WpfBrushes = System.Windows.Media.Brushes;
 using WpfGrid = System.Windows.Controls.Grid;
 using WpfTextBox = System.Windows.Controls.TextBox;
 using WpfVisibility = System.Windows.Visibility;
@@ -478,22 +482,31 @@ namespace AVES.Cmds_MG3
         /// </summary>
         internal sealed class TrayElementFilter : ISelectionFilter
         {
+            /// <summary>
+            /// Category-only, like before — the full IsTray check still runs after
+            /// the pick so a rejection can be explained (see DescribeTrayFailure).
+            /// But narrowed from "anything except real Cable Tray/Fitting" to
+            /// "a Generic Model FamilyInstance": box selection over a run of trays
+            /// otherwise sweeps up reference points, adaptive points and other
+            /// Generic-Model-adjacent debris that can never pass IsTray and only
+            /// cluttered the Skipped table with noise the user never selected on
+            /// purpose.
+            /// </summary>
             public bool AllowElement(Element elem)
             {
+                if (elem is not FamilyInstance) return false;
+
                 Category? category = elem.Category;
                 if (category is null) return false;
 
                 try
                 {
-                    BuiltInCategory bic = category.BuiltInCategory;
-                    if (bic == BuiltInCategory.OST_CableTray || bic == BuiltInCategory.OST_CableTrayFitting)
-                    {
-                        return false;
-                    }
+                    return category.BuiltInCategory == BuiltInCategory.OST_GenericModel;
                 }
-                catch { }
-
-                return true;
+                catch
+                {
+                    return false;
+                }
             }
 
             public bool AllowReference(Reference reference, XYZ position) => false;
@@ -1183,32 +1196,38 @@ namespace AVES.Cmds_MG3
     /// </summary>
     internal sealed class SimpleNumericField
     {
-        internal StackPanel Container { get; }
+        internal WpfGrid Container { get; }
         internal event Action? ValueChanged;
 
         private readonly WpfTextBox _textBox;
 
         internal SimpleNumericField(string label, string suffix)
         {
-            Container = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Margin = new Thickness(0, 6, 0, 6),
-            };
+            // Grid, not a horizontal StackPanel: a StackPanel grows to its
+            // children's full desired width and simply gets clipped by its
+            // parent when that exceeds the available column width — which is
+            // exactly what was cutting "mm" off. Label takes the Star column
+            // (it shrinks first if anything has to), the textbox gets a fixed
+            // width, and the unit gets Auto — Auto is never clipped, it always
+            // renders at its own measured width.
+            Container = new WpfGrid { Margin = new Thickness(0, 6, 0, 6) };
+            Container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Container.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(70) });
+            Container.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             var labelBlock = new TextBlock
             {
                 Text = label,
-                Width = 170,
                 FontFamily = AvTokens.Ui,
                 FontSize = 12,
                 Foreground = AvTokens.B(AvTokens.TextDim),
                 VerticalAlignment = VerticalAlignment.Center,
             };
+            WpfGrid.SetColumn(labelBlock, 0);
+            Container.Children.Add(labelBlock);
 
             _textBox = new WpfTextBox
             {
-                Width = 90,
                 FontFamily = AvTokens.Ui,
                 FontSize = 13,
                 Foreground = AvTokens.B(AvTokens.Text),
@@ -1219,6 +1238,8 @@ namespace AVES.Cmds_MG3
                 HorizontalContentAlignment = HorizontalAlignment.Right,
             };
             _textBox.TextChanged += (_, __) => ValueChanged?.Invoke();
+            WpfGrid.SetColumn(_textBox, 1);
+            Container.Children.Add(_textBox);
 
             var suffixBlock = new TextBlock
             {
@@ -1228,9 +1249,7 @@ namespace AVES.Cmds_MG3
                 Foreground = AvTokens.B(AvTokens.TextFaint),
                 VerticalAlignment = VerticalAlignment.Center,
             };
-
-            Container.Children.Add(labelBlock);
-            Container.Children.Add(_textBox);
+            WpfGrid.SetColumn(suffixBlock, 2);
             Container.Children.Add(suffixBlock);
         }
 
@@ -1247,25 +1266,160 @@ namespace AVES.Cmds_MG3
         }
     }
 
+    /// <summary>One row of the "Armour sample" table: how many of one family/type were in the hand-placed sample.</summary>
+    internal sealed class SampleCountRow
+    {
+        public int Quantity { get; set; }
+        public string FamilyName { get; set; } = string.Empty;
+    }
+
+    /// <summary>One row of the final report's Trays table.</summary>
+    internal sealed class TrayReportRow
+    {
+        public string Type { get; set; } = string.Empty;
+        public string Length { get; set; } = string.Empty;
+        public string Sets { get; set; } = string.Empty;
+        public string EndGaps { get; set; } = string.Empty;
+        public string Notes { get; set; } = string.Empty;
+    }
+
+    /// <summary>One row of the final report's Skipped table.</summary>
+    internal sealed class SkippedReportRow
+    {
+        public string TrayId { get; set; } = string.Empty;
+        public string Reason { get; set; } = string.Empty;
+    }
+
+    /// <summary>One row of a single-column message table (element issues, capture warnings).</summary>
+    internal sealed class MessageReportRow
+    {
+        public string Message { get; set; } = string.Empty;
+    }
+
     /// <summary>
-    /// Spacing and end-clearance entry, AVES style. Modal: ShowDialog blocks
-    /// inside Cmd_MG3.Execute, so placement below runs in the same API
-    /// context the command started in.
+    /// The bordered/zebra-striped DataGrid look every MG3 table shares,
+    /// factored out rather than repeated per table. Copied from
+    /// BoltRunReportWindow's BuildTable (Cmds_MG2.cs, read-only reference) —
+    /// same header/cell styles, same Zebra striping, same Text() column
+    /// helper — not a new visual language.
     /// </summary>
-    internal sealed class SpacingInputWindow : Window
+    internal static class MG3GridStyle
+    {
+        internal static DataGrid New(System.Collections.IEnumerable itemsSource, double rowHeight = 36, double maxHeight = 260)
+        {
+            var grid = new DataGrid
+            {
+                ItemsSource = itemsSource,
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                CanUserDeleteRows = false,
+                IsReadOnly = true,
+                HeadersVisibility = DataGridHeadersVisibility.Column,
+                GridLinesVisibility = DataGridGridLinesVisibility.Horizontal,
+                HorizontalGridLinesBrush = AvTokens.B(AvTokens.Border),
+                RowHeight = rowHeight,
+                FontFamily = AvTokens.Ui,
+                FontSize = 12.5,
+                Background = AvTokens.B(AvTokens.Surface),
+                BorderThickness = new Thickness(0),
+                RowBackground = AvTokens.B(AvTokens.Surface),
+                AlternatingRowBackground = AvTokens.B(AvTokens.Zebra),
+                AlternationCount = 2,
+                ColumnHeaderHeight = 34,
+                MaxHeight = maxHeight,
+            };
+
+            var headerStyle = new Style(typeof(DataGridColumnHeader));
+            headerStyle.Setters.Add(new Setter(DataGridColumnHeader.BackgroundProperty, AvTokens.B(AvTokens.Surface2)));
+            headerStyle.Setters.Add(new Setter(DataGridColumnHeader.ForegroundProperty, AvTokens.B(AvTokens.TextFaint)));
+            headerStyle.Setters.Add(new Setter(DataGridColumnHeader.FontFamilyProperty, AvTokens.Ui));
+            headerStyle.Setters.Add(new Setter(DataGridColumnHeader.FontSizeProperty, 10.5));
+            headerStyle.Setters.Add(new Setter(DataGridColumnHeader.FontWeightProperty, FontWeights.Bold));
+            headerStyle.Setters.Add(new Setter(DataGridColumnHeader.PaddingProperty, new Thickness(12, 9, 12, 9)));
+            grid.ColumnHeaderStyle = headerStyle;
+
+            var cellStyle = new Style(typeof(DataGridCell));
+            cellStyle.Setters.Add(new Setter(DataGridCell.BorderThicknessProperty, new Thickness(0)));
+            cellStyle.Setters.Add(new Setter(DataGridCell.PaddingProperty, new Thickness(12, 8, 12, 8)));
+            cellStyle.Setters.Add(new Setter(DataGridCell.BackgroundProperty, WpfBrushes.Transparent));
+            cellStyle.Setters.Add(new Setter(DataGridCell.ForegroundProperty, AvTokens.B(AvTokens.Text)));
+            cellStyle.Setters.Add(new Setter(DataGridCell.TemplateProperty, AvControls.DataGridCellTemplate()));
+            grid.CellStyle = cellStyle;
+
+            return grid;
+        }
+
+        internal static DataGridTextColumn Text(string header, string path, double stars, bool tooltip = false)
+        {
+            var column = new DataGridTextColumn
+            {
+                Header = header,
+                Binding = new WpfBinding(path),
+                Width = new DataGridLength(stars, DataGridLengthUnitType.Star),
+            };
+
+            if (tooltip)
+            {
+                // Same recoverable-truncation approach as BoltRunReportWindow's Text():
+                // the cell clips, the tooltip carries the same text in full.
+                var style = new Style(typeof(TextBlock));
+                style.Setters.Add(new Setter(TextBlock.ToolTipProperty, new WpfBinding(path)));
+                column.ElementStyle = style;
+            }
+
+            return column;
+        }
+
+        /// <summary>A pixel-width column — for a value like "2100 mm" that must never be clipped by the other columns' Star sharing.</summary>
+        internal static DataGridTextColumn FixedText(string header, string path, double pixels) => new DataGridTextColumn
+        {
+            Header = header,
+            Binding = new WpfBinding(path),
+            Width = new DataGridLength(pixels),
+        };
+
+        internal static Border Frame(DataGrid grid) => new Border
+        {
+            BorderBrush = AvTokens.B(AvTokens.Border),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(5),
+            ClipToBounds = true,
+            Background = AvTokens.B(AvTokens.Surface),
+            Child = grid,
+        };
+    }
+
+    /// <summary>
+    /// The one window standing between the reference-tray pick and
+    /// placement: confirms what the sample contained (left, a table — the
+    /// old SampleConfirmationWindow's job) and takes spacing/clearance
+    /// (right — the old SpacingInputWindow's job). Modal: ShowDialog blocks
+    /// inside Cmd_MG3.Execute, so placement below runs in the same API
+    /// context the command started in. Two-column layout copied from
+    /// TemplateMenuWindow (Cmds_PullDown2.cs, read-only reference) — a fixed
+    /// Grid with a 24px gutter between two Star columns, not a new layout.
+    /// </summary>
+    internal sealed class SetupWindow : Window
     {
         internal double SpacingMm => _spacing.Value;
         internal double EndClearanceMm => _clearance.Value;
 
         private readonly SimpleNumericField _spacing;
         private readonly SimpleNumericField _clearance;
-        private readonly Button _placeButton;
+        private readonly Button _continueButton;
 
-        internal SpacingInputWindow()
+        internal SetupWindow(List<SampleCountRow> sampleRows)
         {
             Title = MG3Shared.DIALOG_TITLE;
-            Width = 380;
-            Height = 260;
+            Width = 640;
+            // Height follows content rather than a fixed guess, so every sample
+            // row is visible without an internal scrollbar regardless of how many
+            // family/types the hand-placed sample turns out to have. Matches
+            // TemplateMenuWindow's (Cmds_PullDown2.cs) reasoning: width stays
+            // fixed since the two columns' proportions depend on it, height does
+            // not need to.
+            SizeToContent = SizeToContent.Height;
+            MaxHeight = SystemParameters.WorkArea.Height * 0.9;
             ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Background = AvTokens.B(AvTokens.Surface);
@@ -1275,7 +1429,7 @@ namespace AVES.Cmds_MG3
 
             var root = new WpfGrid();
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Content = root;
 
@@ -1283,16 +1437,40 @@ namespace AVES.Cmds_MG3
             WpfGrid.SetRow(header, 0);
             root.Children.Add(header);
 
-            var body = new StackPanel { Margin = new Thickness(20) };
-            WpfGrid.SetRow(body, 1);
-            root.Children.Add(body);
+            var columns = new WpfGrid { Margin = new Thickness(20) };
+            columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(24) });
+            columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            WpfGrid.SetRow(columns, 1);
+            root.Children.Add(columns);
 
-            _spacing = new SimpleNumericField("Spacing (s)", "mm");
-            _clearance = new SimpleNumericField("End clearance (c)", "mm");
+            // ── Left — armour sample table ────────────────────────────────────
+            var leftStack = new StackPanel();
+            leftStack.Children.Add(AvControls.SectionLabel("Armour sample"));
+
+            // No MaxHeight cap: the sample is always a handful of rows, and all of
+            // them should be visible without an internal scrollbar.
+            DataGrid sampleGrid = MG3GridStyle.New(sampleRows, rowHeight: 32, maxHeight: double.PositiveInfinity);
+            sampleGrid.Columns.Add(MG3GridStyle.Text("QTY", "Quantity", 0.6));
+            sampleGrid.Columns.Add(MG3GridStyle.Text("FAMILY NAME", "FamilyName", 1.6, tooltip: true));
+            leftStack.Children.Add(MG3GridStyle.Frame(sampleGrid));
+
+            // A little white space below the table, per spec.
+            leftStack.Children.Add(new Border { Height = 14 });
+
+            WpfGrid.SetColumn(leftStack, 0);
+            columns.Children.Add(leftStack);
+
+            // ── Right — distribution fields ───────────────────────────────────
+            var rightStack = new StackPanel();
+            rightStack.Children.Add(AvControls.SectionLabel("Distribution"));
+
+            _spacing = new SimpleNumericField("Spacing (mm)", "mm");
+            _clearance = new SimpleNumericField("Clearance (mm)", "mm");
             _clearance.SetValue(0);
 
-            body.Children.Add(_spacing.Container);
-            body.Children.Add(_clearance.Container);
+            rightStack.Children.Add(_spacing.Container);
+            rightStack.Children.Add(_clearance.Container);
 
             var validationText = new TextBlock
             {
@@ -1303,12 +1481,21 @@ namespace AVES.Cmds_MG3
                 TextWrapping = TextWrapping.Wrap,
                 Visibility = WpfVisibility.Collapsed,
             };
-            body.Children.Add(validationText);
+            rightStack.Children.Add(validationText);
 
-            _placeButton = AvControls.PrimaryButton("Place armour");
-            _placeButton.Click += (_, __) => { DialogResult = true; Close(); };
+            WpfGrid.SetColumn(rightStack, 2);
+            columns.Children.Add(rightStack);
+
+            // ── Footer — Cancel / Continue ────────────────────────────────────
+            _continueButton = AvControls.PrimaryButton("Continue");
+            _continueButton.IsEnabled = false;
+            _continueButton.Click += (_, __) => { DialogResult = true; Close(); };
 
             Button cancelButton = AvControls.SecondaryButton("Cancel");
+            // 10px gap so Cancel does not run into Continue — the same
+            // spacing BoltRunReportWindow.BuildFooter (Cmds_MG2.cs) gives its
+            // secondary buttons.
+            cancelButton.Margin = new Thickness(0, 0, 10, 0);
             cancelButton.Click += (_, __) => { DialogResult = false; Close(); };
 
             var footerRow = new StackPanel
@@ -1317,7 +1504,7 @@ namespace AVES.Cmds_MG3
                 HorizontalAlignment = HorizontalAlignment.Right,
             };
             footerRow.Children.Add(cancelButton);
-            footerRow.Children.Add(_placeButton);
+            footerRow.Children.Add(_continueButton);
 
             Border footer = AvControls.FooterStrip(footerRow);
             WpfGrid.SetRow(footer, 2);
@@ -1328,12 +1515,12 @@ namespace AVES.Cmds_MG3
                 bool spacingOk = _spacing.IsValid && _spacing.Value > 0.0;
                 bool clearanceOk = _clearance.IsValid && _clearance.Value >= 0.0;
 
-                _placeButton.IsEnabled = spacingOk && clearanceOk;
-                validationText.Visibility = _placeButton.IsEnabled ? WpfVisibility.Collapsed : WpfVisibility.Visible;
+                _continueButton.IsEnabled = spacingOk && clearanceOk;
+                validationText.Visibility = _continueButton.IsEnabled ? WpfVisibility.Collapsed : WpfVisibility.Visible;
                 validationText.Text = !spacingOk
                     ? "Spacing must be a positive number of millimetres."
                     : !clearanceOk
-                        ? "End clearance must be zero or a positive number of millimetres."
+                        ? "Clearance must be zero or a positive number of millimetres."
                         : string.Empty;
             }
 
@@ -1344,24 +1531,43 @@ namespace AVES.Cmds_MG3
     }
 
     /// <summary>
-    /// Shows the sample's counts per family and asks whether to proceed —
-    /// Cmd_MG3's sample-driven flow has nothing else to confirm against
-    /// before it goes looking for the reference tray, so this is the one
-    /// chance to catch a wrong click before it does.
+    /// Final run report, AVES report-window style. Modeled directly on
+    /// BoltRunReportWindow (Cmds_MG2.cs, read-only reference): ReportHeaderBar,
+    /// a StatTile summary row, bordered/zebra-striped DataGrid tables, a
+    /// footer strip with the primary action. Replaces the old single
+    /// ShowAlert text blob — every value that alert printed is still here,
+    /// just laid out in tables instead of a paragraph.
     /// </summary>
-    internal sealed class SampleConfirmationWindow : Window
+    internal sealed class RunReportWindow : Window
     {
-        private readonly Button _continueButton;
+        private readonly List<TrayReportRow> _trayRows;
+        private readonly List<SkippedReportRow> _skippedRows;
+        private readonly List<MessageReportRow> _issueRows;
+        private readonly List<MessageReportRow> _warningRows;
 
-        internal SampleConfirmationWindow(string summaryText)
+        internal RunReportWindow(
+            double spacingMm, double clearanceMm,
+            int traysProcessed, int setsPlaced, int elementsPlaced, int skippedCount,
+            string referenceTrayLine,
+            List<TrayReportRow> trayRows,
+            List<SkippedReportRow> skippedRows,
+            List<MessageReportRow> issueRows,
+            List<MessageReportRow> warningRows)
         {
+            _trayRows = trayRows;
+            _skippedRows = skippedRows;
+            _issueRows = issueRows;
+            _warningRows = warningRows;
+
             Title = MG3Shared.DIALOG_TITLE;
-            Width = 420;
-            Height = 340;
-            ResizeMode = ResizeMode.NoResize;
+            Width = 900;
+            Height = 640;
+            MinWidth = 680;
+            MinHeight = 420;
+            ResizeMode = ResizeMode.CanResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            Background = AvTokens.B(AvTokens.Surface);
             FontFamily = AvTokens.Ui;
+            Background = AvTokens.B(AvTokens.Surface);
             UseLayoutRounding = true;
             SnapsToDevicePixels = true;
 
@@ -1371,7 +1577,7 @@ namespace AVES.Cmds_MG3
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Content = root;
 
-            Border header = AvControls.TitleBar("Cable Tray Armour Generator");
+            Border header = AvControls.ReportHeaderBar(MG3Shared.DIALOG_TITLE);
             WpfGrid.SetRow(header, 0);
             root.Children.Add(header);
 
@@ -1386,42 +1592,121 @@ namespace AVES.Cmds_MG3
             WpfGrid.SetRow(bodyScroll, 1);
             root.Children.Add(bodyScroll);
 
-            body.Children.Add(new TextBlock
-            {
-                Text = "Use this as the sample armour set?",
-                FontFamily = AvTokens.Ui,
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = AvTokens.B(AvTokens.Text),
-                Margin = new Thickness(0, 0, 0, 10),
-            });
+            body.Children.Add(BuildStatTiles(spacingMm, clearanceMm, traysProcessed, setsPlaced, elementsPlaced, skippedCount));
 
             body.Children.Add(new TextBlock
             {
-                Text = summaryText,
+                Text = "Reference tray: " + referenceTrayLine,
                 FontFamily = AvTokens.Ui,
                 FontSize = 12,
                 Foreground = AvTokens.B(AvTokens.TextDim),
                 TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 16),
             });
 
-            _continueButton = AvControls.PrimaryButton("Continue");
-            _continueButton.Click += (_, __) => { DialogResult = true; Close(); };
+            if (_warningRows.Count > 0)
+            {
+                body.Children.Add(AvControls.SectionLabel("Sample capture warnings"));
+                body.Children.Add(MG3GridStyle.Frame(BuildMessagesGrid(_warningRows, "WARNING")));
+                body.Children.Add(new Border { Height = 16 });
+            }
 
-            Button cancelButton = AvControls.SecondaryButton("Cancel");
-            cancelButton.Click += (_, __) => { DialogResult = false; Close(); };
+            body.Children.Add(AvControls.SectionLabel("Trays"));
+            body.Children.Add(MG3GridStyle.Frame(BuildTraysGrid()));
 
-            var footerRow = new StackPanel
+            if (_skippedRows.Count > 0)
+            {
+                body.Children.Add(new Border { Height = 16 });
+                body.Children.Add(AvControls.SectionLabel("Skipped"));
+                body.Children.Add(MG3GridStyle.Frame(BuildSkippedGrid()));
+            }
+
+            if (_issueRows.Count > 0)
+            {
+                body.Children.Add(new Border { Height = 16 });
+                body.Children.Add(AvControls.SectionLabel("Element issues"));
+                body.Children.Add(MG3GridStyle.Frame(BuildMessagesGrid(_issueRows, "ISSUE")));
+            }
+
+            Border footer = BuildFooter();
+            WpfGrid.SetRow(footer, 2);
+            root.Children.Add(footer);
+        }
+
+        private static WpfGrid BuildStatTiles(
+            double spacingMm, double clearanceMm,
+            int traysProcessed, int setsPlaced, int elementsPlaced, int skippedCount)
+        {
+            var tiles = new WpfGrid { Margin = new Thickness(0, 0, 0, 16) };
+
+            var stats = new (string Value, string Label, string Accent)[]
+            {
+                ($"{spacingMm:0.##} mm", "Spacing", ""),
+                ($"{clearanceMm:0.##} mm", "Clearance", ""),
+                (traysProcessed.ToString(), "Trays", traysProcessed > 0 ? "ok" : ""),
+                (setsPlaced.ToString(), "Sets placed", setsPlaced > 0 ? "ok" : ""),
+                (elementsPlaced.ToString(), "Elements", elementsPlaced > 0 ? "ok" : ""),
+                (skippedCount.ToString(), "Skipped", skippedCount > 0 ? "warn" : ""),
+            };
+
+            foreach (var _ in stats)
+            {
+                tiles.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            }
+
+            for (int i = 0; i < stats.Length; i++)
+            {
+                Border tile = AvControls.StatTile(stats[i].Value, stats[i].Label, stats[i].Accent);
+                tile.Margin = new Thickness(i == 0 ? 0 : 6, 0, i == stats.Length - 1 ? 0 : 6, 0);
+                WpfGrid.SetColumn(tile, i);
+                tiles.Children.Add(tile);
+            }
+
+            return tiles;
+        }
+
+        private DataGrid BuildTraysGrid()
+        {
+            DataGrid grid = MG3GridStyle.New(_trayRows);
+            grid.Columns.Add(MG3GridStyle.Text("TYPE", "Type", 1.8, tooltip: true));
+            // Fixed pixel width, not Star: "2100 mm" must never be clipped
+            // regardless of how the other columns' Star widths end up sharing
+            // the remaining space.
+            grid.Columns.Add(MG3GridStyle.FixedText("LENGTH", "Length", 100));
+            grid.Columns.Add(MG3GridStyle.Text("SETS", "Sets", 1.1));
+            grid.Columns.Add(MG3GridStyle.Text("END GAPS", "EndGaps", 1.6));
+            grid.Columns.Add(MG3GridStyle.Text("NOTES", "Notes", 1.8, tooltip: true));
+            return grid;
+        }
+
+        private DataGrid BuildSkippedGrid()
+        {
+            DataGrid grid = MG3GridStyle.New(_skippedRows);
+            grid.Columns.Add(MG3GridStyle.Text("TRAY ID", "TrayId", 1.2, tooltip: true));
+            grid.Columns.Add(MG3GridStyle.Text("REASON", "Reason", 3.0, tooltip: true));
+            return grid;
+        }
+
+        private static DataGrid BuildMessagesGrid(List<MessageReportRow> rows, string header)
+        {
+            DataGrid grid = MG3GridStyle.New(rows);
+            grid.Columns.Add(MG3GridStyle.Text(header, "Message", 1.0, tooltip: true));
+            return grid;
+        }
+
+        private Border BuildFooter()
+        {
+            Button okButton = AvControls.PrimaryButton("OK");
+            okButton.Click += (_, __) => { DialogResult = true; Close(); };
+
+            var buttons = new StackPanel
             {
                 Orientation = Orientation.Horizontal,
                 HorizontalAlignment = HorizontalAlignment.Right,
             };
-            footerRow.Children.Add(cancelButton);
-            footerRow.Children.Add(_continueButton);
+            buttons.Children.Add(okButton);
 
-            Border footer = AvControls.FooterStrip(footerRow);
-            WpfGrid.SetRow(footer, 2);
-            root.Children.Add(footer);
+            return AvControls.FooterStrip(buttons);
         }
     }
 
@@ -1576,22 +1861,22 @@ namespace AVES.Cmds_MG3
                     return Result.Failed;
                 }
 
-                var sampleCounts = sampleElements
+                List<SampleCountRow> sampleCountRows = sampleElements
                     .OfType<FamilyInstance>()
                     .GroupBy(fi => (
                         Kind: AdaptiveComponentInstanceUtils.IsAdaptiveComponentInstance(fi) ? "half" : "fastener",
                         Family: fi.Symbol?.Family?.Name ?? "Unknown",
                         Type: fi.Symbol?.Name ?? "Unknown"))
-                    .OrderBy(g => g.Key.Kind)
-                    .Select(g => $"{g.Count()} x \"{g.Key.Family}\" / \"{g.Key.Type}\" ({g.Key.Kind}s)")
+                    // Halves first, then fasteners — "half" sorts after "fastener"
+                    // alphabetically, so an explicit priority is used instead of
+                    // OrderBy(g => g.Key.Kind).
+                    .OrderBy(g => g.Key.Kind == "half" ? 0 : 1)
+                    .Select(g => new SampleCountRow
+                    {
+                        Quantity = g.Count(),
+                        FamilyName = g.Key.Family,
+                    })
                     .ToList();
-
-                var confirmation = new SampleConfirmationWindow(
-                    $"{sampleHalfCount} half(s), {sampleFastenerCount} fastener(s):\n\n" +
-                    string.Join("\n", sampleCounts) +
-                    (trayLikeCount > 0 ? $"\n\n({trayLikeCount} tray-like element(s) ignored.)" : string.Empty));
-
-                if (confirmation.ShowDialog() != true) return Result.Cancelled;
 
                 // ── 2. The reference tray — always picked manually ───────────────
                 List<XYZ> sampleWorldPoints = CollectSampleWorldPoints(doc, sampleElements);
@@ -1781,11 +2066,22 @@ namespace AVES.Cmds_MG3
 
                 // ── 5. Validate every target tray ────────────────────────────────
                 var validTrays = new List<ValidTray>();
-                var skipped = new List<string>();
+                var skipped = new List<(string TrayId, string Reason)>();
+
+                // Box selection over a run of trays inevitably also nets the
+                // armour halves/fasteners already sitting on them (the sample
+                // itself included) — these are never tray candidates and should
+                // never show up as a "failed" tray, so anything sharing a family
+                // with the sample is ignored before the tray check even runs.
+                var sampleFamilyNames = sampleElements
+                    .OfType<FamilyInstance>()
+                    .Select(fi => fi.Symbol?.Family?.Name)
+                    .Where(name => !string.IsNullOrEmpty(name))
+                    .ToHashSet(StringComparer.Ordinal);
 
                 foreach (Element tray in targetTrayElements)
                 {
-                    string label = $"{MG2.LabelOf(tray)} ({tray.Id})";
+                    string label = TrayIdLabel(tray);
                     bool isReference = tray.Id == referenceTray.Id;
 
                     if (isReference)
@@ -1795,9 +2091,37 @@ namespace AVES.Cmds_MG3
                         continue;
                     }
 
+                    // Silently ignored, not skipped: an armour half/fastener from
+                    // the sample's own families swept up by the box selection.
+                    if (tray is FamilyInstance trayFi
+                        && sampleFamilyNames.Contains(trayFi.Symbol?.Family?.Name ?? string.Empty))
+                    {
+                        continue;
+                    }
+
+                    // Silently ignored, not skipped: a Generic Model instance
+                    // with no "Length" parameter at all is not a tray candidate
+                    // in the first place — only something that HAS Length but
+                    // still fails the full tray check belongs in Skipped.
+                    if (!MG3Shared.ReadLengthMm(tray, MG3Shared.PARAM_LENGTH).Found)
+                    {
+                        continue;
+                    }
+
                     if (!MG3Shared.IsTray(tray))
                     {
-                        skipped.Add($"{label}:\n{MG3Shared.DescribeTrayFailure(tray)}");
+                        // DescribeTrayFailure is a multi-line bullet list, written for the
+                        // reference-tray pick's ShowAlert warning (untouched by this table).
+                        // Collapsed to one line here since a table cell cannot show several —
+                        // the full text is still one hover away via the column's tooltip.
+                        skipped.Add((
+                            label,
+                            string.Join(
+                                " · ",
+                                MG3Shared.DescribeTrayFailure(tray)
+                                    .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                                    .Select(s => s.Trim())
+                                    .Where(s => s.Length > 0))));
                         continue;
                     }
 
@@ -1806,7 +2130,7 @@ namespace AVES.Cmds_MG3
                             out double minXMm, out double maxXMm)
                         || trayFrame is null)
                     {
-                        skipped.Add($"{label}: unexpected — frame build failed even though every check passed.");
+                        skipped.Add((label, "Unexpected — frame build failed even though every check passed."));
                         continue;
                     }
 
@@ -1814,9 +2138,10 @@ namespace AVES.Cmds_MG3
 
                     if (tiltDeg > MG3Shared.MAX_HORIZONTAL_TILT_DEG)
                     {
-                        skipped.Add(
-                            $"{label}: not horizontal — local X tilts {tiltDeg:0.##} deg from level " +
-                            $"(limit {MG3Shared.MAX_HORIZONTAL_TILT_DEG:0.##} deg).");
+                        skipped.Add((
+                            label,
+                            $"Not horizontal — local X tilts {tiltDeg:0.##} deg from level " +
+                            $"(limit {MG3Shared.MAX_HORIZONTAL_TILT_DEG:0.##} deg)."));
                         continue;
                     }
 
@@ -1827,9 +2152,10 @@ namespace AVES.Cmds_MG3
                     if (!string.Equals(candidateFamily, referenceTrayFamily, StringComparison.Ordinal)
                         || !string.Equals(candidateType, referenceTrayType, StringComparison.Ordinal))
                     {
-                        skipped.Add(
-                            $"{label}: type differs from sample — \"{candidateFamily}\" / \"{candidateType}\", " +
-                            $"expected \"{referenceTrayFamily}\" / \"{referenceTrayType}\".");
+                        skipped.Add((
+                            label,
+                            $"Type differs from sample — \"{candidateFamily}\" / \"{candidateType}\", " +
+                            $"expected \"{referenceTrayFamily}\" / \"{referenceTrayType}\"."));
                         continue;
                     }
 
@@ -1840,17 +2166,18 @@ namespace AVES.Cmds_MG3
                 {
                     AvControls.ShowAlert(
                         MG3Shared.DIALOG_TITLE,
-                        "None of the selected trays could be processed.\n\n" + string.Join("\n", skipped),
+                        "None of the selected trays could be processed.\n\n" +
+                        string.Join("\n", skipped.Select(s => $"{s.TrayId}: {s.Reason}")),
                         AlertSeverity.Warning);
                     return Result.Failed;
                 }
 
-                // ── 6. Spacing / end clearance ────────────────────────────────────
-                var dialog = new SpacingInputWindow();
-                if (dialog.ShowDialog() != true) return Result.Cancelled;
+                // ── 6. Sample review + spacing / end clearance ───────────────────
+                var setup = new SetupWindow(sampleCountRows);
+                if (setup.ShowDialog() != true) return Result.Cancelled;
 
-                double spacingMm = dialog.SpacingMm;
-                double clearanceMm = dialog.EndClearanceMm;
+                double spacingMm = setup.SpacingMm;
+                double clearanceMm = setup.EndClearanceMm;
 
                 // ── 7. Distribution, per valid tray ───────────────────────────────
                 var plans = new List<TrayPlan>();
@@ -1914,10 +2241,11 @@ namespace AVES.Cmds_MG3
 
                         if (usableMm < 0.0)
                         {
-                            skipped.Add(
-                                $"{MG2.LabelOf(validTray.Tray)} ({validTray.Tray.Id}): insufficient usable " +
-                                $"length — L={validTray.LengthMm:0.##} mm, 2c={2.0 * clearanceMm:0.##} mm, " +
-                                $"armour thickness={armourThicknessMm:0.##} mm, usable={usableMm:0.##} mm.");
+                            skipped.Add((
+                                TrayIdLabel(validTray.Tray),
+                                $"Insufficient usable length — L={validTray.LengthMm:0.##} mm, " +
+                                $"2c={2.0 * clearanceMm:0.##} mm, armour thickness={armourThicknessMm:0.##} mm, " +
+                                $"usable={usableMm:0.##} mm."));
                             continue;
                         }
 
@@ -1942,7 +2270,8 @@ namespace AVES.Cmds_MG3
                 {
                     AvControls.ShowAlert(
                         MG3Shared.DIALOG_TITLE,
-                        "No tray had enough usable length for even one set.\n\n" + string.Join("\n", skipped),
+                        "No tray had enough usable length for even one set.\n\n" +
+                        string.Join("\n", skipped.Select(s => $"{s.TrayId}: {s.Reason}")),
                         AlertSeverity.Warning);
                     return Result.Failed;
                 }
@@ -2014,15 +2343,40 @@ namespace AVES.Cmds_MG3
                 int setsPlaced = plans.Sum(p => p.SetsPlaced);
                 int elementsPlaced = plans.Sum(p => p.ElementsPlaced);
 
-                AvControls.ShowAlert(
-                    MG3Shared.DIALOG_TITLE,
-                    BuildRunSummary(
-                        traysProcessed, setsPlaced, elementsPlaced, spacingMm, clearanceMm,
-                        referenceTray, referenceTrayFamily, referenceTrayType, sampleHalfCount, sampleFastenerCount,
-                        plans, skipped, elementIssues, armourSet.Warnings),
-                    (skipped.Count > 0 || elementIssues.Count > 0 || armourSet.Warnings.Count > 0)
-                        ? AlertSeverity.Warning
-                        : AlertSeverity.Success);
+                var trayRows = plans.Select(plan => new TrayReportRow
+                {
+                    Type = referenceTrayFamily,
+                    Length = $"{plan.Tray.LengthMm:0.##} mm",
+                    Sets = plan.Tray.IsReferenceTray
+                        ? $"{plan.SetsPlaced} + sample"
+                        : $"{plan.SetsPlaced}",
+                    // Both ends in the same "A / B mm" shape for every row — no
+                    // forced +/- sign: the underlying values are already the true
+                    // (positive, healthy) gap, and forcing a literal "-" onto
+                    // GapNegativeEndMm regardless of its actual sign is what
+                    // showed "-27.67" for a perfectly fine ~28 mm gap before.
+                    EndGaps = plan.Tray.IsReferenceTray
+                        ? $"{plan.GapPositiveEndMm:0.##} / {plan.GapNegativeEndMm:0.##} mm"
+                        : $"{plan.ActualEndGapMm:0.##} / {plan.ActualEndGapMm:0.##} mm",
+                    Notes = plan.Tray.IsReferenceTray
+                        ? "Reference tray" + (plan.SampleWithinClearance == false
+                            ? " — sample inside clearance zone"
+                            : string.Empty)
+                        : string.Empty,
+                }).ToList();
+
+                var skippedRows = skipped
+                    .Select(s => new SkippedReportRow { TrayId = s.TrayId, Reason = s.Reason })
+                    .ToList();
+
+                var issueRows = elementIssues.Select(i => new MessageReportRow { Message = i }).ToList();
+                var warningRows = armourSet.Warnings.Select(w => new MessageReportRow { Message = w }).ToList();
+
+                string referenceTrayLine = $"{referenceTrayFamily} ({referenceTray.Id.Value})";
+
+                new RunReportWindow(
+                    spacingMm, clearanceMm, traysProcessed, setsPlaced, elementsPlaced, skipped.Count,
+                    referenceTrayLine, trayRows, skippedRows, issueRows, warningRows).ShowDialog();
 
                 return Result.Succeeded;
             }
@@ -2033,6 +2387,9 @@ namespace AVES.Cmds_MG3
                 return Result.Failed;
             }
         }
+
+        /// <summary>The label used for a tray everywhere the report/skip tables identify one: name plus element id.</summary>
+        private static string TrayIdLabel(Element tray) => $"{MG2.LabelOf(tray)} ({tray.Id.Value})";
 
         /// <summary>Every world position the sample offers to test tray containment with — every adaptive point, every fastener's origin.</summary>
         private static List<XYZ> CollectSampleWorldPoints(Document doc, List<Element> sampleElements)
@@ -2286,81 +2643,5 @@ namespace AVES.Cmds_MG3
             }
         }
 
-        private static string BuildRunSummary(
-            int traysProcessed, int setsPlaced, int elementsPlaced,
-            double spacingMm, double clearanceMm,
-            Element referenceTray, string referenceTrayFamily, string referenceTrayType,
-            int sampleHalfCount, int sampleFastenerCount,
-            List<TrayPlan> plans, List<string> skipped, List<string> elementIssues, List<string> captureWarnings)
-        {
-            var sb = new StringBuilder();
-
-            sb.AppendLine($"Sample: {sampleHalfCount} half(s), {sampleFastenerCount} fastener(s)");
-            sb.AppendLine(
-                $"Reference tray (picked by the user): {MG2.LabelOf(referenceTray)} ({referenceTray.Id}) — " +
-                $"\"{referenceTrayFamily}\" / \"{referenceTrayType}\"");
-            sb.AppendLine($"Spacing: {spacingMm:0.##} mm, end clearance: {clearanceMm:0.##} mm");
-            sb.AppendLine();
-            sb.AppendLine($"Trays processed: {traysProcessed}, sets placed: {setsPlaced}, elements placed: {elementsPlaced}");
-
-            sb.AppendLine();
-            sb.AppendLine("Per tray:");
-            foreach (TrayPlan plan in plans)
-            {
-                string trayLabel = $"  {MG2.LabelOf(plan.Tray.Tray)} ({plan.Tray.Tray.Id})";
-
-                if (plan.Tray.IsReferenceTray)
-                {
-                    sb.AppendLine($"{trayLabel} [REFERENCE] — L={plan.Tray.LengthMm:0.##} mm");
-                    sb.AppendLine(
-                        $"    sample kept in place; {plan.SetsPositiveSide} new set(s) on the positive side, " +
-                        $"{plan.SetsNegativeSide} on the negative side");
-                    sb.AppendLine(
-                        $"    end gaps: positive {plan.GapPositiveEndMm:0.##} mm, " +
-                        $"negative {plan.GapNegativeEndMm:0.##} mm");
-
-                    if (plan.SampleWithinClearance == false)
-                    {
-                        sb.AppendLine(
-                            "    NOTE: the sample itself sits closer than the end clearance to one end " +
-                            "— kept as placed; only the new sets respect the clearance.");
-                    }
-
-                    sb.AppendLine(
-                        $"    placed {plan.SetsPlaced}/{plan.SetCentresMm.Count} new set(s), " +
-                        $"{plan.ElementsPlaced} element(s)");
-                }
-                else
-                {
-                    sb.AppendLine(
-                        $"{trayLabel}: L={plan.Tray.LengthMm:0.##} mm, n={plan.SetCentresMm.Count}, " +
-                        $"end gap={plan.ActualEndGapMm:0.##} mm, placed {plan.SetsPlaced}/{plan.SetCentresMm.Count} " +
-                        $"set(s), {plan.ElementsPlaced} element(s)");
-                }
-            }
-
-            if (skipped.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine("Trays skipped:");
-                foreach (string reason in skipped) sb.AppendLine($"  - {reason}");
-            }
-
-            if (captureWarnings.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine("Sample capture warnings:");
-                foreach (string warning in captureWarnings) sb.AppendLine($"  - {warning}");
-            }
-
-            if (elementIssues.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine("Element issues:");
-                foreach (string issue in elementIssues) sb.AppendLine($"  - {issue}");
-            }
-
-            return sb.ToString();
-        }
     }
 }
