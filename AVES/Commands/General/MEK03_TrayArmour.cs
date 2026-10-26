@@ -43,12 +43,9 @@
 //     cross-section check only.
 //
 // Outstanding (not acted on, listed for later):
-//   - Icons MG3_MG316.png / MG3_MG332.png do not exist yet; the ribbon
-//     button renders label-only.
-//   - Tooltip text for the ribbon button.
-//   - MG3Shared depends on MEK01Shared (Compose, Rotate parameter names) and
-//     MEK02Shared (SolidsOf, LabelOf) by reference. Whether any of that moves
-//     to a common helper file, shared with MG1/MG2, is undecided.
+//   - MG3Shared depends on MEK01Shared (Compose, Rotate parameter names) by
+//     reference. Unit conversion and the solid/label helpers now come from
+//     MekanoCommon, shared with MEK01 and MEK02.
 //   - MG3Shared.ComputeArmourReference reads the armour's captured
 //     placement points only, not the halves' solid geometry, to find its
 //     own centre and thickness. Passed every test run so far; geometry
@@ -84,10 +81,9 @@ using WpfBrushes = System.Windows.Media.Brushes;
 using WpfGrid = System.Windows.Controls.Grid;
 using WpfTextBox = System.Windows.Controls.TextBox;
 using WpfVisibility = System.Windows.Visibility;
-// Reused rather than duplicated: solid-collection and labelling helpers are
-// generic geometry code, not Mekano-specific, and MEK02Shared already has them
-// well exercised. Referenced only — MG2's file itself is never touched.
-using MG2 = AVES.Commands.MEK02Shared;
+// Unit conversion, solid-collection and labelling helpers are shared with the
+// other Mekano commands and live in MekanoCommon.
+using static AVES.Commands.MekanoCommon;
 // Same reuse principle: the tray family (and the armour halves) share
 // Mekano's own Rotate XY/XZ/YZ convention and composition order.
 // MEK01Shared.Compose already implements R = Rz(XY)*Rx(YZ)*Ry(XZ) correctly —
@@ -158,14 +154,6 @@ namespace AVES.Commands
         // physical tolerance — these planes come from the same captured
         // sample point, so any real difference is floating-point noise.
         internal const double SKETCH_PLANE_COINCIDENCE_MM = 0.5;
-
-        // ── Unit helpers ───────────────────────────────────────────────────────
-
-        internal static double Ft(double millimetres)
-            => UnitUtils.ConvertToInternalUnits(millimetres, UnitTypeId.Millimeters);
-
-        internal static double Mm(double feet)
-            => UnitUtils.ConvertFromInternalUnits(feet, UnitTypeId.Millimeters);
 
         /// <summary>Angle between two vectors, in degrees. Zero if either has collapsed to nothing.</summary>
         internal static double AngleDegreesBetween(XYZ a, XYZ b)
@@ -333,7 +321,7 @@ namespace AVES.Commands
             double minY = double.MaxValue, maxY = double.MinValue;
             double minZ = double.MaxValue, maxZ = double.MinValue;
 
-            foreach (Solid solid in MG2.SolidsOf(tray))
+            foreach (Solid solid in MekanoCommon.SolidsOf(tray))
             {
                 foreach (Edge edge in solid.Edges)
                 {
@@ -597,7 +585,7 @@ namespace AVES.Commands
                 }
 
                 string source = instanceParam is not null ? "instance" : "type";
-                string valueText = found.HasValue ? (MG2.ParameterText(found) ?? "(unreadable)") : "(no value)";
+                string valueText = found.HasValue ? (MekanoCommon.ParameterText(found) ?? "(unreadable)") : "(no value)";
 
                 sb.AppendLine($"- \"{name}\": found on {source}, {DescribeStorageAndSpec(found)}, value = {valueText}");
             }
@@ -1070,7 +1058,7 @@ namespace AVES.Commands
             {
                 if (el is not FamilyInstance fi)
                 {
-                    set.Warnings.Add($"Skipped {MG2.LabelOf(el)} ({el.Id}): not a family instance.");
+                    set.Warnings.Add($"Skipped {MekanoCommon.LabelOf(el)} ({el.Id}): not a family instance.");
                     continue;
                 }
 
@@ -1085,7 +1073,7 @@ namespace AVES.Commands
                 else
                 {
                     set.Warnings.Add(
-                        $"Skipped {MG2.LabelOf(el)} ({el.Id}): placement type " +
+                        $"Skipped {MekanoCommon.LabelOf(el)} ({el.Id}): placement type " +
                         $"{fi.Symbol?.Family?.FamilyPlacementType} is neither adaptive nor WorkPlaneBased.");
                 }
             }
@@ -1955,7 +1943,7 @@ namespace AVES.Commands
                     // TryGetTrayFrame already measured); X does not — the
                     // measured run range it returned IS the local X extent in
                     // this same frame, no second read needed for that part.
-                    List<Solid> pickedSolids = MG2.SolidsOf(picked);
+                    List<Solid> pickedSolids = MekanoCommon.SolidsOf(picked);
                     MG3Shared.LocalExtent pickedExtents =
                         MG3Shared.ComputeLocalExtents(pickedSolids, pickedFrame, pickedLengthMm);
 
@@ -1971,9 +1959,9 @@ namespace AVES.Commands
                     // the WRONG neighbouring tray — REFERENCE_TRAY_TOLERANCE_MM
                     // is for the Y/Z cross-section check only.
                     XYZ localCentroid = pickedFrame.ToLocalPoint(sampleCentroid);
-                    double localCentroidXmm = MG3Shared.Mm(localCentroid.X);
-                    double localCentroidYmm = MG3Shared.Mm(localCentroid.Y);
-                    double localCentroidZmm = MG3Shared.Mm(localCentroid.Z);
+                    double localCentroidXmm = MekanoCommon.Mm(localCentroid.X);
+                    double localCentroidYmm = MekanoCommon.Mm(localCentroid.Y);
+                    double localCentroidZmm = MekanoCommon.Mm(localCentroid.Z);
 
                     bool sampleOnThisTray =
                         localCentroidXmm >= pickedMinXMm
@@ -2289,7 +2277,7 @@ namespace AVES.Commands
 
                     foreach (TrayPlan plan in plans)
                     {
-                        currentTx = new Transaction(doc, $"MG3 Armour — {MG2.LabelOf(plan.Tray.Tray)}");
+                        currentTx = new Transaction(doc, $"MG3 Armour — {MekanoCommon.LabelOf(plan.Tray.Tray)}");
                         currentTx.Start();
 
                         foreach (double setCentreMm in plan.SetCentresMm)
@@ -2389,7 +2377,7 @@ namespace AVES.Commands
         }
 
         /// <summary>The label used for a tray everywhere the report/skip tables identify one: name plus element id.</summary>
-        private static string TrayIdLabel(Element tray) => $"{MG2.LabelOf(tray)} ({tray.Id.Value})";
+        private static string TrayIdLabel(Element tray) => $"{MekanoCommon.LabelOf(tray)} ({tray.Id.Value})";
 
         /// <summary>Every world position the sample offers to test tray containment with — every adaptive point, every fastener's origin.</summary>
         private static List<XYZ> CollectSampleWorldPoints(Document doc, List<Element> sampleElements)
@@ -2432,7 +2420,7 @@ namespace AVES.Commands
         }
 
         private static XYZ LocalFt(MG3Shared.Vec3 localMm)
-            => new(MG3Shared.Ft(localMm.X), MG3Shared.Ft(localMm.Y), MG3Shared.Ft(localMm.Z));
+            => new(MekanoCommon.Ft(localMm.X), MekanoCommon.Ft(localMm.Y), MekanoCommon.Ft(localMm.Z));
 
         private static XYZ OffsetLocal(XYZ localFt, double shiftFt) => localFt + new XYZ(shiftFt, 0.0, 0.0);
 
@@ -2464,7 +2452,7 @@ namespace AVES.Commands
             List<string> issues)
         {
             int placed = 0;
-            double shiftFt = MG3Shared.Ft(setCentreMm - armourCentreMm);
+            double shiftFt = MekanoCommon.Ft(setCentreMm - armourCentreMm);
 
             foreach (MG3Shared.ArmourHalf half in armourSet.Halves)
             {

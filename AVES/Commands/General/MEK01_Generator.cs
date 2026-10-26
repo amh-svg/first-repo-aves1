@@ -22,6 +22,7 @@ using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
 // AVES
 using AVES.Core;
+using static AVES.Commands.MekanoCommon;
 
 // Associate with pushbutton commands
 namespace AVES.Commands
@@ -229,10 +230,6 @@ namespace AVES.Commands
         /// <summary>Degrees to radians, the internal unit for Angle parameters.</summary>
         private static double Rad(double degrees)
             => UnitUtils.ConvertToInternalUnits(degrees, UnitTypeId.Degrees);
-
-        /// <summary>Millimetres to feet, the internal unit for lengths.</summary>
-        private static double Ft(double millimetres)
-            => UnitUtils.ConvertToInternalUnits(millimetres, UnitTypeId.Millimeters);
 
         /// <summary>Radians back to degrees, formatted for the success message.</summary>
         private static string Deg(double radians)
