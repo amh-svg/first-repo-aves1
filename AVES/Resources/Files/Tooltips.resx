@@ -153,4 +153,13 @@
   <data name="Button_Button" xml:space="preserve">
     <value>PushDown</value>
   </data>
+  <data name="MEK01_Generator" xml:space="preserve">
+    <value>Pick a Starter bracket and generate a Mekano channel offset from it, tilted to follow the Starter's orientation.</value>
+  </data>
+  <data name="MEK02_AddBolts" xml:space="preserve">
+    <value>Select Mekano parts; bolts are placed through every pair of aligned openings, with the nut position set automatically.</value>
+  </data>
+  <data name="MEK03_TrayArmour" xml:space="preserve">
+    <value>Place one armour by hand, box-select it, pick its tray and set a spacing; the armour is replicated along the straight runs.</value>
+  </data>
 </root>
