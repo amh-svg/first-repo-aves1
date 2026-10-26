@@ -12,6 +12,10 @@
     <BuildType Name="Release R24" />
     <BuildType Name="Release R25" />
     <BuildType Name="Release R26" />
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
   </Configurations>
-  <Project Path="AVES/AVES.csproj" />
+  <Project Path="AVES/AVES.csproj">
+    <Platform Solution="*|x64" Project="x64" />
+  </Project>
 </Solution>

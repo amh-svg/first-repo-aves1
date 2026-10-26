@@ -72,7 +72,7 @@ namespace AVES.Utilities
         /// <returns>A string (the base name).</returns>
         public static string CommandToBaseName(string commandName)
         {
-            return commandName.Replace("AVES.Cmds_", "").Replace(".Cmd", "");
+            return commandName.Replace("AVES.Commands.Cmd_", "");
         }
 
         /// <summary>
