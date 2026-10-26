@@ -128,6 +128,11 @@ namespace AVES.Commands
         internal const string PARAM_ITEM_NUMBER = "Item Number";
         internal const string PARAM_DESCRIPTION = "PMO_Description";
 
+        // The bolt's nut position, an instance parameter on the 1371980 family.
+        // Underscore, not a space. Defined here and nowhere else; looked up by
+        // this exact name and checked against the definition's own name.
+        internal const string NUT_CONTROL_PARAM = "Nut_Control";
+
         // User-facing only. The class, namespace and icon base name stay MG2 —
         // Ribbon_Utils.CommandToBaseName derives MG2_MG216.png / MG2_MG232.png
         // from the class name, so renaming it would orphan both icons.
@@ -1994,6 +1999,21 @@ namespace AVES.Commands
 
             double seatDepth = measuredWall ?? Ft(FALLBACK_SEAT_OFFSET_MM);
 
+            // Nut_Control: the distance from the bolt origin, along the shank, to
+            // the far face of the FIRST element's wall — the seat plus that wall.
+            // Confirmed in the model against bolts set by hand; the gap is zero on
+            // every joint type measured and is deliberately not part of it.
+            //
+            // The first element's wall is measured from its own interface face and
+            // looking back into it, against the plane normal. Null unless BOTH
+            // walls were measured: the 3 mm fallback seat is a placement guess and
+            // never a basis for setting a value.
+            double? firstWall = measuredWall is null
+                ? null
+                : WallThickness(facesA, contact.First, contact, -contact.First.FaceNormal);
+
+            double? nutControl = firstWall is null ? null : seatDepth + firstWall.Value;
+
             // The work plane moves with the points. A work-plane-based instance
             // lives on its plane, so offsetting the points alone would leave them
             // off-plane and the shift would not survive placement.
@@ -2006,7 +2026,10 @@ namespace AVES.Commands
                 LabelOf(b),
                 contact.Gap,
                 seatDepth,
-                measuredWall is not null);
+                measuredWall is not null)
+            {
+                NutControl = nutControl,
+            };
 
             foreach (BoltPoint bolt in match.Matched)
             {
@@ -2300,6 +2323,12 @@ namespace AVES.Commands
         /// measured 3 mm, versus 3 mm because nothing could be measured at all.
         /// </summary>
         internal bool SeatWasMeasured { get; }
+
+        /// <summary>
+        /// Value for every bolt's Nut_Control, internal units. Null when either
+        /// wall could not be measured — no value is set then.
+        /// </summary>
+        internal double? NutControl { get; init; }
 
         /// <summary>
         /// The bolts actually created here. Filled during placement, not planning
@@ -3100,6 +3129,11 @@ namespace AVES.Commands
 
             placed = 0;
 
+            // Nut_Control outcomes, counted per bolt. A family without the
+            // parameter is neither: it has nothing to set and says nothing.
+            int nutUnmeasured = 0;
+            int nutUnsettable = 0;
+
             using (var tx = new Transaction(doc, "Place Mekano Bolts"))
             {
                 try
@@ -3143,6 +3177,12 @@ namespace AVES.Commands
                             joint.PlacedBoltIds.Add(created.Id);
 
                             placed++;
+
+                            switch (TrySetNutControl(created, joint.NutControl))
+                            {
+                                case NutOutcome.WallsUnmeasured: nutUnmeasured++; break;
+                                case NutOutcome.CannotSet: nutUnsettable++; break;
+                            }
                         }
                     }
 
@@ -3175,7 +3215,75 @@ namespace AVES.Commands
                 }
             }
 
+            // One alert for the run, after the commit — the bolts are placed
+            // either way and this only says which ones came without a nut position.
+            if (nutUnmeasured + nutUnsettable > 0)
+            {
+                var lines = new List<string>();
+
+                if (nutUnmeasured > 0)
+                {
+                    lines.Add(
+                        $"{nutUnmeasured} bolt(s): a wall could not be measured. The seat fallback " +
+                        "is never used to set a value.");
+                }
+
+                if (nutUnsettable > 0)
+                {
+                    lines.Add(
+                        $"{nutUnsettable} bolt(s): {MEK02Shared.NUT_CONTROL_PARAM} exists but is " +
+                        "read-only, not a length, or not an instance parameter.");
+                }
+
+                AvControls.ShowAlert(
+                    MEK02Shared.DIALOG_TITLE,
+                    $"{MEK02Shared.NUT_CONTROL_PARAM} was left unset on {nutUnmeasured + nutUnsettable} " +
+                    $"of {placed} bolt(s).\n\n{string.Join("\n", lines)}\n\n" +
+                    "The bolts themselves were placed normally.",
+                    AlertSeverity.Warning);
+            }
+
             return true;
+        }
+
+        private enum NutOutcome { Set, NoParameter, WallsUnmeasured, CannotSet }
+
+        /// <summary>
+        /// Sets Nut_Control on a freshly placed bolt. Silent about a family that
+        /// has no such parameter; everything else that stops it is counted.
+        ///
+        /// The parameter must belong to the instance. LookupParameter also finds
+        /// type parameters, and writing one of those would change every bolt of
+        /// that type rather than this one.
+        /// </summary>
+        private static NutOutcome TrySetNutControl(FamilyInstance bolt, double? value)
+        {
+            Parameter? parameter = bolt.LookupParameter(MEK02Shared.NUT_CONTROL_PARAM);
+
+            if (parameter is null
+                || !string.Equals(
+                    parameter.Definition.Name, MEK02Shared.NUT_CONTROL_PARAM, StringComparison.Ordinal))
+            {
+                return NutOutcome.NoParameter;
+            }
+
+            if (value is null) return NutOutcome.WallsUnmeasured;
+
+            if (parameter.IsReadOnly
+                || parameter.StorageType != StorageType.Double
+                || parameter.Element?.Id != bolt.Id)
+            {
+                return NutOutcome.CannotSet;
+            }
+
+            try
+            {
+                return parameter.Set(value.Value) ? NutOutcome.Set : NutOutcome.CannotSet;
+            }
+            catch
+            {
+                return NutOutcome.CannotSet;
+            }
         }
     }
 
