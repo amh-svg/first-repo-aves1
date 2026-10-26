@@ -51,7 +51,7 @@ using WpfBorder = System.Windows.Controls.Border;
 using WpfSetter = System.Windows.Setter;
 using WpfTrigger = System.Windows.Trigger;
 
-namespace AVES.Cmds_PullDown
+namespace AVES.Commands
 {
     // ══════════════════════════════════════════════════════════════════════
     //  Av  —  inline design token helpers (no XAML resource dictionary needed)
@@ -161,7 +161,7 @@ namespace AVES.Cmds_PullDown
         //  the same widget.
         //
         //  AvControls.PickerButton gained an opt-in chevron for a new caller in
-        //  Cmds_PullDown2.cs; it defaults to off, so these windows are unaffected.
+        //  DOC03_CreateSheets.cs; it defaults to off, so these windows are unaffected.
 
         // ── Styled DataGrid ───────────────────────────────────────────────
         public static DataGrid StyledDataGrid()
@@ -200,7 +200,7 @@ namespace AVES.Cmds_PullDown
             dg.ColumnHeaderStyle = headerStyle;
 
             var cellStyle = new Style(typeof(DataGridCell));
-            // Zero vertical padding, matching Cmds_Button6.cs and Cmds_Button7.cs.
+            // Zero vertical padding, matching FAM01_Rename.cs and DOC01_FillSchedules.cs.
             // The 7px this used to declare was inert until the cell template below
             // started honouring Padding, at which point it consumed 14 of the row's
             // 34px and left roughly 3px of slack around the text -- against ~7px in
@@ -1606,11 +1606,11 @@ namespace AVES.Cmds_PullDown
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  Cmd_BatchSharedParams
+    //  Cmd_FAM03a_SharedParams
     // ══════════════════════════════════════════════════════════════════════
 
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_BatchSharedParams : IExternalCommand
+    public class Cmd_FAM03a_SharedParams : IExternalCommand
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
@@ -2143,11 +2143,11 @@ namespace AVES.Cmds_PullDown
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  Cmd_BatchRemoveParams
+    //  Cmd_FAM03b_RemoveParams
     // ══════════════════════════════════════════════════════════════════════
 
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_BatchRemoveParams : IExternalCommand
+    public class Cmd_FAM03b_RemoveParams : IExternalCommand
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
@@ -2531,11 +2531,11 @@ namespace AVES.Cmds_PullDown
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    //  Cmd_CsvImporter
+    //  Cmd_FAM03c_CsvImporter
     // ══════════════════════════════════════════════════════════════════════
 
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_CsvImporter : IExternalCommand
+    public class Cmd_FAM03c_CsvImporter : IExternalCommand
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {

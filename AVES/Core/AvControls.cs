@@ -11,17 +11,17 @@ namespace AVES.Core
 {
     /// <summary>
     /// Shared AVES widget factory methods, consolidated from the "Av" class
-    /// (Cmds_Button7.cs, Cmds_Button8.cs), "AvesUiHelper" (Cmds_PullDown2.cs),
-    /// "AvesUI" (Cmds_Pulldown3.cs) and "W" (Cmds_Pulldown4.cs).
+    /// (DOC01_FillSchedules.cs, DOC07_AddWeight.cs), "AvesUiHelper" (DOC03_CreateSheets.cs),
+    /// "AvesUI" (DOC04_AutoDimension.cs) and "W" (DOC05_AutoTag.cs).
     ///
     /// Only widgets shared by two or more of those sources live here. Per the
-    /// reviewed decision, Cmds_PullDown.cs's "Av" class turned out to be a much
+    /// reviewed decision, FAM03_Parameters.cs's "Av" class turned out to be a much
     /// larger, separately-evolved surface (StyledDataGrid, PillColumn,
     /// SegmentedToggle, RoundedProgressBar, FooterStrip, ConfigRow, PickerButton,
     /// FieldLabel, HairlineSeparator, TextColumn, plus its own BrandTile with
     /// DecodePixelHeight/bicubic scaling and its own width-parameterized button
     /// factories) used by no other file. That surface stays local to
-    /// Cmds_PullDown.cs (mirroring how Cmds_Pulldown3's DimType* logic stays
+    /// FAM03_Parameters.cs (mirroring how DOC04_AutoDimension's DimType* logic stays
     /// local) rather than being folded in here.
     ///
     /// Where sources genuinely differ in technique (button hover: ControlTemplate
@@ -62,9 +62,9 @@ namespace AVES.Core
         ///
         /// Four separate loaders for the same AvTokens.LogoBase64 had grown up
         /// across the plugin -- BrandTile with no DecodePixelHeight at all,
-        /// Cmds_Button6.cs decoding at 1x, Cmds_PullDown.cs at 2x, and
-        /// Cmds_Button9.cs with its own try/catch decode. This is
-        /// Cmds_PullDown.cs's, the sharpest of them.
+        /// FAM01_Rename.cs decoding at 1x, FAM03_Parameters.cs at 2x, and
+        /// FAM02_Download.cs with its own try/catch decode. This is
+        /// FAM03_Parameters.cs's, the sharpest of them.
         /// </summary>
         private static Image SharpLogo(double height)
         {
@@ -95,17 +95,17 @@ namespace AVES.Core
         ///
         /// Every report window in the plugin had built its own. Four sizes of
         /// logo (20/24/28/32), three heights (44/52/Auto) and two backgrounds
-        /// were in use across eight windows, and Cmds_Button6.cs's showed no
-        /// title text at all. The geometry here is Cmds_Button7.cs's and
-        /// Cmds_Button8.cs's, which was both the most common and the cleanest
+        /// were in use across eight windows, and FAM01_Rename.cs's showed no
+        /// title text at all. The geometry here is DOC01_FillSchedules.cs's and
+        /// DOC07_AddWeight.cs's, which was both the most common and the cleanest
         /// instance of it.
         ///
-        /// One parameter, deliberately. Cmds_Button7.cs and Cmds_Button8.cs
-        /// carried a run-summary subtitle and Cmds_Button9.cs a timestamp; both
+        /// One parameter, deliberately. DOC01_FillSchedules.cs and DOC07_AddWeight.cs
+        /// carried a run-summary subtitle and FAM02_Download.cs a timestamp; both
         /// are dropped rather than preserved behind optional arguments, because
         /// an optional slot is how a header format drifts apart again. Anything
         /// beyond the tool's name belongs in the body -- which is where
-        /// Cmds_Button9.cs's DESTINATION panel already repeats its timestamp.
+        /// FAM02_Download.cs's DESTINATION panel already repeats its timestamp.
         ///
         /// The window's own Title should be set to the same string, so the OS
         /// title bar and this strip never disagree.
@@ -154,7 +154,7 @@ namespace AVES.Core
         /// The strip a report window's footer sits in: Surface-2, a 1px rule
         /// along the top, 20/14 padding.
         ///
-        /// Promoted verbatim from Cmds_PullDown.cs's Av class, which already had
+        /// Promoted verbatim from FAM03_Parameters.cs's Av class, which already had
         /// the canonical values -- this is a move, not a redesign, so its
         /// existing callers render identically. The class remarks above explain
         /// that Av's surface stayed local because no other file used it; that
@@ -183,9 +183,9 @@ namespace AVES.Core
         /// The faint caption on the left of a report footer.
         ///
         /// Text is a parameter because the eight windows deliberately say
-        /// different things: five name their source document, Cmds_Button9.cs
-        /// names its destination folder, and Cmds_PullDown2.cs and
-        /// Cmds_Button6.cs give result counts. Only the styling unifies.
+        /// different things: five name their source document, FAM02_Download.cs
+        /// names its destination folder, and DOC03_CreateSheets.cs and
+        /// FAM01_Rename.cs give result counts. Only the styling unifies.
         ///
         /// TextTrimming is the point of having this: paths and document names
         /// both overflow, and only two of the eight were trimming. Note that
@@ -211,7 +211,7 @@ namespace AVES.Core
 
         /// <summary>
         /// Title bar with an optional trailing breadcrumb ("-- breadcrumb").
-        /// Matches W's (Cmds_Pulldown4.cs) implementation: Height=44.
+        /// Matches W's (DOC05_AutoTag.cs) implementation: Height=44.
         /// </summary>
         public static Border TitleBar(string title, string? breadcrumb = null)
         {
@@ -254,12 +254,12 @@ namespace AVES.Core
 
         /// <summary>
         /// Interior header strip (logo + title text, no trailing rule/height cap).
-        /// Matches AvesUiHelper's (Cmds_PullDown2.cs) implementation.
+        /// Matches AvesUiHelper's (DOC03_CreateSheets.cs) implementation.
         ///
         /// Background is Surface2, per the Refined Native token table which scopes
         /// Surface-2 to "footers, header strips, inset panels, table header". This
         /// was Surface until the design handoff settled it; the change reaches all
-        /// four callers in Cmds_PullDown2.cs, ReportWindow and
+        /// four callers in DOC03_CreateSheets.cs, ReportWindow and
         /// LayoutSettingsDialogBase included, since the strip is shared.
         /// </summary>
         public static Border HeaderStrip(string titleText)
@@ -317,7 +317,7 @@ namespace AVES.Core
 
         /// <summary>
         /// Section header with an accent left stripe. Matches AvesUiHelper's
-        /// (Cmds_PullDown2.cs) implementation -- a visually distinct widget from
+        /// (DOC03_CreateSheets.cs) implementation -- a visually distinct widget from
         /// SectionLabel, not a restyled duplicate of it.
         /// </summary>
         public static Border SectionHeader(string text)
@@ -389,8 +389,8 @@ namespace AVES.Core
         /// Row styling for a single-select picker list: generous padding, rounded
         /// row, tinted hover, accent-coloured and bold selection.
         ///
-        /// Consolidated from two byte-identical copies in Cmds_Pulldown3.cs
-        /// (DimTypePickerWindow) and Cmds_Pulldown4.cs (BatchViewPickerWindow).
+        /// Consolidated from two byte-identical copies in DOC04_AutoDimension.cs
+        /// (DimTypePickerWindow) and DOC05_AutoTag.cs (BatchViewPickerWindow).
         /// Two independent identical implementations is the strongest available
         /// signal of the intended design, so that shape won.
         ///
@@ -398,7 +398,7 @@ namespace AVES.Core
         /// rather than locally so every picker gains it together instead of a
         /// fourth variant appearing.
         ///
-        /// Third and fourth copies exist in Cmds_Button7.cs and Cmds_Button8.cs
+        /// Third and fourth copies exist in DOC01_FillSchedules.cs and DOC07_AddWeight.cs
         /// and are deliberately NOT migrated. Button7's diverges: it tints the
         /// selected background but never sets the foreground, so its selected rows
         /// do not go accent-coloured. Adopting this style there would change that
@@ -464,7 +464,7 @@ namespace AVES.Core
         /// ABOVE its control rather than beside it, so the label and the thing it
         /// labels read as two separate pieces.
         ///
-        /// Promoted verbatim from Cmds_PullDown.cs's Av class, where this pattern
+        /// Promoted verbatim from FAM03_Parameters.cs's Av class, where this pattern
         /// was already in production behind Batch Shared Parameters and Batch
         /// Remove Parameters. Sizes, colours and the 8px bottom margin are
         /// unchanged, so that window renders identically through this.
@@ -493,7 +493,7 @@ namespace AVES.Core
         /// A clickable box showing the current value of a field, opening whatever
         /// picker the caller wires to Click. Pairs with <see cref="FieldLabel"/>.
         ///
-        /// Promoted from Cmds_PullDown.cs's Av class. showChevron is new and
+        /// Promoted from FAM03_Parameters.cs's Av class. showChevron is new and
         /// defaults to false, so the original callers render exactly as before;
         /// the source's own doc comment claimed a chevron but never drew one.
         ///
@@ -578,7 +578,7 @@ namespace AVES.Core
         /// <summary>
         /// White, bordered, rounded look for a picker box, with an accent hover.
         ///
-        /// Promoted from Cmds_PullDown.cs. Deliberately NOT merged with
+        /// Promoted from FAM03_Parameters.cs. Deliberately NOT merged with
         /// FieldButtonTemplate: that one hovers to Surface2, this one hovers to an
         /// Accent border over AccentTint, and it pins the content margin and
         /// stretches the presenter. Collapsing them would change the appearance of
@@ -748,12 +748,12 @@ namespace AVES.Core
         /// source, and changes nothing on screen. Five report grids across the
         /// plugin were top-aligned for exactly that reason.
         ///
-        /// Centring the ContentPresenter directly is the approach Cmds_Button9.cs
+        /// Centring the ContentPresenter directly is the approach FAM02_Download.cs
         /// arrived at independently and is the one confirmed to render correctly.
         /// It also covers DataGridTemplateColumn cells, not just text ones, and
         /// does not depend on each column's ElementStyle remembering to set
         /// VerticalAlignment on its TextBlock -- the per-column gap that left
-        /// Cmds_Button8.cs's Assembly column misaligned while its neighbours
+        /// DOC07_AddWeight.cs's Assembly column misaligned while its neighbours
         /// looked fine.
         ///
         /// Background, BorderBrush, BorderThickness and Padding are template-bound
@@ -803,8 +803,8 @@ namespace AVES.Core
         ///
         /// StatusPill returns a Border, which a DataTemplate cannot return
         /// directly, so every report window that wanted a pill in a grid column
-        /// worked around it separately: Cmds_Button10.cs reimplemented the whole
-        /// pill as a parsed XAML string with hardcoded hex, and Cmds_Button11.cs
+        /// worked around it separately: DOC02_SheetInfo.cs reimplemented the whole
+        /// pill as a parsed XAML string with hardcoded hex, and DOC06_TagReviewer.cs
         /// assigned StatusPill's output from a ContentControl's Loaded handler.
         ///
         /// Geometry is StatusPill's, value for value -- radius 6, padding
@@ -816,7 +816,7 @@ namespace AVES.Core
         /// "fail" / "warn" / "info"). Rows with a single fixed outcome can expose
         /// a computed property returning a constant.
         ///
-        /// Cmds_Button6.cs deliberately keeps its own approach: it injects pills
+        /// FAM01_Rename.cs deliberately keeps its own approach: it injects pills
         /// via DataGrid.LoadingRow rather than a template, and maps its own status
         /// vocabulary ("Renamed", "Already Correct") onto these kinds.
         /// </summary>
@@ -885,7 +885,7 @@ namespace AVES.Core
         // ====================================================================
 
         // -- Family A: onClick-wired, ControlTemplate via XamlReader.Parse.
-        // Matches Av (Cmds_Button7.cs, Cmds_Button8.cs).
+        // Matches Av (DOC01_FillSchedules.cs, DOC07_AddWeight.cs).
 
         public static Button PrimaryBtn(string label, Action onClick)
         {
@@ -984,7 +984,7 @@ namespace AVES.Core
         }
 
         // -- Family B: no onClick wiring, ControlTemplate via FrameworkElementFactory.
-        // Matches W (Cmds_Pulldown4.cs) and AvesUI (Cmds_Pulldown3.cs) -- both used
+        // Matches W (DOC05_AutoTag.cs) and AvesUI (DOC04_AutoDimension.cs) -- both used
         // the identical technique (verified: same Border/ContentPresenter/hover-trigger
         // shape), so they safely collapse into one implementation.
 
@@ -1030,15 +1030,15 @@ namespace AVES.Core
         /// <summary>
         /// Rounded, bordered, hover-highlighted look shared by SecondaryButton and
         /// any clickable "field" control (e.g. a picker trigger). Matches W's
-        /// FieldButtonTemplate (Cmds_Pulldown4.cs).
+        /// FieldButtonTemplate (DOC05_AutoTag.cs).
         ///
         /// contentAlign defaults to Center, which is what the template has always
         /// produced. It matters because the template's ContentPresenter alignment
         /// OVERRIDES a Button's own HorizontalContentAlignment -- a caller that
         /// sets Left on the button and takes the default here silently gets
-        /// centred content, which is exactly what happened in Cmds_Pulldown4.cs.
+        /// centred content, which is exactly what happened in DOC05_AutoTag.cs.
         ///
-        /// Cmds_Pulldown3.cs still has a private copy identical but for Left
+        /// DOC04_AutoDimension.cs still has a private copy identical but for Left
         /// alignment, predating this parameter. That is a genuine drifted
         /// duplicate and a follow-up consolidation item; it is left alone because
         /// migrating it would change that window's appearance in a task that is
@@ -1081,7 +1081,7 @@ namespace AVES.Core
         }
 
         // -- Family C: no onClick wiring, hover via Loaded-event hack (no
-        // ControlTemplate at all). Matches AvesUiHelper (Cmds_PullDown2.cs).
+        // ControlTemplate at all). Matches AvesUiHelper (DOC03_CreateSheets.cs).
         // Kept as its own family per the brief: this is a real technique
         // difference, not merely a styling one, and must not be silently
         // swapped for the ControlTemplate approach used elsewhere.
@@ -1221,7 +1221,7 @@ namespace AVES.Core
         }
 
         // ====================================================================
-        //  Checkbox row (view picker). Matches W's CheckRow (Cmds_Pulldown4.cs).
+        //  Checkbox row (view picker). Matches W's CheckRow (DOC05_AutoTag.cs).
         // ====================================================================
 
         public static (Border Visual, CheckBox Box) CheckRow(string viewName, bool isFirst)
@@ -1304,7 +1304,7 @@ namespace AVES.Core
 
         /// <summary>
         /// Shows a modal alert with an icon badge whose glyph/color reflects
-        /// severity. Modeled on Cmds_Button6.cs's ShowWpfAlert.
+        /// severity. Modeled on FAM01_Rename.cs's ShowWpfAlert.
         /// </summary>
         public static void ShowAlert(string title, string message, AlertSeverity severity)
             => new AlertWindow(title, message, severity).ShowDialog();
@@ -1317,7 +1317,7 @@ namespace AVES.Core
     public enum AlertSeverity { Error, Warning, Info, Success }
 
     /// <summary>
-    /// Modal icon-badge alert window. Same shape as Cmds_Button6.cs's
+    /// Modal icon-badge alert window. Same shape as FAM01_Rename.cs's
     /// ShowWpfAlert (36x36 tinted circle + glyph, wrapped message, single OK
     /// button in a bordered footer) but with the icon badge's background/
     /// foreground/glyph driven by AlertSeverity, reusing AvTokens'

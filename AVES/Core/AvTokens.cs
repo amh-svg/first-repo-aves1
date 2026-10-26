@@ -7,9 +7,9 @@ namespace AVES.Core
 {
     /// <summary>
     /// Shared AVES design tokens (colors, fonts, brush helpers, brand logo).
-    /// Consolidated from the "Av" class (Cmds_Button7.cs, Cmds_Button8.cs,
-    /// Cmds_PullDown.cs), "AvesUiHelper" (Cmds_PullDown2.cs), "AvesUI"
-    /// (Cmds_Pulldown3.cs) and "T" (Cmds_Pulldown4.cs). All four sources agree
+    /// Consolidated from the "Av" class (DOC01_FillSchedules.cs, DOC07_AddWeight.cs,
+    /// FAM03_Parameters.cs), "AvesUiHelper" (DOC03_CreateSheets.cs), "AvesUI"
+    /// (DOC04_AutoDimension.cs) and "T" (DOC05_AutoTag.cs). All four sources agree
     /// on every hex value and font below.
     /// </summary>
     internal static class AvTokens
@@ -27,7 +27,7 @@ namespace AVES.Core
         public const string TextFaint = "#8B9099";
         public const string Zebra = "#F7F8FA";
 
-        // Only Cmds_PullDown2.cs's AvesUiHelper defined this token (used as a
+        // Only DOC03_CreateSheets.cs's AvesUiHelper defined this token (used as a
         // window/page background). Kept here so PullDown2 doesn't need its own
         // leftover token class after migration.
         public const string Backdrop = "#F4F4F6";
@@ -57,9 +57,9 @@ namespace AVES.Core
         public static SolidColorBrush Brush(string hex) => B(hex);
 
         // -- Brand logo (decoded from embedded Base64 PNG) ---------------------
-        // Canonical 248x90 asset, agreed by Av (Cmds_Button7.cs, Cmds_Button8.cs),
-        // AvesUiHelper (Cmds_PullDown2.cs) and T (Cmds_Pulldown4.cs).
-        // NOTE: Cmds_Pulldown3.cs's AvesUI class instead embedded a different,
+        // Canonical 248x90 asset, agreed by Av (DOC01_FillSchedules.cs, DOC07_AddWeight.cs),
+        // AvesUiHelper (DOC03_CreateSheets.cs) and T (DOC05_AutoTag.cs).
+        // NOTE: DOC04_AutoDimension.cs's AvesUI class instead embedded a different,
         // lower-resolution 75x28 crop of the same logo. Per the reviewed decision,
         // Pulldown3 converges on this asset during its migration (Phase 3) --
         // a small, disclosed visual change to that file's title bar, not a silent one.

@@ -90,13 +90,13 @@ using WpfWrapPanel = System.Windows.Controls.WrapPanel;
 using WpfWindow = System.Windows.Window;
 
 // Associate with pushbutton commands
-namespace AVES.Cmds_MG2
+namespace AVES.Commands
 {
     /// <summary>
     /// Shared configuration, geometry extraction and matching helpers for the
     /// Mekano bolt connector.
     /// </summary>
-    internal static class MG2Shared
+    internal static class MEK02Shared
     {
         // ── Families ───────────────────────────────────────────────────────────
 
@@ -2344,7 +2344,7 @@ namespace AVES.Cmds_MG2
     /// The seat is the measured thickness of the second element's wall.
     /// </summary>
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_MG2 : IExternalCommand
+    public class Cmd_MEK02_AddBolts : IExternalCommand
     {
         // ── Failure logging ────────────────────────────────────────────────────
 
@@ -2370,7 +2370,7 @@ namespace AVES.Cmds_MG2
         /// </summary>
         private static string LogBoltFailure(
             Document doc,
-            MG2Shared.BoltChoice choice,
+            MEK02Shared.BoltChoice choice,
             string failedCheck,
             string detail,
             Exception? exception = null)
@@ -2449,7 +2449,7 @@ namespace AVES.Cmds_MG2
             log.AppendLine("(placement type and geometry probe — compare working against failing)");
             log.AppendLine();
 
-            List<MG2Shared.BoltChoice> all = MG2Shared.LoadBoltChoices(doc);
+            List<MEK02Shared.BoltChoice> all = MEK02Shared.LoadBoltChoices(doc);
 
             if (all.Count == 0)
             {
@@ -2458,7 +2458,7 @@ namespace AVES.Cmds_MG2
                 return;
             }
 
-            foreach (MG2Shared.BoltChoice candidate in all)
+            foreach (MEK02Shared.BoltChoice candidate in all)
             {
                 FamilySymbol symbol = candidate.Symbol;
 
@@ -2478,7 +2478,7 @@ namespace AVES.Cmds_MG2
                 // LogBoltFailure call site is outside a transaction, and the one
                 // in the placement catch rolls back before it logs.
                 log.AppendLine($"    measurement    : " +
-                               (MG2Shared.TryMeasureBoltByPlacing(doc, symbol, out bool wideX)
+                               (MEK02Shared.TryMeasureBoltByPlacing(doc, symbol, out bool wideX)
                                    ? $"ok, broad head axis on local {(wideX ? "X" : "Y")}"
                                    : "FAILED — could not read geometry"));
                 log.AppendLine();
@@ -2502,7 +2502,7 @@ namespace AVES.Cmds_MG2
 
             try
             {
-                geometry = symbol.get_Geometry(MG2Shared.ModelGeometryOptions());
+                geometry = symbol.get_Geometry(MEK02Shared.ModelGeometryOptions());
             }
             catch (Exception ex)
             {
@@ -2521,7 +2521,7 @@ namespace AVES.Cmds_MG2
             }
 
             var solids = new List<Solid>();
-            MG2Shared.CollectSolids(geometry, Transform.Identity, solids);
+            MEK02Shared.CollectSolids(geometry, Transform.Identity, solids);
 
             int faces = 0;
             int edgePoints = 0;
@@ -2563,12 +2563,12 @@ namespace AVES.Cmds_MG2
         /// opens. Two copies of the preference order would be two things to keep
         /// in step.
         /// </summary>
-        internal static MG2Shared.BoltChoice? PreferredBolt(List<MG2Shared.BoltChoice> choices)
+        internal static MEK02Shared.BoltChoice? PreferredBolt(List<MEK02Shared.BoltChoice> choices)
         {
             return choices.FirstOrDefault(c => string.Equals(
                        c.ItemNumber, _lastPickedItemNumber, StringComparison.Ordinal))
                    ?? choices.FirstOrDefault(c => string.Equals(
-                       c.ItemNumber, MG2Shared.DEFAULT_BOLT_ITEM_NUMBER, StringComparison.Ordinal))
+                       c.ItemNumber, MEK02Shared.DEFAULT_BOLT_ITEM_NUMBER, StringComparison.Ordinal))
                    ?? choices.FirstOrDefault();
         }
 
@@ -2588,31 +2588,31 @@ namespace AVES.Cmds_MG2
         ///
         /// <paramref name="owner"/> is that window, and the picker centres on it.
         /// </summary>
-        internal static MG2Shared.BoltChoice? ChooseBolt(Document doc, WpfWindow owner)
+        internal static MEK02Shared.BoltChoice? ChooseBolt(Document doc, WpfWindow owner)
         {
-            List<MG2Shared.BoltChoice> choices = MG2Shared.LoadBoltChoices(doc);
+            List<MEK02Shared.BoltChoice> choices = MEK02Shared.LoadBoltChoices(doc);
 
             if (choices.Count == 0)
             {
                 AvControls.ShowAlert(
-                    MG2Shared.DIALOG_TITLE,
+                    MEK02Shared.DIALOG_TITLE,
                     "None of the known bolts are loaded in this document.\n\n" +
                     "A bolt is recognised by its Item Number, one of:\n" +
-                    string.Join(", ", MG2Shared.BOLT_ITEM_NUMBERS) + "\n\n" +
+                    string.Join(", ", MEK02Shared.BOLT_ITEM_NUMBERS) + "\n\n" +
                     "Load one and re-run.",
                     AlertSeverity.Error);
                 return null;
             }
 
             // Never null: choices is non-empty by the check above.
-            MG2Shared.BoltChoice current = PreferredBolt(choices)!;
+            MEK02Shared.BoltChoice current = PreferredBolt(choices)!;
 
             // Two bolts could in principle carry the same description, and the
             // picker speaks in labels. First wins, matching how the scan itself
             // resolves a collision.
-            var byLabel = new Dictionary<string, MG2Shared.BoltChoice>(StringComparer.Ordinal);
+            var byLabel = new Dictionary<string, MEK02Shared.BoltChoice>(StringComparer.Ordinal);
 
-            foreach (MG2Shared.BoltChoice candidate in choices)
+            foreach (MEK02Shared.BoltChoice candidate in choices)
             {
                 if (!byLabel.ContainsKey(candidate.DisplayLabel)) byLabel[candidate.DisplayLabel] = candidate;
             }
@@ -2632,7 +2632,7 @@ namespace AVES.Cmds_MG2
             // element selection.
             if (picker.ShowDialog() != true || picker.SelectedLabel is null) return null;
 
-            if (!byLabel.TryGetValue(picker.SelectedLabel, out MG2Shared.BoltChoice? chosen))
+            if (!byLabel.TryGetValue(picker.SelectedLabel, out MEK02Shared.BoltChoice? chosen))
             {
                 return null;
             }
@@ -2648,7 +2648,7 @@ namespace AVES.Cmds_MG2
             if (uiDoc is null)
             {
                 AvControls.ShowAlert(
-                    MG2Shared.DIALOG_TITLE,
+                    MEK02Shared.DIALOG_TITLE,
                     "No active document.\n\nOpen a project and re-run.",
                     AlertSeverity.Warning);
                 return Result.Cancelled;
@@ -2662,7 +2662,7 @@ namespace AVES.Cmds_MG2
                 //
                 // Already alerts and returns false on fewer than two — see
                 // TryPickElements — so there is nothing to add for that case here.
-                if (!MG2Shared.TryPickElements(uiDoc, out List<Element> selection))
+                if (!MEK02Shared.TryPickElements(uiDoc, out List<Element> selection))
                 {
                     return Result.Cancelled;
                 }
@@ -2688,7 +2688,7 @@ namespace AVES.Cmds_MG2
 
                 if (window.ShowDialog() != true) return Result.Cancelled;
 
-                MG2Shared.BoltChoice? choice = window.ChosenBolt;
+                MEK02Shared.BoltChoice? choice = window.ChosenBolt;
 
                 if (choice is null) return Result.Cancelled;
 
@@ -2697,7 +2697,7 @@ namespace AVES.Cmds_MG2
             catch (Exception ex)
             {
                 AvControls.ShowAlert(
-                    MG2Shared.DIALOG_TITLE,
+                    MEK02Shared.DIALOG_TITLE,
                     $"The command stopped unexpectedly.\n\n{ex.Message}",
                     AlertSeverity.Error);
                 return Result.Failed;
@@ -2725,7 +2725,7 @@ namespace AVES.Cmds_MG2
         private static Result PlaceSelection(
             UIDocument uiDoc,
             List<Element> selection,
-            MG2Shared.BoltChoice choice,
+            MEK02Shared.BoltChoice choice,
             int wanted)
         {
             Document doc = uiDoc.Document;
@@ -2751,7 +2751,7 @@ namespace AVES.Cmds_MG2
                     "direction, and that direction is what sets the head's roll.");
 
                 AvControls.ShowAlert(
-                    MG2Shared.DIALOG_TITLE,
+                    MEK02Shared.DIALOG_TITLE,
                     $"\"{choice.DisplayLabel}\" cannot be placed: it is a " +
                     $"{choice.Symbol.Family?.FamilyPlacementType} family, not work-plane based.\n\n" +
                     $"Full detail, including every whitelisted bolt in this document:\n{log}",
@@ -2759,7 +2759,7 @@ namespace AVES.Cmds_MG2
                 return Result.Failed;
             }
 
-            if (!MG2Shared.TryMeasureBoltByPlacing(doc, choice.Symbol, out bool wideAxisIsLocalX))
+            if (!MEK02Shared.TryMeasureBoltByPlacing(doc, choice.Symbol, out bool wideAxisIsLocalX))
             {
                 string log = LogBoltFailure(
                     doc, choice,
@@ -2768,7 +2768,7 @@ namespace AVES.Cmds_MG2
                     "its sub-components to find the shank axis and the head's broad dimension.");
 
                 AvControls.ShowAlert(
-                    MG2Shared.DIALOG_TITLE,
+                    MEK02Shared.DIALOG_TITLE,
                     $"The geometry of \"{choice.DisplayLabel}\" could not be read, " +
                     "so its orientation cannot be worked out.\n\n" +
                     $"Full detail, including every whitelisted bolt in this document:\n{log}",
@@ -2776,8 +2776,8 @@ namespace AVES.Cmds_MG2
                 return Result.Failed;
             }
 
-            MG2Shared.SelectionPlan plan =
-                MG2Shared.PlanSelection(doc, selection, wideAxisIsLocalX);
+            MEK02Shared.SelectionPlan plan =
+                MEK02Shared.PlanSelection(doc, selection, wideAxisIsLocalX);
 
             if (plan.Joints.Count == 0)
             {
@@ -2894,14 +2894,14 @@ namespace AVES.Cmds_MG2
         private static void ShowRunReport(
             UIDocument uiDoc,
             Document doc,
-            MG2Shared.SelectionPlan plan,
+            MEK02Shared.SelectionPlan plan,
             int placed,
             int? takePerJoint,
             int maxPerJointBefore,
             int maxTotalBefore)
         {
-            MG2Shared.JointStats stats = plan.Stats;
-            MG2Shared.BoltLedger ledger = plan.Ledger;
+            MEK02Shared.JointStats stats = plan.Stats;
+            MEK02Shared.BoltLedger ledger = plan.Ledger;
 
             // The two skip counts mean different things, so they stay apart.
             // Neither is mentioned when it did not happen.
@@ -2966,7 +2966,7 @@ namespace AVES.Cmds_MG2
             {
                 footnotes.Add(
                     $"{stats.FallbackSeatJoints} joint(s) seated at the " +
-                    $"{MG2Shared.FALLBACK_SEAT_OFFSET_MM:0.##} mm fallback because no wall " +
+                    $"{MEK02Shared.FALLBACK_SEAT_OFFSET_MM:0.##} mm fallback because no wall " +
                     "could be measured — check those by eye.");
             }
 
@@ -2978,13 +2978,13 @@ namespace AVES.Cmds_MG2
                 ElementA = joint.FirstLabel,
                 ElementB = joint.SecondLabel,
                 BoltsPlaced = joint.PlacedBoltIds.Count.ToString(),
-                SeatOffset = $"{MG2Shared.Mm(joint.SeatOffset):0.##} mm" +
+                SeatOffset = $"{MEK02Shared.Mm(joint.SeatOffset):0.##} mm" +
                              (joint.SeatWasMeasured ? string.Empty : "  (fallback)"),
-                Gap = $"{MG2Shared.Mm(joint.Gap):0.###} mm",
+                Gap = $"{MEK02Shared.Mm(joint.Gap):0.###} mm",
                 BoltIds = joint.PlacedBoltIds,
-                SeatMm = MG2Shared.Mm(joint.SeatOffset),
+                SeatMm = MEK02Shared.Mm(joint.SeatOffset),
                 SeatMeasured = joint.SeatWasMeasured,
-                GapMm = MG2Shared.Mm(joint.Gap),
+                GapMm = MEK02Shared.Mm(joint.Gap),
             }).ToList();
 
             new BoltRunReportWindow(
@@ -3002,34 +3002,34 @@ namespace AVES.Cmds_MG2
         /// Says why a selection produced no joints, and returns the Result that
         /// goes with it.
         ///
-        /// Branches on MG2Shared.VerdictOf, which is the one place that decides
+        /// Branches on MEK02Shared.VerdictOf, which is the one place that decides
         /// which case a plan is in. The window reads the same verdict for its
         /// status line and words it for a line of text rather than an alert — one
         /// classification, two presentations, so the two surfaces cannot disagree
         /// about what happened.
         /// </summary>
-        private static Result ExplainEmptyPlan(MG2Shared.SelectionPlan plan)
+        private static Result ExplainEmptyPlan(MEK02Shared.SelectionPlan plan)
         {
-            MG2Shared.JointStats stats = plan.Stats;
+            MEK02Shared.JointStats stats = plan.Stats;
 
-            switch (MG2Shared.VerdictOf(plan))
+            switch (MEK02Shared.VerdictOf(plan))
             {
-                case MG2Shared.PlanVerdict.NoGeometry:
+                case MEK02Shared.PlanVerdict.NoGeometry:
                     AvControls.ShowAlert(
-                        MG2Shared.DIALOG_TITLE,
+                        MEK02Shared.DIALOG_TITLE,
                         "No usable solid geometry was found on any of the selected elements.\n\n" +
                         "Check that they are visible and fully loaded. Note that a face smaller " +
-                        $"than {MG2Shared.MIN_CANDIDATE_FACE_AREA_MM2:0} mm² is never considered, " +
+                        $"than {MEK02Shared.MIN_CANDIDATE_FACE_AREA_MM2:0} mm² is never considered, " +
                         "so a very small part contributes nothing.",
                         AlertSeverity.Error);
                     return Result.Failed;
 
-                case MG2Shared.PlanVerdict.AllTaken:
+                case MEK02Shared.PlanVerdict.AllTaken:
                     // Every position found was already taken. Routine when
                     // re-running over ground already covered, so this reports
                     // rather than complains.
                     AvControls.ShowAlert(
-                        MG2Shared.DIALOG_TITLE,
+                        MEK02Shared.DIALOG_TITLE,
                         "No new bolts to place — every position found is already bolted.\n\n" +
                         $"{plan.Ledger.AlreadyInDocument} already in the document" +
                         (plan.Ledger.DuplicateInRun > 0
@@ -3038,23 +3038,23 @@ namespace AVES.Cmds_MG2
                         AlertSeverity.Info);
                     return Result.Succeeded;
 
-                case MG2Shared.PlanVerdict.NothingTouching:
+                case MEK02Shared.PlanVerdict.NothingTouching:
                     AvControls.ShowAlert(
-                        MG2Shared.DIALOG_TITLE,
+                        MEK02Shared.DIALOG_TITLE,
                         $"None of the {plan.ElementCount} selected elements touch each other.\n\n" +
                         $"{plan.PairsConsidered} pair(s) considered, none with a pair of opposed " +
-                        $"faces within {MG2Shared.GAP_TOLERANCE_MM:0.##} mm.\n\n" +
+                        $"faces within {MEK02Shared.GAP_TOLERANCE_MM:0.##} mm.\n\n" +
                         "This command expects elements meeting back to back, face against face.",
                         AlertSeverity.Warning);
                     return Result.Failed;
 
                 default:
                     AvControls.ShowAlert(
-                        MG2Shared.DIALOG_TITLE,
+                        MEK02Shared.DIALOG_TITLE,
                         $"{plan.TouchingPairs} joint(s) were found, but none produced a bolt.\n\n" +
                         (stats.NearMisses > 0
                             ? $"{stats.NearMisses} opening pair(s) overlapped slightly but fell below the " +
-                              $"{MG2Shared.MIN_OPENING_OVERLAP_MM2:0.##} mm² minimum, which usually " +
+                              $"{MEK02Shared.MIN_OPENING_OVERLAP_MM2:0.##} mm² minimum, which usually " +
                               "means the parts are offset by part of a slot.\n"
                             : "No pair of openings overlapped at all.\n") +
                         (stats.SkippedBothRound > 0
@@ -3092,7 +3092,7 @@ namespace AVES.Cmds_MG2
         /// </summary>
         internal static bool TryPlaceJoints(
             Document doc,
-            MG2Shared.BoltChoice choice,
+            MEK02Shared.BoltChoice choice,
             List<PlannedJoint> joints,
             out int placed)
         {
@@ -3166,7 +3166,7 @@ namespace AVES.Cmds_MG2
                         txEx);
 
                     AvControls.ShowAlert(
-                        MG2Shared.DIALOG_TITLE,
+                        MEK02Shared.DIALOG_TITLE,
                         $"The bolts could not be placed, so nothing was changed.\n\n" +
                         $"{txEx.Message}\n\n" +
                         $"Full detail:\n{log}",
@@ -3223,7 +3223,7 @@ namespace AVES.Cmds_MG2
     /// End-of-run report for Add Bolts: a row per joint, the run's totals, and a
     /// way back to the bolts that were placed.
     ///
-    /// Shown NON-MODALLY, following TagReportWindow in Cmds_Button11.cs, and for
+    /// Shown NON-MODALLY, following TagReportWindow in DOC06_TagReviewer.cs, and for
     /// the same reason it gives: a modal dialog would cover the view it is asking
     /// the user to look at, and selection would be pointless until it closed.
     ///
@@ -3256,7 +3256,7 @@ namespace AVES.Cmds_MG2
             _uiDoc = uiDoc;
             _rows = rows;
 
-            Title = MG2Shared.DIALOG_TITLE;
+            Title = MEK02Shared.DIALOG_TITLE;
 
             // Matching TagReportWindow, the nearest analogue in the plugin — a
             // report with a table and per-row selection. It is the widest of the
@@ -3278,7 +3278,7 @@ namespace AVES.Cmds_MG2
             root.RowDefinitions.Add(new WpfRowDef { Height = WpfGridLength.Auto });
             Content = root;
 
-            var header = AvControls.ReportHeaderBar(MG2Shared.DIALOG_TITLE);
+            var header = AvControls.ReportHeaderBar(MEK02Shared.DIALOG_TITLE);
             WpfGrid.SetRow(header, 0);
             root.Children.Add(header);
 
@@ -3575,7 +3575,7 @@ namespace AVES.Cmds_MG2
             catch (Exception ex)
             {
                 AvControls.ShowAlert(
-                    MG2Shared.DIALOG_TITLE,
+                    MEK02Shared.DIALOG_TITLE,
                     $"Could not select this joint's bolts.\n\n{ex.Message}",
                     AlertSeverity.Error);
             }
@@ -3602,7 +3602,7 @@ namespace AVES.Cmds_MG2
             catch (Exception ex)
             {
                 AvControls.ShowAlert(
-                    MG2Shared.DIALOG_TITLE,
+                    MEK02Shared.DIALOG_TITLE,
                     $"Could not select the placed bolts.\n\n{ex.Message}",
                     AlertSeverity.Error);
             }
@@ -3613,7 +3613,7 @@ namespace AVES.Cmds_MG2
         /// — the format the plugin's other four copy buttons use, which pastes
         /// straight into a spreadsheet as columns.
         ///
-        /// Units go in the header and the cells stay numeric, as Cmds_Button8 does
+        /// Units go in the header and the cells stay numeric, as DOC07_AddWeight does
         /// with its weights: "3 mm" in a cell is text and will not sum or sort.
         /// The fallback marker becomes its own Yes/No column for the same reason —
         /// embedded in the number it would poison the whole column.
@@ -3725,7 +3725,7 @@ namespace AVES.Cmds_MG2
     /// Picks one bolt from a filtered list, before anything is selected in the
     /// model.
     ///
-    /// Structure copied from TagFamilyPickerWindow (Cmds_Pulldown4.cs) rather than
+    /// Structure copied from TagFamilyPickerWindow (DOC05_AutoTag.cs) rather than
     /// invented: HeaderStrip for the title, nested DockPanels, the same search
     /// box, a plain single-select ListBox with the shared PickerListItemStyle, and
     /// a Cancel/Select footer where Select stays disabled until something is
@@ -3991,7 +3991,7 @@ namespace AVES.Cmds_MG2
     /// preview and the placement disagreeing. Picking first removes the whole
     /// chain rather than managing it.
     ///
-    /// And because ShowDialog blocks inside Cmd_MG2.Execute, the command is still
+    /// And because ShowDialog blocks inside Cmd_MEK02_AddBolts.Execute, the command is still
     /// in its API context when this closes — so the placement happens there,
     /// directly, with no external event of any kind. Every transaction in this
     /// plugin lives in an IExternalCommand class; this one does too.
@@ -4000,14 +4000,14 @@ namespace AVES.Cmds_MG2
     /// hands back two answers.
     ///
     /// Sized as one of the plugin's FORM windows — 560x640, the same as
-    /// MainToolWindow in Cmds_Button10.cs — and not as one of its reports. It
+    /// MainToolWindow in DOC02_SheetInfo.cs — and not as one of its reports. It
     /// carries no table, and a table is what makes the report windows 700-980
     /// wide. See the constructor for the split.
     /// </summary>
     internal sealed class AddBoltsWindow : WpfWindow
     {
         /// <summary>The bolt the user settled on, or null if none was available.</summary>
-        internal MG2Shared.BoltChoice? ChosenBolt => _choice;
+        internal MEK02Shared.BoltChoice? ChosenBolt => _choice;
 
         /// <summary>
         /// How many of the joint's positions to fill.
@@ -4033,7 +4033,7 @@ namespace AVES.Cmds_MG2
 
         private readonly Document _doc;
 
-        private MG2Shared.BoltChoice? _choice;
+        private MEK02Shared.BoltChoice? _choice;
 
         private readonly WpfButton _boltButton;
         private readonly WpfTextBlock _countValue;
@@ -4084,8 +4084,8 @@ namespace AVES.Cmds_MG2
             // numbers that get placed — including the single ledger shared across
             // every pair, which is what stops two joints both claiming one hole
             // and the preview counting it twice.
-            MG2Shared.SelectionPlan plan =
-                MG2Shared.PlanSelection(_doc, selection, PREVIEW_WIDE_AXIS);
+            MEK02Shared.SelectionPlan plan =
+                MEK02Shared.PlanSelection(_doc, selection, PREVIEW_WIDE_AXIS);
 
             _maxBolts = plan.MaxBoltsPerJoint;
             _jointCount = plan.Joints.Count;
@@ -4098,7 +4098,7 @@ namespace AVES.Cmds_MG2
 
             // ── Chrome ─────────────────────────────────────────────────────────
 
-            Title = MG2Shared.DIALOG_TITLE;
+            Title = MEK02Shared.DIALOG_TITLE;
 
             // The FORM class, not the report class. The plugin's windows fall into
             // two groups and the split is content, not taste: the 700-980 wide
@@ -4107,7 +4107,7 @@ namespace AVES.Cmds_MG2
             //
             // This is a form — a joint card, two fields and a footer, no table — so
             // it takes the widest form size rather than the narrowest report one:
-            // MainToolWindow's 560x640 / 460x420 (Cmds_Button10.cs), the only
+            // MainToolWindow's 560x640 / 460x420 (DOC02_SheetInfo.cs), the only
             // other multi-field entry form in the plugin.
             //
             // It is now visibly narrower than BoltRunReportWindow, which follows
@@ -4135,7 +4135,7 @@ namespace AVES.Cmds_MG2
             // The size class moved; this did not. It carries the run's result
             // tiles and hands straight over to BoltRunReportWindow, so it reads as
             // the front of that pair rather than as another picker.
-            WpfBorder header = AvControls.ReportHeaderBar(MG2Shared.DIALOG_TITLE);
+            WpfBorder header = AvControls.ReportHeaderBar(MEK02Shared.DIALOG_TITLE);
             WpfGrid.SetRow(header, 0);
             root.Children.Add(header);
 
@@ -4272,7 +4272,7 @@ namespace AVES.Cmds_MG2
         /// status line, and it stays there alone. Tinting Gap to carry it would
         /// make Gap mean something it does not.
         /// </summary>
-        private WpfStackPanel BuildJointCard(MG2Shared.SelectionPlan plan, List<Element> selection)
+        private WpfStackPanel BuildJointCard(MEK02Shared.SelectionPlan plan, List<Element> selection)
         {
             var card = new WpfStackPanel { Margin = new WpfThickness(0, 0, 0, 20) };
 
@@ -4298,12 +4298,12 @@ namespace AVES.Cmds_MG2
             {
                 // One pair, so name both ends. This is the case where the arrow
                 // means something: it points the way the shank goes.
-                headline.Inlines.Add(new WpfRun(MG2Shared.LabelOf(selection[0])));
+                headline.Inlines.Add(new WpfRun(MEK02Shared.LabelOf(selection[0])));
                 headline.Inlines.Add(new WpfRun("  →  ")
                 {
                     Foreground = AvTokens.B(AvTokens.Accent),
                 });
-                headline.Inlines.Add(new WpfRun(MG2Shared.LabelOf(selection[1])));
+                headline.Inlines.Add(new WpfRun(MEK02Shared.LabelOf(selection[1])));
             }
             else
             {
@@ -4344,7 +4344,7 @@ namespace AVES.Cmds_MG2
             // looking at before committing.
             chips.Children.Add(MetricChip(
                 plan.Joints.Count > 1 ? "Widest gap" : "Gap",
-                plan.Joints.Count > 0 ? $"{MG2Shared.Mm(plan.WidestGap):0.###} mm" : "—",
+                plan.Joints.Count > 0 ? $"{MEK02Shared.Mm(plan.WidestGap):0.###} mm" : "—",
                 AvTokens.Text));
 
             card.Children.Add(chips);
@@ -4413,39 +4413,39 @@ namespace AVES.Cmds_MG2
         /// — so a clean run leaves the space under the stepper empty instead of
         /// filling it with a sentence that says nothing.
         ///
-        /// Branches on MG2Shared.VerdictOf, the same classification the command's
+        /// Branches on MEK02Shared.VerdictOf, the same classification the command's
         /// alerts use. One decision about which case we are in, two wordings.
         /// </summary>
-        private WpfTextBlock? BuildStatusLine(MG2Shared.SelectionPlan plan)
+        private WpfTextBlock? BuildStatusLine(MEK02Shared.SelectionPlan plan)
         {
-            MG2Shared.JointStats stats = plan.Stats;
+            MEK02Shared.JointStats stats = plan.Stats;
             bool pair = plan.ElementCount == 2;
 
             string text;
             bool trouble = true;
 
-            switch (MG2Shared.VerdictOf(plan))
+            switch (MEK02Shared.VerdictOf(plan))
             {
-                case MG2Shared.PlanVerdict.NoGeometry:
+                case MEK02Shared.PlanVerdict.NoGeometry:
                     text = pair
                         ? "One of the two has no usable solid geometry."
                         : "None of the selected elements has usable solid geometry.";
                     break;
 
-                case MG2Shared.PlanVerdict.NothingTouching:
+                case MEK02Shared.PlanVerdict.NothingTouching:
                     text = pair
                         ? "These two do not meet face to face within " +
-                          $"{MG2Shared.GAP_TOLERANCE_MM:0.##} mm."
+                          $"{MEK02Shared.GAP_TOLERANCE_MM:0.##} mm."
                         : $"None of the {plan.ElementCount} elements meet face to face within " +
-                          $"{MG2Shared.GAP_TOLERANCE_MM:0.##} mm — {plan.PairsConsidered} pair(s) " +
+                          $"{MEK02Shared.GAP_TOLERANCE_MM:0.##} mm — {plan.PairsConsidered} pair(s) " +
                           "considered.";
                     break;
 
-                case MG2Shared.PlanVerdict.AllTaken:
+                case MEK02Shared.PlanVerdict.AllTaken:
                     text = "Every position found is already bolted.";
                     break;
 
-                case MG2Shared.PlanVerdict.NoBolts:
+                case MEK02Shared.PlanVerdict.NoBolts:
                     text = stats.NearMisses > 0
                         ? $"{plan.TouchingPairs} joint(s) touch, but no openings line up — " +
                           $"{stats.NearMisses} overlapped slightly and fell short, which usually " +
@@ -4463,10 +4463,10 @@ namespace AVES.Cmds_MG2
                     if (stats.FallbackSeatJoints > 0)
                     {
                         parts.Add(plan.Joints.Count == 1
-                            ? $"Seated at the {MG2Shared.FALLBACK_SEAT_OFFSET_MM:0.##} mm fallback " +
+                            ? $"Seated at the {MEK02Shared.FALLBACK_SEAT_OFFSET_MM:0.##} mm fallback " +
                               "because no wall could be measured — check this one by eye."
                             : $"{stats.FallbackSeatJoints} joint(s) seated at the " +
-                              $"{MG2Shared.FALLBACK_SEAT_OFFSET_MM:0.##} mm fallback because no wall " +
+                              $"{MEK02Shared.FALLBACK_SEAT_OFFSET_MM:0.##} mm fallback because no wall " +
                               "could be measured — check those by eye.");
 
                         trouble = true;
@@ -4567,7 +4567,7 @@ namespace AVES.Cmds_MG2
         /// </summary>
         private void LoadBolt()
         {
-            _choice = Cmd_MG2.PreferredBolt(MG2Shared.LoadBoltChoices(_doc));
+            _choice = Cmd_MEK02_AddBolts.PreferredBolt(MEK02Shared.LoadBoltChoices(_doc));
 
             AvControls.SetPickerValue(
                 _boltButton, _choice?.DisplayLabel, "No bolt loaded in this document");
@@ -4584,7 +4584,7 @@ namespace AVES.Cmds_MG2
         /// </summary>
         private void OnPickBolt()
         {
-            MG2Shared.BoltChoice? picked = Cmd_MG2.ChooseBolt(_doc, this);
+            MEK02Shared.BoltChoice? picked = Cmd_MEK02_AddBolts.ChooseBolt(_doc, this);
 
             // Cancelled, or nothing to pick from — ChooseBolt has already said so.
             if (picked is null) return;

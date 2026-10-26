@@ -43,7 +43,7 @@ using WpfTextBox = System.Windows.Controls.TextBox;
 using WpfThickness = System.Windows.Thickness;
 using WpfVisibility = System.Windows.Visibility;
 
-namespace AVES.Cmds_Button11
+namespace AVES.Commands
 {
     // ─────────────────────────────────────────────────────────────────────────
     //  SCAN DATA MODEL
@@ -883,7 +883,7 @@ namespace AVES.Cmds_Button11
     // ─────────────────────────────────────────────────────────────────────────
 
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_Button : IExternalCommand
+    public class Cmd_DOC06_TagReviewer : IExternalCommand
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {

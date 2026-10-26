@@ -51,7 +51,7 @@ using TextBox = System.Windows.Controls.TextBox;
 using Transform = Autodesk.Revit.DB.Transform;
 using WpfControl = System.Windows.Controls.Control;
 
-namespace AVES.Cmds_PullDownCreateSheets;
+namespace AVES.Commands;
 
 
 // =============================================================================
@@ -719,7 +719,7 @@ internal static class FailureHandling
 }
 
 /// <summary>One row in the results table.</summary>
-internal sealed class ReportRow
+internal sealed class CreateSheetsReportRow
 {
     public int Index { get; init; }
     public string Name { get; init; } = "";
@@ -742,7 +742,7 @@ internal static class Reporting
     {
         // Build structured row list. failLog only contains failures; we reconstruct
         // the succeeded count as rows without detail.
-        var rows = new List<ReportRow>();
+        var rows = new List<CreateSheetsReportRow>();
         int idx = 1;
 
         // Parse fail entries — original format: "  • AssemblyName: error message"
@@ -759,7 +759,7 @@ internal static class Reporting
 
         // Add succeeded rows (anonymous — we only know the count, not the names)
         for (int i = 0; i < ok; i++)
-            rows.Add(new ReportRow
+            rows.Add(new CreateSheetsReportRow
             {
                 Index = idx++,
                 Name = ok == 1 ? "Assembly" : $"Assembly {i + 1}",
@@ -769,7 +769,7 @@ internal static class Reporting
 
         // Add failed rows
         foreach (var (name, error) in failParsed)
-            rows.Add(new ReportRow
+            rows.Add(new CreateSheetsReportRow
             {
                 Index = idx++,
                 Name = name,
@@ -777,7 +777,7 @@ internal static class Reporting
                 Details = error,
             });
 
-        new ReportWindow(title, rows, ok, bad, revitHandle).ShowDialog();
+        new CreateSheetsReportWindow(title, rows, ok, bad, revitHandle).ShowDialog();
     }
 
     /// <summary>
@@ -792,7 +792,7 @@ internal static class Reporting
         int bad = results.Count - ok;
 
         var rows = results
-            .Select((r, i) => new ReportRow
+            .Select((r, i) => new CreateSheetsReportRow
             {
                 Index = i + 1,
                 Name = r.Name,
@@ -801,7 +801,7 @@ internal static class Reporting
             })
             .ToList();
 
-        new ReportWindow(title, rows, ok, bad, revitHandle).ShowDialog();
+        new CreateSheetsReportWindow(title, rows, ok, bad, revitHandle).ShowDialog();
     }
 
     /// <summary>
@@ -814,8 +814,8 @@ internal static class Reporting
     /// <para>
     /// Used only by AssemblyDrawingRunner.Run (Vendor and Korea both go
     /// through it, though only Vendor's sheet-2 matching currently produces a
-    /// warning -- see that method's own note). Cmd_AssemblyDrawings and
-    /// Cmd_MTDrawings keep the two-state overload above, unchanged.
+    /// warning -- see that method's own note). Cmd_DOC03a_Assembly and
+    /// Cmd_DOC03b_MT keep the two-state overload above, unchanged.
     /// </para>
     /// </summary>
     public static void ShowResult(
@@ -827,7 +827,7 @@ internal static class Reporting
         int bad = results.Count - ok;
 
         var rows = results
-            .Select((r, i) => new ReportRow
+            .Select((r, i) => new CreateSheetsReportRow
             {
                 Index = i + 1,
                 Name = r.Name,
@@ -838,19 +838,19 @@ internal static class Reporting
             })
             .ToList();
 
-        new ReportWindow(title, rows, ok, bad, revitHandle).ShowDialog();
+        new CreateSheetsReportWindow(title, rows, ok, bad, revitHandle).ShowDialog();
     }
 }
 
 /// <summary>Redesigned report dialog with a DataGrid results table.</summary>
-internal sealed class ReportWindow : Window
+internal sealed class CreateSheetsReportWindow : Window
 {
-    private readonly IReadOnlyList<ReportRow> _rows;
+    private readonly IReadOnlyList<CreateSheetsReportRow> _rows;
     private Button _copyBtn = null!;
 
-    public ReportWindow(
+    public CreateSheetsReportWindow(
         string title,
-        IReadOnlyList<ReportRow> rows,
+        IReadOnlyList<CreateSheetsReportRow> rows,
         int ok, int bad,
         IntPtr revitHandle = default)
     {
@@ -877,7 +877,7 @@ internal sealed class ReportWindow : Window
         // ReportHeaderBar rather than HeaderStrip: a fixed 52px on Surface with
         // a 24px logo, against HeaderStrip's Auto height on Surface2 with a 28px
         // one. HeaderStrip stays for the three picker windows in this file and
-        // for Cmds_Pulldown3.cs and Cmds_Pulldown4.cs -- only the report moves.
+        // for DOC04_AutoDimension.cs and DOC05_AutoTag.cs -- only the report moves.
         var header = AvControls.ReportHeaderBar(title);
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
@@ -1000,7 +1000,7 @@ internal sealed class ReportWindow : Window
         dg.Columns.Add(new DataGridTextColumn
         {
             Header = "#",
-            Binding = new System.Windows.Data.Binding(nameof(ReportRow.Index)),
+            Binding = new System.Windows.Data.Binding(nameof(CreateSheetsReportRow.Index)),
             Width = new DataGridLength(36),
             ElementStyle = BuildMonoCellStyle(AvTokens.TextFaint, TextAlignment.Center),
         });
@@ -1009,7 +1009,7 @@ internal sealed class ReportWindow : Window
         dg.Columns.Add(new DataGridTextColumn
         {
             Header = "ASSEMBLY",
-            Binding = new System.Windows.Data.Binding(nameof(ReportRow.Name)),
+            Binding = new System.Windows.Data.Binding(nameof(CreateSheetsReportRow.Name)),
             Width = new DataGridLength(1, DataGridLengthUnitType.Star),
             ElementStyle = BuildNameCellStyle(),
         });
@@ -1028,7 +1028,7 @@ internal sealed class ReportWindow : Window
         dg.Columns.Add(new DataGridTextColumn
         {
             Header = "DETAILS",
-            Binding = new System.Windows.Data.Binding(nameof(ReportRow.Details)),
+            Binding = new System.Windows.Data.Binding(nameof(CreateSheetsReportRow.Details)),
             Width = new DataGridLength(1.4, DataGridLengthUnitType.Star),
             ElementStyle = BuildDetailsCellStyle(),
         });
@@ -1105,7 +1105,7 @@ internal sealed class ReportWindow : Window
         // exactly is a no-op the user never needs to notice.
         s.Setters.Add(new Setter(
             FrameworkElement.ToolTipProperty,
-            new System.Windows.Data.Binding(nameof(ReportRow.Details))));
+            new System.Windows.Data.Binding(nameof(CreateSheetsReportRow.Details))));
         return s;
     }
 
@@ -3304,7 +3304,7 @@ internal sealed class MTDrawingsSettingsDialog
 internal static class SettingsGate
 {
     // The one place both commands' offsets file names are spelled out --
-    // Cmd_VendorDrawings and Cmd_KoreaDrawings reference these same constants
+    // Cmd_DOC03c_Vendor and Cmd_DOC03d_Korea reference these same constants
     // (also for AssemblyDrawingProfile.TemplateSettingsFile) rather than each
     // holding its own copy of the literal.
     public const string VendorOffsetsFile = "vendor-drawings.json";
@@ -5129,11 +5129,11 @@ internal sealed class KoreaSheetLayout(VendorDrawingsSettings settings) : IAssem
 
 
 // =============================================================================
-// 8. BUTTON 1 — Cmd_VendorDrawings (A3, two sheets per assembly)
+// 8. BUTTON 1 — Cmd_DOC03c_Vendor (A3, two sheets per assembly)
 // =============================================================================
 
 [Transaction(TransactionMode.Manual)]
-public sealed class Cmd_VendorDrawings : IExternalCommand
+public sealed class Cmd_DOC03c_Vendor : IExternalCommand
 {
     private static readonly VendorLayoutDescriptor Descriptor =
         VendorLayoutDescriptor.Vendor;
@@ -5155,7 +5155,7 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
         return result;
     }
 
-    // Kept as forwarders: Cmd_MTDrawings calls these by name.
+    // Kept as forwarders: Cmd_DOC03b_MT calls these by name.
     internal static List<AssemblyInstance> CollectAssemblies(Document doc) =>
         AssemblyDrawingRunner.CollectAssemblies(doc);
 
@@ -5168,11 +5168,11 @@ public sealed class Cmd_VendorDrawings : IExternalCommand
 
 
 // =============================================================================
-// 9. BUTTON 4 — Cmd_KoreaDrawings (one view per sheet)
+// 9. BUTTON 4 — Cmd_DOC03d_Korea (one view per sheet)
 // =============================================================================
 
 [Transaction(TransactionMode.Manual)]
-public sealed class Cmd_KoreaDrawings : IExternalCommand
+public sealed class Cmd_DOC03d_Korea : IExternalCommand
 {
     private static readonly VendorLayoutDescriptor Descriptor =
         VendorLayoutDescriptor.Korea;
@@ -5197,11 +5197,11 @@ public sealed class Cmd_KoreaDrawings : IExternalCommand
 
 
 // =============================================================================
-// 10. BUTTON 2 — Cmd_AssemblyDrawings (bolt clustering, one sheet per assembly)
+// 10. BUTTON 2 — Cmd_DOC03a_Assembly (bolt clustering, one sheet per assembly)
 // =============================================================================
 
 [Transaction(TransactionMode.Manual)]
-public sealed class Cmd_AssemblyDrawings : IExternalCommand
+public sealed class Cmd_DOC03a_Assembly : IExternalCommand
 {
     private sealed class AssemblyContext(AssemblyInstance assembly)
     {
@@ -5513,11 +5513,11 @@ public sealed class Cmd_AssemblyDrawings : IExternalCommand
 
 
 // =============================================================================
-// 11. BUTTON 3 — Cmd_MTDrawings (A1, single sheet per assembly)
+// 11. BUTTON 3 — Cmd_DOC03b_MT (A1, single sheet per assembly)
 // =============================================================================
 
 [Transaction(TransactionMode.Manual)]
-public sealed class Cmd_MTDrawings : IExternalCommand
+public sealed class Cmd_DOC03b_MT : IExternalCommand
 {
     private const double ProjectionSpacingFactor = 0.4;
 
@@ -5568,7 +5568,7 @@ public sealed class Cmd_MTDrawings : IExternalCommand
 
             // Collected before the setup window so its assembly column can offer
             // them, already alphabetical from the shared collector.
-            var assemblies = Cmd_VendorDrawings.CollectAssemblies(doc);
+            var assemblies = Cmd_DOC03c_Vendor.CollectAssemblies(doc);
             if (assemblies.Count == 0)
             {
                 AvControls.ShowAlert("Vendor Automation (Single Sheet)",
@@ -5592,8 +5592,8 @@ public sealed class Cmd_MTDrawings : IExternalCommand
             var settings = SettingsGate.ShowMTDrawings(uiApp);
             if (settings is null) return Result.Cancelled;
 
-            var viewNames = Cmd_VendorDrawings.BuildViewNameRegistry(doc);
-            var sheetNames = Cmd_VendorDrawings.BuildSheetNameRegistry(doc);
+            var viewNames = Cmd_DOC03c_Vendor.BuildViewNameRegistry(doc);
+            var sheetNames = Cmd_DOC03c_Vendor.BuildSheetNameRegistry(doc);
 
             var results = new List<(string Name, string? Error)>();
 

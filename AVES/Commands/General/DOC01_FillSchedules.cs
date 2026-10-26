@@ -56,7 +56,7 @@ using WpfTextBox = System.Windows.Controls.TextBox;        // fixes TextBox ambi
 using WpfThickness = System.Windows.Thickness;
 using WpfVisibility = System.Windows.Visibility;
 
-namespace AVES.Cmds_Button7
+namespace AVES.Commands
 {
     // ─────────────────────────────────────────────────────────────────────────
     //  DATA HELPERS
@@ -115,6 +115,9 @@ namespace AVES.Cmds_Button7
         /// <summary>Number of member instances the writer walked.</summary>
         public int Members { get; set; }
 
+        /// <summary>Combo/host members left out of the numbering.</summary>
+        public int ComboSkipped { get; set; }
+
         public void Record(string paramName, ParamWriteResult result)
         {
             if (!_counts.TryGetValue(paramName, out var slot))
@@ -146,6 +149,8 @@ namespace AVES.Cmds_Button7
         public string Describe()
         {
             var parts = new List<string> { $"{Members} members" };
+            if (ComboSkipped > 0)
+                parts.Add($"{ComboSkipped} combo skipped");
 
             var problems = new List<string>();
             foreach (var kv in _counts.OrderBy(k => k.Key, StringComparer.Ordinal))
@@ -172,7 +177,7 @@ namespace AVES.Cmds_Button7
     }
 
     /// <summary>One row in the Unified Report — one per processed assembly.</summary>
-    internal class ReportRow
+    internal class FillSchedulesReportRow
     {
         public string AssemblyName { get; set; }
         public string StatusKind { get; set; }   // "ok" | "skip" | "fail" | "warn"
@@ -183,7 +188,7 @@ namespace AVES.Cmds_Button7
     //  WPF ASSEMBLY PICKER WINDOW  — AVES Refined Native / AVES Red
     // ─────────────────────────────────────────────────────────────────────────
 
-    internal class AssemblyPickerWindow : Window
+    internal class FillSchedulesAssemblyPickerWindow : Window
     {
         public List<AssemblyInstance> SelectedAssemblies { get; private set; }
             = new List<AssemblyInstance>();
@@ -193,7 +198,7 @@ namespace AVES.Cmds_Button7
         private readonly WpfTextBox _searchBox;
         private bool _confirmed;
 
-        public AssemblyPickerWindow(List<AssemblyInstance> assemblies)
+        public FillSchedulesAssemblyPickerWindow(List<AssemblyInstance> assemblies)
         {
             _allAssemblies = assemblies
                 .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
@@ -608,13 +613,13 @@ namespace AVES.Cmds_Button7
     //        C. Footer (source caption · copy to clipboard · close)
     // ─────────────────────────────────────────────────────────────────────────
 
-    internal class ReportWindow : Window
+    internal class FillSchedulesReportWindow : Window
     {
-        private readonly List<ReportRow> _rows;
+        private readonly List<FillSchedulesReportRow> _rows;
         private readonly string _sourceCaption;
 
-        public ReportWindow(
-            List<ReportRow> rows,
+        public FillSchedulesReportWindow(
+            List<FillSchedulesReportRow> rows,
             int processed, int skipped, int failed,
             int assembliesFound,
             string docTitle)
@@ -1048,7 +1053,7 @@ namespace AVES.Cmds_Button7
     // ─────────────────────────────────────────────────────────────────────────
 
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_Button : IExternalCommand
+    public class Cmd_DOC01_FillSchedules : IExternalCommand
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
@@ -1074,7 +1079,7 @@ namespace AVES.Cmds_Button7
                 }
 
                 // ── 1. Show WPF picker ────────────────────────────────────────
-                var picker = new AssemblyPickerWindow(allAssemblies);
+                var picker = new FillSchedulesAssemblyPickerWindow(allAssemblies);
                 picker.ShowDialog();
 
                 if (picker.SelectedAssemblies == null || picker.SelectedAssemblies.Count == 0)
@@ -1082,7 +1087,7 @@ namespace AVES.Cmds_Button7
 
                 // ── 2. Process each selected assembly ─────────────────────────
                 int totalAssembliesProcessed = 0;
-                var reportRows = new List<ReportRow>();
+                var reportRows = new List<FillSchedulesReportRow>();
 
                 foreach (var assembly in picker.SelectedAssemblies)
                 {
@@ -1096,7 +1101,7 @@ namespace AVES.Cmds_Button7
 
                     if (gmInstances.Count == 0)
                     {
-                        reportRows.Add(new ReportRow
+                        reportRows.Add(new FillSchedulesReportRow
                         {
                             AssemblyName = assembly.Name,
                             StatusKind = "skip",
@@ -1105,10 +1110,15 @@ namespace AVES.Cmds_Button7
                         continue;
                     }
 
+                    // Combo/host families (Combo Item == 1) are containers for the
+                    // real pieces, not pieces themselves: they take no row number.
+                    var comboInstances = gmInstances.Where(el => ComboItemHelper.IsComboItem(doc, el)).ToList();
+                    var pieceInstances = gmInstances.Except(comboInstances).ToList();
+
                     // ── B. Compute merge strings in memory (Step A of algorithm)
                     var instanceDataList = new List<InstanceData>();
 
-                    foreach (var el in gmInstances)
+                    foreach (var el in pieceInstances)
                     {
                         // Length is an instance parameter stored in Revit internal units (feet).
                         // Convert to millimetres and round to nearest integer.
@@ -1248,7 +1258,18 @@ namespace AVES.Cmds_Button7
                     tx.Start();
                     try
                     {
-                        var tally = new ParamWriteTally { Members = instanceDataList.Count };
+                        var tally = new ParamWriteTally
+                        {
+                            Members = instanceDataList.Count,
+                            ComboSkipped = comboInstances.Count
+                        };
+
+                        // Combo members are not numbered, so clear a number a
+                        // previous run left on them. Only a purely numeric
+                        // Comments value is cleared: that is the only thing this
+                        // command writes, and anything else is the user's own text.
+                        foreach (var combo in comboInstances)
+                            ClearPreviousRowNumber(combo, tally);
 
                         foreach (var data in instanceDataList)
                         {
@@ -1292,7 +1313,7 @@ namespace AVES.Cmds_Button7
                             // inside the transaction and then discarded, so
                             // "1236 params written" beside a Failed pill would
                             // describe work that no longer exists.
-                            reportRows.Add(new ReportRow
+                            reportRows.Add(new FillSchedulesReportRow
                             {
                                 AssemblyName = assembly.Name,
                                 StatusKind = "fail",
@@ -1307,7 +1328,7 @@ namespace AVES.Cmds_Button7
                             // than making the four tiles look like they should sum.
                             totalAssembliesProcessed++;
 
-                            reportRows.Add(new ReportRow
+                            reportRows.Add(new FillSchedulesReportRow
                             {
                                 AssemblyName = assembly.Name,
                                 StatusKind = tally.HasSilentSkips ? "warn" : "ok",
@@ -1318,7 +1339,7 @@ namespace AVES.Cmds_Button7
                     catch (Exception txEx)
                     {
                         tx.RollBack();
-                        reportRows.Add(new ReportRow
+                        reportRows.Add(new FillSchedulesReportRow
                         {
                             AssemblyName = assembly.Name,
                             StatusKind = "fail",
@@ -1333,7 +1354,7 @@ namespace AVES.Cmds_Button7
                 int skippedTotal = reportRows.Count(r => r.StatusKind == "skip");
                 int failedTotal = reportRows.Count(r => r.StatusKind == "fail");
 
-                var report = new ReportWindow(
+                var report = new FillSchedulesReportWindow(
                     rows: reportRows,
                     processed: totalAssembliesProcessed,
                     skipped: skippedTotal,
@@ -1356,6 +1377,21 @@ namespace AVES.Cmds_Button7
         // ─────────────────────────────────────────────────────────────────────
         //  PARAMETER HELPERS
         // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Clears Comments on a skipped combo member when it holds a row number
+        /// written by an earlier run (digits only). Nothing else is touched.
+        /// </summary>
+        private static void ClearPreviousRowNumber(Element el, ParamWriteTally tally)
+        {
+            var p = el.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS);
+            if (p == null || p.IsReadOnly || p.StorageType != StorageType.String) return;
+
+            var current = (p.AsString() ?? string.Empty).Trim();
+            if (current.Length == 0 || !current.All(c => c >= '0' && c <= '9')) return;
+
+            tally.Record("Comments", SetParam(p, string.Empty));
+        }
 
         /// <summary>
         /// Reads a string parameter by name.
@@ -1446,7 +1482,7 @@ namespace AVES.Cmds_Button7
         /// <summary>
         /// Writes a string parameter identified by its BuiltInParameter, which
         /// is language-independent. Mirrors the pattern already used in
-        /// Cmds_Pulldown4.cs for ALL_MODEL_INSTANCE_COMMENTS.
+        /// DOC05_AutoTag.cs for ALL_MODEL_INSTANCE_COMMENTS.
         /// </summary>
         private static ParamWriteResult SetParamString(Element el, BuiltInParameter bip, string value)
             => SetParam(el.get_Parameter(bip), value);

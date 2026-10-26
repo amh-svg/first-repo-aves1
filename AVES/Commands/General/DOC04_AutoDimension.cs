@@ -27,7 +27,7 @@ using WinTextBox = System.Windows.Controls.TextBox;
 using WpfColor = System.Windows.Media.Color;
 using WpfVisibility = System.Windows.Visibility;
 
-namespace AVES.Cmds_PullDownAutoDimension
+namespace AVES.Commands
 {
     // =========================================================================
     //  BUTTON 1 – MT Drawings
@@ -35,7 +35,7 @@ namespace AVES.Cmds_PullDownAutoDimension
     // =========================================================================
 
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_MTDimensions : IExternalCommand
+    public class Cmd_DOC04a_MT : IExternalCommand
     {
         // ── Configuration (all distances in feet) ────────────────────────────
         private static class DimConfig
@@ -584,7 +584,7 @@ namespace AVES.Cmds_PullDownAutoDimension
     // =========================================================================
 
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_VendorDimensions : IExternalCommand
+    public class Cmd_DOC04b_Vendor : IExternalCommand
     {
         // ── Configuration ────────────────────────────────────────────────────
         private static class VendorConfig
@@ -1505,7 +1505,7 @@ namespace AVES.Cmds_PullDownAutoDimension
         /// Elevation and plan views differ only in what those two axes are called
         /// — Width/Height versus Width/Depth — so they share this implementation
         /// and pass their own labels, following the same delegation pattern
-        /// Cmd_MTDimensions already uses for its plan views.
+        /// Cmd_DOC04a_MT already uses for its plan views.
         ///
         /// Both axes are measured once and shared: the perpendicular extent of one
         /// dimension is the along extent of the other, so giving the witness lines
@@ -1917,7 +1917,7 @@ namespace AVES.Cmds_PullDownAutoDimension
                     Background = Brushes.Transparent,
                     Focusable = true
                 };
-                // Was a local copy, byte-identical to Cmds_Pulldown4.cs's. Now the
+                // Was a local copy, byte-identical to DOC05_AutoTag.cs's. Now the
                 // shared Core style — same padding, row template and selected
                 // treatment as before, plus a hover tint that neither copy had.
                 _listBox.ItemContainerStyle = AvControls.PickerListItemStyle();

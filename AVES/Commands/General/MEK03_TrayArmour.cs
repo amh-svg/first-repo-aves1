@@ -1,6 +1,6 @@
 // -----------------------------------------------------------------------
 // Title: Cable Tray Armour Generator
-// Summary: Cmd_MG3. The user hand-places one armour set (two adaptive
+// Summary: Cmd_MEK03_TrayArmour. The user hand-places one armour set (two adaptive
 //          Generic Model halves plus every bolt and nut) on one cable tray,
 //          picks that same tray as the reference, and this reads the set as
 //          its own in-memory template — no file, no JSON — and repeats it
@@ -10,7 +10,7 @@
 //          sample is never moved, replaced or duplicated.
 //
 // Locked findings (each confirmed empirically before being relied on here):
-//   - Tray frame: instance transform x MG1Shared.Compose(Rotate XY/XZ/YZ),
+//   - Tray frame: instance transform x MEK01Shared.Compose(Rotate XY/XZ/YZ),
 //     read from the tray's own parameters at runtime, never hardcoded. The
 //     RUN AXIS is then found from the tray's own solid geometry, not
 //     assumed to be X: different tray families model their geometry along
@@ -46,8 +46,8 @@
 //   - Icons MG3_MG316.png / MG3_MG332.png do not exist yet; the ribbon
 //     button renders label-only.
 //   - Tooltip text for the ribbon button.
-//   - MG3Shared depends on MG1Shared (Compose, Rotate parameter names) and
-//     MG2Shared (SolidsOf, LabelOf) by reference. Whether any of that moves
+//   - MG3Shared depends on MEK01Shared (Compose, Rotate parameter names) and
+//     MEK02Shared (SolidsOf, LabelOf) by reference. Whether any of that moves
 //     to a common helper file, shared with MG1/MG2, is undecided.
 //   - MG3Shared.ComputeArmourReference reads the armour's captured
 //     placement points only, not the halves' solid geometry, to find its
@@ -85,18 +85,18 @@ using WpfGrid = System.Windows.Controls.Grid;
 using WpfTextBox = System.Windows.Controls.TextBox;
 using WpfVisibility = System.Windows.Visibility;
 // Reused rather than duplicated: solid-collection and labelling helpers are
-// generic geometry code, not Mekano-specific, and MG2Shared already has them
+// generic geometry code, not Mekano-specific, and MEK02Shared already has them
 // well exercised. Referenced only — MG2's file itself is never touched.
-using MG2 = AVES.Cmds_MG2.MG2Shared;
+using MG2 = AVES.Commands.MEK02Shared;
 // Same reuse principle: the tray family (and the armour halves) share
 // Mekano's own Rotate XY/XZ/YZ convention and composition order.
-// MG1Shared.Compose already implements R = Rz(XY)*Rx(YZ)*Ry(XZ) correctly —
+// MEK01Shared.Compose already implements R = Rz(XY)*Rx(YZ)*Ry(XZ) correctly —
 // referenced only, never modified.
-using MG1 = AVES.Cmds_Button_MG1.MG1Shared;
+using MG1 = AVES.Commands.MEK01Shared;
 
-namespace AVES.Cmds_MG3
+namespace AVES.Commands
 {
-    /// <summary>Frame math, in-memory armour-set capture and placement helpers shared by Cmd_MG3.</summary>
+    /// <summary>Frame math, in-memory armour-set capture and placement helpers shared by Cmd_MEK03_TrayArmour.</summary>
     internal static class MG3Shared
     {
         // ── Identity ───────────────────────────────────────────────────────────
@@ -133,7 +133,7 @@ namespace AVES.Cmds_MG3
         // How far outside the reference tray's own bare extents — its own
         // centreline in Y/Z only, NEVER its Length along X — the sample's
         // centroid may still land and count as "on this tray". The safety
-        // check right after the user picks it (Cmd_MG3.Execute) applies this
+        // check right after the user picks it (Cmd_MEK03_TrayArmour.Execute) applies this
         // to Y/Z alone; X must fall strictly within [-L/2, L/2], no
         // tolerance, or a sample sitting near a joint between two trays could
         // pass against the wrong neighbour. NOT measured from the armour's
@@ -146,7 +146,7 @@ namespace AVES.Cmds_MG3
         // The round-trip self-check (rebuild world from what was just read,
         // compare) should read ~0 — it is pure floating-point arithmetic on
         // data read a moment ago, not a measurement of anything physical.
-        // Cmd_MG3's sample capture has no human reviewing the raw numbers
+        // Cmd_MEK03_TrayArmour's sample capture has no human reviewing the raw numbers
         // before placement, so these are real gates: a deviation above either
         // one means something is wrong with the frame or the points read,
         // not that the tolerance needs loosening.
@@ -218,7 +218,7 @@ namespace AVES.Cmds_MG3
         /// Reads Rotate XY/XZ/YZ off an element (exact names, MG1's own
         /// constants), if all three are present as numeric parameters. Used
         /// for both the tray (frame method B+R) and each armour half — the
-        /// same convention, MG1Shared.Compose, referenced and never
+        /// same convention, MEK01Shared.Compose, referenced and never
         /// rederived.
         /// </summary>
         internal static RotationParams ReadRotationParams(Element element)
@@ -369,7 +369,7 @@ namespace AVES.Cmds_MG3
         /// <summary>
         /// Builds a tray's local frame — LOCKED FINDING: instance transform x
         /// R, where R = Rz(XY) * Rx(YZ) * Ry(XZ) is built from the tray's own
-        /// Rotate XY/XZ/YZ parameters (MG1Shared.Compose, referenced not
+        /// Rotate XY/XZ/YZ parameters (MEK01Shared.Compose, referenced not
         /// rederived), read fresh from the tray every time this is called,
         /// never hardcoded.
         ///
@@ -477,7 +477,7 @@ namespace AVES.Cmds_MG3
         /// wrong-type Rotate XY/XZ/YZ, a missing Length, a link, a group)
         /// failed. Category is cheap and unambiguous enough to gate on here;
         /// every other requirement is verified AFTER the pick instead, in
-        /// Cmd_MG3, which can then show exactly what failed via
+        /// Cmd_MEK03_TrayArmour, which can then show exactly what failed via
         /// DescribeTrayFailure and let the user pick again.
         /// </summary>
         internal sealed class TrayElementFilter : ISelectionFilter
@@ -684,7 +684,7 @@ namespace AVES.Cmds_MG3
         }
 
         /// <summary>
-        /// Accepts only what Cmd_MG3's sample can use: an adaptive component
+        /// Accepts only what Cmd_MEK03_TrayArmour's sample can use: an adaptive component
         /// instance (an armour half) or a WorkPlaneBased family instance (a
         /// bolt or nut) — excluding anything IsTray identifies as a tray,
         /// since the tray family is itself Generic Model Adaptive and would
@@ -1058,7 +1058,7 @@ namespace AVES.Cmds_MG3
         /// skipped and warned about. The round-trip self-check (rebuild world
         /// from what was just read, compare) feeds
         /// SelfCheckMaxPositionDeviationMm/SelfCheckMaxAngleDeviationDeg,
-        /// which Cmd_MG3 gates on — see SAMPLE_SELF_CHECK_MAX_*.
+        /// which Cmd_MEK03_TrayArmour gates on — see SAMPLE_SELF_CHECK_MAX_*.
         /// </summary>
         internal static ArmourSet CaptureSample(Document doc, TrayFrame frame, List<Element> sampleElements)
         {
@@ -1190,7 +1190,7 @@ namespace AVES.Cmds_MG3
 
     /// <summary>
     /// A small labelled numeric entry: label, text box, unit suffix. Its own
-    /// minimal copy rather than a reuse of Cmds_PullDown2.cs's NumericRow —
+    /// minimal copy rather than a reuse of DOC03_CreateSheets.cs's NumericRow —
     /// that file backs protected commands (Vendor/Assembly/MT Drawings) and
     /// is referenced by nothing here, matching the hard rule.
     /// </summary>
@@ -1299,7 +1299,7 @@ namespace AVES.Cmds_MG3
     /// <summary>
     /// The bordered/zebra-striped DataGrid look every MG3 table shares,
     /// factored out rather than repeated per table. Copied from
-    /// BoltRunReportWindow's BuildTable (Cmds_MG2.cs, read-only reference) —
+    /// BoltRunReportWindow's BuildTable (MEK02_AddBolts.cs, read-only reference) —
     /// same header/cell styles, same Zebra striping, same Text() column
     /// helper — not a new visual language.
     /// </summary>
@@ -1394,9 +1394,9 @@ namespace AVES.Cmds_MG3
     /// placement: confirms what the sample contained (left, a table — the
     /// old SampleConfirmationWindow's job) and takes spacing/clearance
     /// (right — the old SpacingInputWindow's job). Modal: ShowDialog blocks
-    /// inside Cmd_MG3.Execute, so placement below runs in the same API
+    /// inside Cmd_MEK03_TrayArmour.Execute, so placement below runs in the same API
     /// context the command started in. Two-column layout copied from
-    /// TemplateMenuWindow (Cmds_PullDown2.cs, read-only reference) — a fixed
+    /// TemplateMenuWindow (DOC03_CreateSheets.cs, read-only reference) — a fixed
     /// Grid with a 24px gutter between two Star columns, not a new layout.
     /// </summary>
     internal sealed class SetupWindow : Window
@@ -1415,7 +1415,7 @@ namespace AVES.Cmds_MG3
             // Height follows content rather than a fixed guess, so every sample
             // row is visible without an internal scrollbar regardless of how many
             // family/types the hand-placed sample turns out to have. Matches
-            // TemplateMenuWindow's (Cmds_PullDown2.cs) reasoning: width stays
+            // TemplateMenuWindow's (DOC03_CreateSheets.cs) reasoning: width stays
             // fixed since the two columns' proportions depend on it, height does
             // not need to.
             SizeToContent = SizeToContent.Height;
@@ -1493,7 +1493,7 @@ namespace AVES.Cmds_MG3
 
             Button cancelButton = AvControls.SecondaryButton("Cancel");
             // 10px gap so Cancel does not run into Continue — the same
-            // spacing BoltRunReportWindow.BuildFooter (Cmds_MG2.cs) gives its
+            // spacing BoltRunReportWindow.BuildFooter (MEK02_AddBolts.cs) gives its
             // secondary buttons.
             cancelButton.Margin = new Thickness(0, 0, 10, 0);
             cancelButton.Click += (_, __) => { DialogResult = false; Close(); };
@@ -1532,7 +1532,7 @@ namespace AVES.Cmds_MG3
 
     /// <summary>
     /// Final run report, AVES report-window style. Modeled directly on
-    /// BoltRunReportWindow (Cmds_MG2.cs, read-only reference): ReportHeaderBar,
+    /// BoltRunReportWindow (MEK02_AddBolts.cs, read-only reference): ReportHeaderBar,
     /// a StatTile summary row, bordered/zebra-striped DataGrid tables, a
     /// footer strip with the primary action. Replaces the old single
     /// ShowAlert text blob — every value that alert printed is still here,
@@ -1718,7 +1718,7 @@ namespace AVES.Cmds_MG3
     /// all live in MG3Shared.
     /// </summary>
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_MG3 : IExternalCommand
+    public class Cmd_MEK03_TrayArmour : IExternalCommand
     {
         /// <summary>One selected tray that passed every gate: frame + Length (via MG3Shared.IsTray), horizontal, and — for a non-reference tray — family/type match with the reference.</summary>
         private sealed class ValidTray

@@ -33,7 +33,7 @@ using WEllipse = System.Windows.Shapes.Ellipse;
 using WColor = System.Windows.Media.Color;
 using SIOPath = System.IO.Path;
 
-namespace AVES.Cmds_Button9
+namespace AVES.Commands
 {
     // ================================================================
     //  EXTERNAL COMMAND
@@ -45,7 +45,7 @@ namespace AVES.Cmds_Button9
     /// themed WPF report window with the results.
     /// </summary>
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_Button : IExternalCommand
+    public class Cmd_FAM02_Download : IExternalCommand
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {

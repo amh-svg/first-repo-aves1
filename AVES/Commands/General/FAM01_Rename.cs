@@ -19,7 +19,7 @@ using Autodesk.Revit.UI;
 using AVES.Core;
 
 // Associate with pushbutton commands
-namespace AVES.Cmds_Button6
+namespace AVES.Commands
 {
     /// <summary>
     /// Renames Revit Families and Types based on the "Item Number"
@@ -27,7 +27,7 @@ namespace AVES.Cmds_Button6
     /// Target format: "{Item Number} _ {PMO_Description}"
     /// </summary>
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_Button : IExternalCommand
+    public class Cmd_FAM01_Rename : IExternalCommand
     {
         // ── Configuration ──────────────────────────────────────────────────────
         private const string ParamItemNumber = "Item Number";
@@ -551,7 +551,7 @@ namespace AVES.Cmds_Button6
             // AvControls.StatTile has no built-in margin (unlike this file's old
             // local copy, which added a trailing 10px margin on every tile) --
             // spacing between tiles now added explicitly here instead, matching
-            // the convention already used by Cmds_Button10.cs/Cmds_Button11.cs.
+            // the convention already used by DOC02_SheetInfo.cs/DOC06_TagReviewer.cs.
             for (int i = 0; i < statTiles.Length; i++)
             {
                 if (i > 0) statTiles[i].Margin = new System.Windows.Thickness(10, 0, 0, 0);

@@ -55,16 +55,16 @@ namespace AVES
             var panelFamilyEdition = uiCtlApp.Ext_AddRibbonPanel(Globals.AddinName, "Family Edition");
 
             // Add button to panel
-            var buttonRenameFamilyNameAndType = panelFamilyEdition.Ext_AddPushButton("Rename\nFamily", "AVES.Cmds_Button6.Cmd_Button");
-            var buttonDownloadFamilies = panelFamilyEdition.Ext_AddPushButton("Download\nFamilies", "AVES.Cmds_Button9.Cmd_Button");
+            var buttonRenameFamilyNameAndType = panelFamilyEdition.Ext_AddPushButton("Rename\nFamily", "AVES.Commands.Cmd_FAM01_Rename");
+            var buttonDownloadFamilies = panelFamilyEdition.Ext_AddPushButton("Download\nFamilies", "AVES.Commands.Cmd_FAM02_Download");
 
             // Add pulldownbutton to panel
-            var pulldownTest = panelFamilyEdition.Ext_AddPulldownButton("Family\nParameters", "AVES.Cmds_PullDown");
+            var pulldownTest = panelFamilyEdition.Ext_AddPulldownButton("Family\nParameters", "AVES.Commands.Cmd_FAM03_Parameters");
 
             // Add buttons to pulldown
-            pulldownTest.Ext_AddPushButton("Add Shared Parameters", "AVES.Cmds_PullDown.Cmd_BatchSharedParams");
-            pulldownTest.Ext_AddPushButton("Remove Parameters", "AVES.Cmds_PullDown.Cmd_BatchRemoveParams");
-            pulldownTest.Ext_AddPushButton("Fill Family Parameters", "AVES.Cmds_PullDown.Cmd_CsvImporter");
+            pulldownTest.Ext_AddPushButton("Add Shared Parameters", "AVES.Commands.Cmd_FAM03a_SharedParams");
+            pulldownTest.Ext_AddPushButton("Remove Parameters", "AVES.Commands.Cmd_FAM03b_RemoveParams");
+            pulldownTest.Ext_AddPushButton("Fill Family Parameters", "AVES.Commands.Cmd_FAM03c_CsvImporter");
 
             #endregion
 
@@ -74,36 +74,39 @@ namespace AVES
             var panelSheets = uiCtlApp.Ext_AddRibbonPanel(Globals.AddinName, "Sheet Creation & Editing");
 
             // Add "Sheet Creation" pulldownbutton to panel
-            var pulldown2 = panelSheets.Ext_AddPulldownButton("Create\nSheets", "AVES.Cmds_PullDownCreateSheets");
+            var pulldown2 = panelSheets.Ext_AddPulldownButton("Create\nSheets", "AVES.Commands.Cmd_DOC03_CreateSheets");
 
             // Add buttons to "Sheet Creation" pulldown
-            pulldown2.Ext_AddPushButton("Assembly Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_AssemblyDrawings");
-            pulldown2.Ext_AddPushButton("MT Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_MTDrawings");
-            pulldown2.Ext_AddPushButton("Vendor Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_VendorDrawings");
-            pulldown2.Ext_AddPushButton("Korea Drawings", "AVES.Cmds_PullDownCreateSheets.Cmd_KoreaDrawings");
+            pulldown2.Ext_AddPushButton("Assembly Drawings", "AVES.Commands.Cmd_DOC03a_Assembly");
+            pulldown2.Ext_AddPushButton("MT Drawings", "AVES.Commands.Cmd_DOC03b_MT");
+            pulldown2.Ext_AddPushButton("Vendor Drawings", "AVES.Commands.Cmd_DOC03c_Vendor");
+            pulldown2.Ext_AddPushButton("Korea Drawings", "AVES.Commands.Cmd_DOC03d_Korea");
 
             // Add "Add Dimensions" pulldownbutton to panel
-            var pulldown3 = panelSheets.Ext_AddPulldownButton("Auto-add\nDimensions", "AVES.Cmds_PullDownAutoDimension");
+            var pulldown3 = panelSheets.Ext_AddPulldownButton("Auto-add\nDimensions", "AVES.Commands.Cmd_DOC04_AutoDimension");
 
             // Add buttons to "Add Dimensions" pulldown
-            pulldown3.Ext_AddPushButton("MT Dimensions", "AVES.Cmds_PullDownAutoDimension.Cmd_MTDimensions");
-            pulldown3.Ext_AddPushButton("Vendor Dimensions", "AVES.Cmds_PullDownAutoDimension.Cmd_VendorDimensions");
+            pulldown3.Ext_AddPushButton("MT Dimensions", "AVES.Commands.Cmd_DOC04a_MT");
+            pulldown3.Ext_AddPushButton("Vendor Dimensions", "AVES.Commands.Cmd_DOC04b_Vendor");
 
             // Add "Add Tags" pulldownbutton to panel
-            var pulldown4 = panelSheets.Ext_AddPulldownButton("Auto-tag\nViews", "AVES.Cmds_PullDownAutoTag");
+            var pulldown4 = panelSheets.Ext_AddPulldownButton("Auto-tag\nViews", "AVES.Commands.Cmd_DOC05_AutoTag");
 
             // Add buttons to "Add Tags" pulldown
-            pulldown4.Ext_AddPushButton("3D - MT Tags", "AVES.Cmds_PullDownAutoTag.Cmd_MTTag");
-            pulldown4.Ext_AddPushButton("3D - Vendor Tags", "AVES.Cmds_PullDownAutoTag.Cmd_VendorTag");
+            pulldown4.Ext_AddPushButton("3D - MT Tags", "AVES.Commands.Cmd_DOC05a_MT");
+            pulldown4.Ext_AddPushButton("3D - Vendor Tags", "AVES.Commands.Cmd_DOC05b_Vendor");
 
             // Add button to panel
-            var buttonFillSchedules = panelSheets.Ext_AddPushButton("Auto-fill\nSchedules", "AVES.Cmds_Button7.Cmd_Button");
-            
+            var buttonFillSchedules = panelSheets.Ext_AddPushButton("Auto-fill\nSchedules", "AVES.Commands.Cmd_DOC01_FillSchedules");
+
+            // Add button to panel
+            // var buttonAddNested = panelSheets.Ext_AddPushButton("Add Nested\nto Assemblies", "AVES.Commands.Cmd_DOC08_AddNested");
+
             // Add Stacked button to panel
             var buttonStack = panelSheets.Ext_AddPushButtonStack(
-                "Add Weight", "AVES.Cmds_Button8.Cmd_Button",
-                "Fill Sheet Info", "AVES.Cmds_Button10.Cmd_Button",
-                "Tag Reviewer", "AVES.Cmds_Button11.Cmd_Button");
+                "Add Weight", "AVES.Commands.Cmd_DOC07_AddWeight",
+                "Fill Sheet Info", "AVES.Commands.Cmd_DOC02_SheetInfo",
+                "Tag Reviewer", "AVES.Commands.Cmd_DOC06_TagReviewer");
 
 
             // Create data objects of stack
@@ -130,9 +133,9 @@ namespace AVES
             var panelModeling = uiCtlApp.Ext_AddRibbonPanel(Globals.AddinName, "Modeling");
 
             // Add button to panel
-            var buttonMekanoGenerator = panelModeling.Ext_AddPushButton("Mekano\nGenerator", "AVES.Cmds_Button_MG1.Cmd_MG1");
-            var buttonMekanoBolts = panelModeling.Ext_AddPushButton("Add\nBolts", "AVES.Cmds_MG2.Cmd_MG2");
-            var buttonMG3 = panelModeling.Ext_AddPushButton("Cable Tray\nArmour", "AVES.Cmds_MG3.Cmd_MG3");
+            var buttonMekanoGenerator = panelModeling.Ext_AddPushButton("Mekano\nGenerator", "AVES.Commands.Cmd_MEK01_Generator");
+            var buttonMekanoBolts = panelModeling.Ext_AddPushButton("Add\nBolts", "AVES.Commands.Cmd_MEK02_AddBolts");
+            var buttonMG3 = panelModeling.Ext_AddPushButton("Cable Tray\nArmour", "AVES.Commands.Cmd_MEK03_TrayArmour");
 
             #endregion
 

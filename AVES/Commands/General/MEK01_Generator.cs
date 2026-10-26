@@ -24,12 +24,12 @@ using Autodesk.Revit.UI.Selection;
 using AVES.Core;
 
 // Associate with pushbutton commands
-namespace AVES.Cmds_Button_MG1
+namespace AVES.Commands
 {
     /// <summary>
     /// Shared configuration and rotation helpers for the Mekano generator.
     /// </summary>
-    internal static class MG1Shared
+    internal static class MEK01Shared
     {
         // ── Families and parameters ────────────────────────────────────────────
 
@@ -205,7 +205,7 @@ namespace AVES.Cmds_Button_MG1
     /// composed with the Mekano's fixed vertical pose.
     /// </summary>
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_MG1 : IExternalCommand
+    public class Cmd_MEK01_Generator : IExternalCommand
     {
         // ── Configuration ──────────────────────────────────────────────────────
 
@@ -247,7 +247,7 @@ namespace AVES.Cmds_Button_MG1
             if (uiDoc is null)
             {
                 AvControls.ShowAlert(
-                    MG1Shared.DIALOG_TITLE,
+                    MEK01Shared.DIALOG_TITLE,
                     "No active document.\n\nOpen a project and re-run.",
                     AlertSeverity.Warning);
                 return Result.Cancelled;
@@ -264,8 +264,8 @@ namespace AVES.Cmds_Button_MG1
                 {
                     pickedRef = uiDoc.Selection.PickObject(
                         ObjectType.Element,
-                        new MG1Shared.StarterFilter(),
-                        $"Select a \"{MG1Shared.STARTER_FAMILY_NAME}\" instance.");
+                        new MEK01Shared.StarterFilter(),
+                        $"Select a \"{MEK01Shared.STARTER_FAMILY_NAME}\" instance.");
                 }
                 catch (Autodesk.Revit.Exceptions.OperationCanceledException)
                 {
@@ -276,7 +276,7 @@ namespace AVES.Cmds_Button_MG1
                 if (doc.GetElement(pickedRef) is not FamilyInstance starter)
                 {
                     AvControls.ShowAlert(
-                        MG1Shared.DIALOG_TITLE,
+                        MEK01Shared.DIALOG_TITLE,
                         "The picked element is not a family instance.\n\nPick a Starter instance and re-run.",
                         AlertSeverity.Warning);
                     return Result.Cancelled;
@@ -285,12 +285,12 @@ namespace AVES.Cmds_Button_MG1
                 // ── 2. Validate the Starter instance ───────────────────────────
                 var starterFamilyName = starter.Symbol?.Family?.Name ?? "(unknown)";
 
-                if (!string.Equals(starterFamilyName, MG1Shared.STARTER_FAMILY_NAME, StringComparison.Ordinal))
+                if (!string.Equals(starterFamilyName, MEK01Shared.STARTER_FAMILY_NAME, StringComparison.Ordinal))
                 {
                     AvControls.ShowAlert(
-                        MG1Shared.DIALOG_TITLE,
+                        MEK01Shared.DIALOG_TITLE,
                         $"The picked element belongs to family \"{starterFamilyName}\".\n\n" +
-                        $"Expected \"{MG1Shared.STARTER_FAMILY_NAME}\".",
+                        $"Expected \"{MEK01Shared.STARTER_FAMILY_NAME}\".",
                         AlertSeverity.Warning);
                     return Result.Cancelled;
                 }
@@ -298,7 +298,7 @@ namespace AVES.Cmds_Button_MG1
                 if (!AdaptiveComponentInstanceUtils.IsAdaptiveComponentInstance(starter))
                 {
                     AvControls.ShowAlert(
-                        MG1Shared.DIALOG_TITLE,
+                        MEK01Shared.DIALOG_TITLE,
                         $"\"{starterFamilyName}\" is not an adaptive component instance.\n\n" +
                         "This command only works with adaptive components.",
                         AlertSeverity.Warning);
@@ -306,25 +306,25 @@ namespace AVES.Cmds_Button_MG1
                 }
 
                 // ── 3. Read the Starter placement point ────────────────────────
-                if (!MG1Shared.TryGetSinglePlacementPoint(doc, starter, out ReferencePoint? starterPoint, out string pointError))
+                if (!MEK01Shared.TryGetSinglePlacementPoint(doc, starter, out ReferencePoint? starterPoint, out string pointError))
                 {
-                    AvControls.ShowAlert(MG1Shared.DIALOG_TITLE, $"Starter instance: {pointError}", AlertSeverity.Error);
+                    AvControls.ShowAlert(MEK01Shared.DIALOG_TITLE, $"Starter instance: {pointError}", AlertSeverity.Error);
                     return Result.Failed;
                 }
 
                 XYZ starterPosition = starterPoint!.Position;
 
                 // ── 4. Build the Starter's rotation ────────────────────────────
-                if (!MG1Shared.TryReadRotations(
+                if (!MEK01Shared.TryReadRotations(
                         starter,
                         out double starterXy, out double starterXz, out double starterYz,
                         out string rotationError))
                 {
-                    AvControls.ShowAlert(MG1Shared.DIALOG_TITLE, $"Starter instance: {rotationError}", AlertSeverity.Error);
+                    AvControls.ShowAlert(MEK01Shared.DIALOG_TITLE, $"Starter instance: {rotationError}", AlertSeverity.Error);
                     return Result.Failed;
                 }
 
-                Transform starterRotation = MG1Shared.Compose(starterXy, starterXz, starterYz);
+                Transform starterRotation = MEK01Shared.Compose(starterXy, starterXz, starterYz);
 
                 // ── 5. Rotate the offset into world coordinates ────────────────
                 var localOffset = new XYZ(
@@ -336,14 +336,14 @@ namespace AVES.Cmds_Button_MG1
                 XYZ mekanoPosition = starterPosition + worldOffset;
 
                 // ── 6. Compose the Mekano's target orientation ─────────────────
-                Transform verticalPose = MG1Shared.Compose(
+                Transform verticalPose = MEK01Shared.Compose(
                     Rad(VERTICAL_POSE_XY_DEG),
                     Rad(VERTICAL_POSE_XZ_DEG),
                     Rad(VERTICAL_POSE_YZ_DEG));
 
                 Transform targetRotation = starterRotation.Multiply(verticalPose);
 
-                MG1Shared.ExtractRotations(
+                MEK01Shared.ExtractRotations(
                     targetRotation,
                     out double targetXy, out double targetXz, out double targetYz,
                     out bool gimbalLocked);
@@ -352,13 +352,13 @@ namespace AVES.Cmds_Button_MG1
                 var mekanoSymbol = new FilteredElementCollector(doc)
                     .OfClass(typeof(FamilySymbol))
                     .Cast<FamilySymbol>()
-                    .FirstOrDefault(s => string.Equals(s.Family?.Name, MG1Shared.MEKANO_FAMILY_NAME, StringComparison.Ordinal));
+                    .FirstOrDefault(s => string.Equals(s.Family?.Name, MEK01Shared.MEKANO_FAMILY_NAME, StringComparison.Ordinal));
 
                 if (mekanoSymbol is null)
                 {
                     AvControls.ShowAlert(
-                        MG1Shared.DIALOG_TITLE,
-                        $"The family \"{MG1Shared.MEKANO_FAMILY_NAME}\" is not loaded in this document.\n\n" +
+                        MEK01Shared.DIALOG_TITLE,
+                        $"The family \"{MEK01Shared.MEKANO_FAMILY_NAME}\" is not loaded in this document.\n\n" +
                         "Load it and re-run.",
                         AlertSeverity.Error);
                     return Result.Failed;
@@ -367,8 +367,8 @@ namespace AVES.Cmds_Button_MG1
                 if (!AdaptiveComponentInstanceUtils.IsAdaptiveFamilySymbol(mekanoSymbol))
                 {
                     AvControls.ShowAlert(
-                        MG1Shared.DIALOG_TITLE,
-                        $"\"{MG1Shared.MEKANO_FAMILY_NAME}\" is not an adaptive family.\n\n" +
+                        MEK01Shared.DIALOG_TITLE,
+                        $"\"{MEK01Shared.MEKANO_FAMILY_NAME}\" is not an adaptive family.\n\n" +
                         "This command can only place adaptive components.",
                         AlertSeverity.Error);
                     return Result.Failed;
@@ -392,30 +392,30 @@ namespace AVES.Cmds_Button_MG1
 
                         doc.Regenerate();
 
-                        if (!MG1Shared.TryGetSinglePlacementPoint(doc, mekano, out ReferencePoint? mekanoPoint, out string mekanoPointError))
+                        if (!MEK01Shared.TryGetSinglePlacementPoint(doc, mekano, out ReferencePoint? mekanoPoint, out string mekanoPointError))
                         {
                             if (tx.HasStarted() && !tx.HasEnded()) tx.RollBack();
-                            AvControls.ShowAlert(MG1Shared.DIALOG_TITLE, $"New Mekano instance: {mekanoPointError}", AlertSeverity.Error);
+                            AvControls.ShowAlert(MEK01Shared.DIALOG_TITLE, $"New Mekano instance: {mekanoPointError}", AlertSeverity.Error);
                             return Result.Failed;
                         }
 
                         mekanoPoint!.Position = mekanoPosition;
                         doc.Regenerate();
 
-                        Parameter? targetXyParam = mekano.LookupParameter(MG1Shared.PARAM_ROTATE_XY);
-                        Parameter? targetXzParam = mekano.LookupParameter(MG1Shared.PARAM_ROTATE_XZ);
-                        Parameter? targetYzParam = mekano.LookupParameter(MG1Shared.PARAM_ROTATE_YZ);
+                        Parameter? targetXyParam = mekano.LookupParameter(MEK01Shared.PARAM_ROTATE_XY);
+                        Parameter? targetXzParam = mekano.LookupParameter(MEK01Shared.PARAM_ROTATE_XZ);
+                        Parameter? targetYzParam = mekano.LookupParameter(MEK01Shared.PARAM_ROTATE_YZ);
 
                         string? missing =
-                            targetXyParam is null ? MG1Shared.PARAM_ROTATE_XY :
-                            targetXzParam is null ? MG1Shared.PARAM_ROTATE_XZ :
-                            targetYzParam is null ? MG1Shared.PARAM_ROTATE_YZ : null;
+                            targetXyParam is null ? MEK01Shared.PARAM_ROTATE_XY :
+                            targetXzParam is null ? MEK01Shared.PARAM_ROTATE_XZ :
+                            targetYzParam is null ? MEK01Shared.PARAM_ROTATE_YZ : null;
 
                         if (missing is not null)
                         {
                             if (tx.HasStarted() && !tx.HasEnded()) tx.RollBack();
                             AvControls.ShowAlert(
-                                MG1Shared.DIALOG_TITLE,
+                                MEK01Shared.DIALOG_TITLE,
                                 $"New Mekano instance: the parameter \"{missing}\" was not found.",
                                 AlertSeverity.Error);
                             return Result.Failed;
@@ -434,7 +434,7 @@ namespace AVES.Cmds_Button_MG1
                     {
                         if (tx.HasStarted() && !tx.HasEnded()) tx.RollBack();
                         AvControls.ShowAlert(
-                            MG1Shared.DIALOG_TITLE,
+                            MEK01Shared.DIALOG_TITLE,
                             $"The Mekano instance could not be generated.\n\n{txEx.Message}",
                             AlertSeverity.Error);
                         return Result.Failed;
@@ -443,8 +443,8 @@ namespace AVES.Cmds_Button_MG1
 
                 // ── 9. Report success ──────────────────────────────────────────
                 AvControls.ShowAlert(
-                    MG1Shared.DIALOG_TITLE,
-                    $"A \"{MG1Shared.MEKANO_FAMILY_NAME}\" instance was generated.\n\n" +
+                    MEK01Shared.DIALOG_TITLE,
+                    $"A \"{MEK01Shared.MEKANO_FAMILY_NAME}\" instance was generated.\n\n" +
                     $"Starter rotation: XY {Deg(starterXy)}, XZ {Deg(starterXz)}, YZ {Deg(starterYz)}\n" +
                     $"Mekano rotation:  XY {Deg(targetXy)}, XZ {Deg(targetXz)}, YZ {Deg(targetYz)}" +
                     (gimbalLocked
@@ -458,7 +458,7 @@ namespace AVES.Cmds_Button_MG1
             catch (Exception ex)
             {
                 AvControls.ShowAlert(
-                    MG1Shared.DIALOG_TITLE,
+                    MEK01Shared.DIALOG_TITLE,
                     $"The command stopped unexpectedly.\n\n{ex.Message}",
                     AlertSeverity.Error);
                 return Result.Failed;

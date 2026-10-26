@@ -33,7 +33,7 @@ using WpfGrid = System.Windows.Controls.Grid;
 using WpfTextBox = System.Windows.Controls.TextBox;
 using WpfVisibility = System.Windows.Visibility;
 
-namespace AVES.Cmds_PullDownAutoTag
+namespace AVES.Commands
 {
     // ============================================================
     //  SHARED UI HELPERS
@@ -158,7 +158,7 @@ namespace AVES.Cmds_PullDownAutoTag
                 Background = WpfBrushes.Transparent,
                 Focusable = true
             };
-            // Was a local copy, byte-identical to Cmds_Pulldown3.cs's. Now the
+            // Was a local copy, byte-identical to DOC04_AutoDimension.cs's. Now the
             // shared Core style — same padding, row template and selected
             // treatment as before, plus a hover tint that neither copy had.
             _listBox.ItemContainerStyle = AvControls.PickerListItemStyle();
@@ -1099,7 +1099,7 @@ namespace AVES.Cmds_PullDownAutoTag
     //  BUTTON 1 — CMD_MTTAG  (MT Drawings)
     // ============================================================
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_MTTag : IExternalCommand
+    public class Cmd_DOC05a_MT : IExternalCommand
     {
         private const double EdgeClearanceFt = 1.0;
         private const double MinTagSpacingFt = 0.40;
@@ -1543,7 +1543,7 @@ namespace AVES.Cmds_PullDownAutoTag
     //  BUTTON 2 — CMD_VENDORTAG  (Vendor Drawings)
     // ============================================================
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_VendorTag : IExternalCommand
+    public class Cmd_DOC05b_Vendor : IExternalCommand
     {
         private const double EdgeClearanceFt = 1.0;
         private const double MinTagSpacingFt = 0.40;
@@ -1805,7 +1805,7 @@ namespace AVES.Cmds_PullDownAutoTag
             return result;
         }
 
-        // ── Projection helpers (copy — shared with Cmd_MTTag) ────────────────
+        // ── Projection helpers (copy — shared with Cmd_DOC05a_MT) ────────────────
         private static double Dot(XYZ a, XYZ b) =>
             a.X * b.X + a.Y * b.Y + a.Z * b.Z;
 

@@ -47,7 +47,7 @@ using WpfTextBlock = System.Windows.Controls.TextBlock;
 using WpfTextBox = System.Windows.Controls.TextBox;
 using WpfThickness = System.Windows.Thickness;
 
-namespace AVES.Cmds_Button8
+namespace AVES.Commands
 {
     // ─────────────────────────────────────────────────────────────────────────
     //  LAST-USED PARAMETER MEMORY (persists across Revit sessions)
@@ -105,7 +105,7 @@ namespace AVES.Cmds_Button8
     //  DATA HELPERS
     // ─────────────────────────────────────────────────────────────────────────
 
-    internal class ReportRow
+    internal class AddWeightReportRow
     {
         public string AssemblyName { get; set; }
         public string StatusKind { get; set; }   // "ok" | "skip" | "fail" | "warn"
@@ -337,7 +337,7 @@ namespace AVES.Cmds_Button8
     //  ASSEMBLY PICKER WINDOW
     // ─────────────────────────────────────────────────────────────────────────
 
-    internal class AssemblyPickerWindow : Window
+    internal class AddWeightAssemblyPickerWindow : Window
     {
         public List<AssemblyInstance> SelectedAssemblies { get; private set; }
             = new List<AssemblyInstance>();
@@ -359,7 +359,7 @@ namespace AVES.Cmds_Button8
         private bool _confirmed;
         private readonly Document _doc;
 
-        public AssemblyPickerWindow(Document doc, List<AssemblyInstance> assemblies)
+        public AddWeightAssemblyPickerWindow(Document doc, List<AssemblyInstance> assemblies)
         {
             _doc = doc;
             _allAssemblies = assemblies.OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase).ToList();
@@ -927,13 +927,13 @@ namespace AVES.Cmds_Button8
     //  REPORT WINDOW — REFINED NATIVE DESIGN
     // ─────────────────────────────────────────────────────────────────────────
 
-    internal class ReportWindow : Window
+    internal class AddWeightReportWindow : Window
     {
-        private readonly List<ReportRow> _rows;
+        private readonly List<AddWeightReportRow> _rows;
         private readonly string _sourceCaption;
 
-        public ReportWindow(
-            List<ReportRow> rows,
+        public AddWeightReportWindow(
+            List<AddWeightReportRow> rows,
             int processed, int skipped, int failed,
             int assembliesFound,
             double totalWeightSum,
@@ -1289,7 +1289,7 @@ namespace AVES.Cmds_Button8
 
         // BuildStatusPillTemplate is gone: it reimplemented the pill as a parsed
         // XAML string with hardcoded hex and labels, the same duplicate
-        // Cmds_Button10.cs carried. Geometry matched AvControls.StatusPill
+        // DOC02_SheetInfo.cs carried. Geometry matched AvControls.StatusPill
         // exactly, so AvControls.StatusPillTemplate is a like-for-like swap --
         // but the colours now follow AvTokens instead of needing manual re-sync.
 
@@ -1320,7 +1320,7 @@ namespace AVES.Cmds_Button8
     // ─────────────────────────────────────────────────────────────────────────
 
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_Button : IExternalCommand
+    public class Cmd_DOC07_AddWeight : IExternalCommand
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
@@ -1341,7 +1341,7 @@ namespace AVES.Cmds_Button8
                     return Result.Cancelled;
                 }
 
-                var picker = new AssemblyPickerWindow(doc, allAssemblies);
+                var picker = new AddWeightAssemblyPickerWindow(doc, allAssemblies);
                 picker.ShowDialog();
 
                 if (picker.SelectedAssemblies == null || picker.SelectedAssemblies.Count == 0)
@@ -1353,7 +1353,7 @@ namespace AVES.Cmds_Button8
                 // ── Precompute assembly → sheets mapping (once) ──
                 var assemblyToSheets = BuildAssemblyToSheetsMap(doc);
 
-                var reportRows = new List<ReportRow>();
+                var reportRows = new List<AddWeightReportRow>();
                 int processed = 0, skipped = 0, failed = 0;
                 double totalWeightSum = 0.0;
 
@@ -1364,7 +1364,7 @@ namespace AVES.Cmds_Button8
 
                     if (members.Count == 0)
                     {
-                        reportRows.Add(new ReportRow { AssemblyName = assembly.Name, StatusKind = "skip", Note = "No members found", TotalWeight = 0 });
+                        reportRows.Add(new AddWeightReportRow { AssemblyName = assembly.Name, StatusKind = "skip", Note = "No members found", TotalWeight = 0 });
                         skipped++;
                         continue;
                     }
@@ -1408,7 +1408,7 @@ namespace AVES.Cmds_Button8
                         catch (Exception txEx)
                         {
                             if (tx.HasStarted() && !tx.HasEnded()) tx.RollBack();
-                            reportRows.Add(new ReportRow
+                            reportRows.Add(new AddWeightReportRow
                             {
                                 AssemblyName = assembly.Name,
                                 StatusKind = "fail",
@@ -1438,7 +1438,7 @@ namespace AVES.Cmds_Button8
                         status = "warn";
                     }
 
-                    reportRows.Add(new ReportRow
+                    reportRows.Add(new AddWeightReportRow
                     {
                         AssemblyName = assembly.Name,
                         StatusKind = status,
@@ -1448,7 +1448,7 @@ namespace AVES.Cmds_Button8
                     totalWeightSum += assemblyTotalWeight;
                 }
 
-                var report = new ReportWindow(
+                var report = new AddWeightReportWindow(
                     rows: reportRows,
                     processed: processed,
                     skipped: skipped,

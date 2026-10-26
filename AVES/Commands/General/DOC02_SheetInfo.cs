@@ -43,7 +43,7 @@ using WpfTextBox = System.Windows.Controls.TextBox;
 using WpfThickness = System.Windows.Thickness;
 using WpfVisibility = System.Windows.Visibility;
 
-namespace AVES.Cmds_Button10
+namespace AVES.Commands
 {
     // ─────────────────────────────────────────────────────────────────────────
     //  REPORT ROW
@@ -946,7 +946,7 @@ namespace AVES.Cmds_Button10
     // ─────────────────────────────────────────────────────────────────────────
 
     [Transaction(TransactionMode.Manual)]
-    public class Cmd_Button : IExternalCommand
+    public class Cmd_DOC02_SheetInfo : IExternalCommand
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
